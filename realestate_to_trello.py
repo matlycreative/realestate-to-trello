@@ -305,10 +305,30 @@ def trello_get_card_desc(card_id):
     return r.json().get("desc") or ""
 
 def replace_line(desc, label, new_value):
-    """Replace exactly one existing 'Label: ...' line. If missing, leave desc unchanged."""
-    pat = _FIELD_PATTERNS[label]
-    if pat.search(desc):
-        return pat.sub(lambda m: f"{m.group('prefix')}{new_value or ''}", desc, count=1), True
+    """
+    Force the value onto the same line as 'Label:'.
+    If the template put the value on the next line, collapse it.
+    Only touches the target label line (and at most removes the
+    immediate next line if it was the old value).
+    """
+    lines = desc.splitlines()
+    # match a line that starts with "Label:" (case/space tolerant)
+    pat = re.compile(rf'^\s*{label}\s*:\s*.*$', re.I)
+
+    for i, line in enumerate(lines):
+        if pat.match(line):
+            # If this line ends right at the colon (no value),
+            # and the next line contains something (or an email for Email:),
+            # remove that next line so we can place the value inline.
+            next_has_value = (i + 1 < len(lines) and lines[i+1].strip() != "")
+            next_is_email = (label == "Email" and i + 1 < len(lines) and EMAIL_RE.search(lines[i+1]))
+            if line.strip().endswith(":") and (next_has_value or next_is_email):
+                lines.pop(i + 1)
+
+            # write inline
+            lines[i] = f"{label}: {new_value or ''}"
+            return "\n".join(lines), True
+
     return desc, False
 
 def update_card_company_first_email(card_id, company, first, email):
