@@ -1,40 +1,22 @@
-# Only search these countries/cities (rotate daily)
-CITY_ROTATION = [
-    # Switzerland
-    ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
-    # United Kingdom
-    ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
-    # United States
-    ("New York","United States"), ("Los Angeles","United States"), ("Chicago","United States"),
-    ("Miami","United States"), ("San Francisco","United States"), ("Dallas","United States"),
-    # France
-    ("Paris","France"), ("Lyon","France"), ("Marseille","France"), ("Toulouse","France"),
-    # Germany
-    ("Berlin","Germany"), ("Munich","Germany"), ("Hamburg","Germany"), ("Frankfurt","Germany"),
-    # Italy
-    ("Milan","Italy"), ("Rome","Italy"), ("Naples","Italy"), ("Turin","Italy"),
-    # Norway
-    ("Oslo","Norway"), ("Bergen","Norway"),
-    # Denmark
-    ("Copenhagen","Denmark"), ("Aarhus","Denmark"),
-    # Austria
-    ("Vienna","Austria"), ("Salzburg","Austria"), ("Graz","Austria"),
-    # Spain
-    ("Madrid","Spain"), ("Barcelona","Spain"), ("Valencia","Spain"),
-    # Portugal
-    ("Lisbon","Portugal"), ("Porto","Portugal"),
-    # Netherlands
-    ("Amsterdam","Netherlands"), ("Rotterdam","Netherlands"), ("The Hague","Netherlands"),
-    # Belgium
-    ("Brussels","Belgium"), ("Antwerp","Belgium"), ("Ghent","Belgium"),
-    # Luxembourg
-    ("Luxembourg City","Luxembourg"),
-    # Croatia
-    ("Zagreb","Croatia"), ("Split","Croatia"), ("Rijeka","Croatia"),
-    # Dubai (UAE)
-    ("Dubai","United Arab Emirates"),
-    # Indonesia
-    ("Jakarta","Indonesia"), ("Surabaya","Indonesia"), ("Bandung","Indonesia"), ("Denpasar","Indonesia"),
-    # Canada
-    ("Toronto","Canada"), ("Vancouver","Canada"), ("Montreal","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
-]
+TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+run: |
+         python - <<'PY'
+         import os, sys
+          req = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID","NOMINATIM_EMAIL"]
+          req = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
+         miss = [k for k in req if not os.getenv(k)]
+         if miss:
+             print("❌ Missing secrets:", ", ".join(miss)); sys.exit(1)
+@@ -79,8 +78,7 @@ jobs:
+TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+          USER_AGENT: "EditorLeads/1.0 (+${{ secrets.NOMINATIM_EMAIL }})"
+          USER_AGENT: "EditorLeads/1.0"
+DAILY_LIMIT: "3"         # smaller for testing
+PUSH_INTERVAL_S: "5"     # faster for testing
+REQUEST_DELAY_S: "1.0"
