@@ -1,87 +1,35 @@
-name: Daily Real Estate Leads (debug)
+name: Daily Real Estate Leads
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "0 7 * * *"   # 07:00 UTC ≈ 09:00 Europe/Zurich
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show repo contents
-        run: |
-          pwd
-          ls -la
-          echo "---- .github/workflows ----"
-          ls -la .github/workflows || true
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install deps
-        run: |
-          python -V
-          test -f requirements.txt && cat requirements.txt || echo "requirements.txt missing!"
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      # 1) Check required secrets exist (names right?)
-      - name: Preflight secrets
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-        run: |
-          python - <<'PY'
-          import os, sys
-          req = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
-          miss = [k for k in req if not os.getenv(k)]
-          if miss:
-              print("❌ Missing secrets:", ", ".join(miss)); sys.exit(1)
-          print("✅ Secrets present (values hidden).")
-          PY
-
-      # 2) Check the Trello list really exists with this key/token
-      - name: Trello list check
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-        run: |
-          python - <<'PY'
-          import os, sys, requests
-          lid=os.getenv("TRELLO_LIST_ID"); key=os.getenv("TRELLO_KEY"); tok=os.getenv("TRELLO_TOKEN")
-          url=f"https://api.trello.com/1/lists/{lid}"
-          r=requests.get(url, params={"key":key,"token":tok}, timeout=30)
-          print("GET", r.url)
-          print("Status:", r.status_code)
-          if r.status_code!=200:
-              print("Body:", r.text[:500]); sys.exit(1)
-          print("✅ Trello list OK:", r.json().get("name"))
-          PY
-
-      # 3) Make sure the script file is actually here
-      - name: Ensure script exists
-        run: |
-          test -f realestate_to_trello.py || (echo "❌ realestate_to_trello.py not found at repo root" && exit 1)
-          head -n 20 realestate_to_trello.py
-
-      # 4) Run the script (verbose)
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
       - name: Run daily pipeline
         env:
+          # Trello
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+          # Optional: if ever no blank is available, we can clone this template card ID into the list
+          # TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+          # Foursquare fallback (optional but recommended)
           FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          USER_AGENT: "EditorLeads/1.0"
-          DAILY_LIMIT: "3"         # smaller for testing
-          PUSH_INTERVAL_S: "5"     # faster for testing
-          REQUEST_DELAY_S: "1.0"
-        run: |
-          set -x
-          python realestate_to_trello.py
+          # Polite + pacing
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+          USER_AGENT: "EditorLeads/1.0 (+${{ secrets.NOMINATIM_EMAIL }})"
+          DAILY_LIMIT: "10"
+          PUSH_INTERVAL_S: "60"     # one card every minute
+          REQUEST_DELAY_S: "1.0"    # polite scraping delay
+        run: python realestate_to_trello.py
