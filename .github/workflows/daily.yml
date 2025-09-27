@@ -69,6 +69,8 @@ jobs:
           DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
           PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
           REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
         run: |
           python - <<'PY'
           import os, sys
