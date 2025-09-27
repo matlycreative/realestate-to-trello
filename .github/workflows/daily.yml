@@ -21,6 +21,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
 
+      # --- your app secrets ---
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
@@ -59,11 +60,18 @@ jobs:
       PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
 
+      # --- seen file lives in a dedicated data dir ---
+      SEEN_FILE: ".data/seen_domains.txt"
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # ensure the data dir exists so the script can write the seen file
+      - name: Ensure data dir
+        run: mkdir -p .data
 
       - id: setup-python
         uses: actions/setup-python@v5
@@ -123,6 +131,20 @@ jobs:
           set -euo pipefail
           python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
 
+      # show what's in the seen file in logs (helps debugging)
+      - name: Inspect seen file
+        if: ${{ always() }}
+        run: |
+          echo "SEEN_FILE=$SEEN_FILE"
+          if [ -f "$SEEN_FILE" ]; then
+            echo "Lines in seen file:"
+            wc -l "$SEEN_FILE"
+            echo "--- tail ---"
+            tail -n 20 "$SEEN_FILE" || true
+          else
+            echo "No seen file found."
+          fi
+
       - name: Upload leads CSV
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -136,7 +158,8 @@ jobs:
         if: ${{ always() }}
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Update seen_domains.txt [skip ci]"
-          file_pattern: seen_domains.txt
+          commit_message: "Update seen domains [skip ci]"
+          file_pattern: .data/seen_domains.txt
+          add_options: "-f"           # force-add even if ignored
           branch: ${{ github.ref_name }}
           create_branch: false
