@@ -7,6 +7,8 @@ import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
@@ -72,7 +74,7 @@ FREEMAIL_EXTRA_Q        = env_float("FREEMAIL_EXTRA_Q", 0.3)
 DEBUG      = env_on("DEBUG", False)
 USE_WHOIS  = env_on("USE_WHOIS", False)
 
-# pre-clone toggle (disabled by default per your request)
+# pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
 
 STATS = {
@@ -112,6 +114,26 @@ USE_ZEFIX           = env_on("USE_ZEFIX", False)
 # ---------- HTTP ----------
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
+
+# add retries for robustness — GET only (avoid retrying POST to Trello)
+try:
+    _retries = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset({"GET"}),
+        respect_retry_after_header=True,
+    )
+except TypeError:
+    # older urllib3
+    _retries = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        method_whitelist=frozenset({"GET"}),
+    )
+SESS.mount("https://", HTTPAdapter(max_retries=_retries))
+SESS.mount("http://", HTTPAdapter(max_retries=_retries))
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -187,8 +209,10 @@ def _sleep(): time.sleep(REQUEST_DELAY_S)
 
 def iter_cities():
     pool = CITY_ROTATION[:]
+    # case-insensitive whitelist
     if COUNTRY_WHITELIST:
-        pool = [c for c in pool if c[1] in COUNTRY_WHITELIST]
+        wl = {c.lower() for c in COUNTRY_WHITELIST}
+        pool = [c for c in pool if c[1].lower() in wl]
     if FORCE_COUNTRY:
         pool = [c for c in pool if c[1].lower() == FORCE_COUNTRY.lower()]
     if FORCE_CITY:
@@ -231,17 +255,21 @@ def email_domain(email: str) -> str:
         return ""
 
 @lru_cache(maxsize=4096)
-def _allowed_by_robots_cached(base: str, path: str) -> bool:
+def _allowed_by_robots_cached(base: str, path: str, ua: str) -> bool:
+    # Fetch robots.txt with timeout and parse lines to avoid rp.read() blocking
     rp = robotparser.RobotFileParser()
-    rp.set_url(urljoin(base, "/robots.txt"))
-    rp.read()
-    return rp.can_fetch(UA, urljoin(base, path))
+    try:
+        resp = SESS.get(urljoin(base, "/robots.txt"), timeout=10)
+        rp.parse(resp.text.splitlines())
+    except Exception:
+        return True  # default allow on failure
+    return rp.can_fetch(ua, urljoin(base, path))
 
 def allowed_by_robots(base_url, path="/"):
     try:
         p = urlparse(base_url)
         base = f"{p.scheme}://{p.netloc}"
-        return _allowed_by_robots_cached(base, path or "/")
+        return _allowed_by_robots_cached(base, path or "/", UA)
     except Exception:
         return True
 
@@ -254,7 +282,13 @@ def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
 # ---------- quality helpers ----------
-import dns.resolver
+try:
+    import dns.resolver as _dnsresolver
+except Exception:
+    _dnsresolver = None
+
+HAS_DNS = _dnsresolver is not None  # <— gate DNS-dependent behavior
+
 try:
     import whois as pywhois
 except Exception:
@@ -262,29 +296,44 @@ except Exception:
 
 def looks_parked(html: str) -> bool:
     hay = (html or "").lower()
-    red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parking","parked domain"]
+    # dropped plain "parking" to reduce false positives
+    red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parked domain"]
     return any(p in hay for p in red_flags)
 
-@lru_cache(maxsize=4096)
-def domain_has_mx(domain: str) -> bool:
-    if not domain: return False
+def _idna(domain: str) -> str:
     try:
-        dns.resolver.resolve(domain, 'MX', lifetime=5.0)
+        return (domain or "").encode("idna").decode("ascii")
+    except Exception:
+        return domain or ""
+
+@lru_cache(maxsize=4096)
+def domain_has_mx(domain: str):
+    """Return True/False if DNS is available; otherwise None (unknown)."""
+    if not HAS_DNS:
+        return None
+    d = _idna(domain)
+    if not d:
+        return False
+    try:
+        _dnsresolver.resolve(d, 'MX', lifetime=5.0)
         return True
     except Exception:
         return False
 
 @lru_cache(maxsize=4096)
-def domain_has_dmarc(domain: str) -> bool:
-    if not domain: return False
+def domain_has_dmarc(domain: str):
+    """Return True/False if DNS is available; otherwise None (unknown)."""
+    if not HAS_DNS:
+        return None
+    d = _idna(domain)
+    if not d:
+        return False
     try:
-        for r in dns.resolver.resolve(f"_dmarc.{domain}", "TXT", lifetime=5.0):
-            # dnspython 2.x may not expose .strings; use to_text fallback
+        for r in _dnsresolver.resolve(f"_dmarc.{d}", "TXT", lifetime=5.0):
             txts = getattr(r, "strings", None)
             if txts:
                 txt = b"".join(txts).decode("utf-8", "ignore").lower()
             else:
-                # Remove surrounding quotes and collapse spaces between TXT chunks
                 t = r.to_text()
                 if t.startswith('"') and t.endswith('"'):
                     t = t[1:-1]
@@ -311,7 +360,6 @@ def domain_age_years(domain: str) -> float:
                     pass
             if isinstance(cd, str):  # still str
                 return 0.0
-        # cd might be a datetime.date (not datetime)
         from datetime import date as _date
         if isinstance(cd, _date) and not isinstance(cd, datetime):
             cd = datetime(cd.year, cd.month, cd.day)
@@ -387,7 +435,7 @@ def choose_best_email(emails):
 def uses_https(url: str) -> bool:
     return (urlparse(url or "").scheme == "https")
 
-def rss_recent(soup: BeautifulSoup, html: str, max_days=365) -> bool:
+def rss_recent(soup: BeautifulSoup, max_days=365) -> bool:
     for l in soup.find_all("link"):
         if (l.get("type") or "").lower() in ("application/rss+xml","application/atom+xml"):
             return True
@@ -399,14 +447,19 @@ def quality_score(website: str, html: str, soup: BeautifulSoup, email: str) -> f
     if has_listings_signals(soup): score += 1.0
     if has_recent_content(soup, 365): score += 0.7
     site_dom = etld1_from_url(website); mail_dom = email_domain(email)
+
+    # DNS-gated signals
+    mx_signal    = (domain_has_mx(mail_dom or site_dom) is True) if HAS_DNS else False
+    dmarc_signal = (domain_has_dmarc(mail_dom or site_dom) is True) if HAS_DNS else False
+
     if site_dom and mail_dom == site_dom: score += 0.7
-    if domain_has_mx(mail_dom or site_dom): score += 0.6
+    if mx_signal: score += 0.6
     age = domain_age_years(site_dom)
     if age >= 1.0: score += 0.4
     if count_team_members(soup) >= 3: score += 0.3
-    if domain_has_dmarc(mail_dom or site_dom): score += 0.3
+    if dmarc_signal: score += 0.3
     if uses_https(website): score += 0.2
-    if rss_recent(soup, html, 365): score += 0.3
+    if rss_recent(soup, 365): score += 0.3
     return min(score, 5.0)
 
 def summarize_signals(q, website, email, soup):
@@ -414,12 +467,16 @@ def summarize_signals(q, website, email, soup):
     if has_listings_signals(soup): bits.append("listings")
     if has_recent_content(soup, 365): bits.append("recent-content")
     dom = email_domain(email) or etld1_from_url(website)
-    if domain_has_mx(dom): bits.append("mx")
-    if domain_has_dmarc(dom): bits.append("dmarc")
+    if HAS_DNS and (domain_has_mx(dom) is True): bits.append("mx")
+    if HAS_DNS and (domain_has_dmarc(dom) is True): bits.append("dmarc")
     if uses_https(website): bits.append("https")
     tm = count_team_members(soup)
     if tm >= 3: bits.append(f"team~{tm}")
     return f"Signals: q={q:.2f}; " + ", ".join(bits)
+
+# helper for MX decision (gates on DNS availability)
+def _mx_ok(domain: str) -> bool:
+    return True if not HAS_DNS else (domain_has_mx(domain) is True)
 
 # ---------- geo & OSM ----------
 def geocode_city(city, country):
@@ -438,7 +495,6 @@ def overpass_estate_agents(bbox):
     for k,v in OSM_FILTERS:
         for t in ("node","way","relation"):
             parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
-    # fixed order: tags before center
     q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
 
     js = None
@@ -476,9 +532,9 @@ def fsq_find_website(name, lat, lon):
     if not FOURSQUARE_API_KEY: return None
     headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
     try:
-        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}  # fields optional/ignored
-        r = requests.get("https://api.foursquare.com/v3/places/search",
-                         headers=headers, params=params, timeout=20)
+        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
+        r = SESS.get("https://api.foursquare.com/v3/places/search",
+                     headers=headers, params=params, timeout=20)
         if r.status_code == 200:
             results = (r.json().get("results") or [])
             if results:
@@ -487,8 +543,8 @@ def fsq_find_website(name, lat, lon):
                 if website: return normalize_url(website)
                 fsq_id = first.get("fsq_id")
                 if fsq_id:
-                    d = requests.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
-                                     headers=headers, params={"fields":"website"}, timeout=20)
+                    d = SESS.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
+                                 headers=headers, params={"fields":"website"}, timeout=20)
                     if d.status_code == 200:
                         w = d.json().get("website")
                         if w: return normalize_url(w)
@@ -567,7 +623,7 @@ def uk_companies_house():
     if not (USE_COMPANIES_HOUSE and CH_API_KEY): return []
     url = "https://api.company-information.service.gov.uk/advanced-search/companies"
     try:
-        r = requests.get(url, params={"sic_codes":"68310", "size":50}, auth=(CH_API_KEY, ""), timeout=30)
+        r = SESS.get(url, params={"sic_codes":"68310", "size":50}, auth=(CH_API_KEY, ""), timeout=30)
         if r.status_code != 200: return []
         items = r.json().get("items") or []
         out = []
@@ -583,7 +639,7 @@ def sirene_get_token():
     if not (SIRENE_KEY and SIRENE_SECRET): return None
     if _SIRENE_TOKEN_CACHE["token"] and time.time() < _SIRENE_TOKEN_CACHE["expires_at"] - 60:
         return _SIRENE_TOKEN_CACHE["token"]
-    r = requests.post("https://api.insee.fr/token",
+    r = SESS.post("https://api.insee.fr/token",
         data={"grant_type": "client_credentials"}, auth=(SIRENE_KEY, SIRENE_SECRET), timeout=30)
     r.raise_for_status()
     js = r.json()
@@ -600,7 +656,7 @@ def fr_sirene(city=None):
     q = 'activitePrincipaleUniteLegale:"68.31Z"'
     if city: q += f' AND libelleCommuneEtablissement:"{city}"'
     try:
-        r = requests.get(url, headers=headers, params={"q": q, "nombre": 50}, timeout=30)
+        r = SESS.get(url, headers=headers, params={"q": q, "nombre": 50}, timeout=30)
         if r.status_code != 200: return []
         etabs = (r.json().get("etablissements") or [])
         out = []
@@ -624,7 +680,7 @@ def opencorp_search(country_code):
     if OPENCORP_API_KEY: params["api_token"] = OPENCORP_API_KEY
     for attempt in range(3):
         try:
-            r = requests.get(url, params=params, timeout=30)
+            r = SESS.get(url, params=params, timeout=30)
         except Exception:
             return []
         if r.status_code == 429:
@@ -652,11 +708,11 @@ def ch_zefix():
         for term in terms:
             for lang in langs:
                 try:
-                    r = requests.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
-                                     params={"name": term, "maxEntries": 50, "language": lang}, timeout=30)
+                    r = SESS.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                                 params={"name": term, "maxEntries": 50, "language": lang}, timeout=30)
                     if r.status_code != 200:
-                        r = requests.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
-                                         params={"queryString": term, "maxEntries": 50, "language": lang}, timeout=30)
+                        r = SESS.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                                     params={"queryString": term, "maxEntries": 50, "language": lang}, timeout=30)
                         if r.status_code != 200: continue
                     data = r.json()
                     items = data if isinstance(data, list) else data.get("list") or data.get("items") or []
@@ -703,13 +759,10 @@ def trello_get_card_desc(card_id):
                  timeout=30)
     r.raise_for_status()
     desc = r.json().get("desc") or ""
-    # normalize newline style so patterns are stable
     return desc.replace("\r\n", "\n").replace("\r", "\n")
 
 def normalize_header_block(desc, company, email, website):
-    # normalize incoming newline style
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-
     lines = desc.splitlines()
     preserved = {"First": "", "Hook": "", "Variant": ""}
     keep = []; i = 0
@@ -720,7 +773,6 @@ def normalize_header_block(desc, company, email, website):
             if m:
                 matched = True
                 val = (m.group(1) or "").strip()
-                # if user wrote value on next visual line, capture it
                 if not val and (i+1) < len(lines):
                     nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
@@ -734,7 +786,6 @@ def normalize_header_block(desc, company, email, website):
 
     while keep and keep[0].strip() == "": keep.pop(0)
 
-    # make Trello keep line breaks even through copies: two spaces + newline = "hard" break
     def hard(line: str) -> str:
         return (line or "").rstrip() + "  "
 
@@ -764,7 +815,7 @@ def update_card_header(card_id, company, email, website):
 def append_note(card_id, note):
     if not note: return
     desc = trello_get_card_desc(card_id)
-    if "Signals:" in desc: return
+    if "signals:" in desc.lower(): return  # case-insensitive
     new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
     SESS.put(f"https://api.trello.com/1/cards/{card_id}",
              params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc}, timeout=30).raise_for_status()
@@ -775,7 +826,6 @@ def is_template_blank(desc: str) -> bool:
       - it has 'Company:' with nothing after the colon on that visual line, OR
       - it has 'Email:' line with no '@' on that line, OR
       - it contains the header labels (Company/Email/Website) but no '@' anywhere.
-    Handles newline flattening by normalizing to LF.
     """
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
 
@@ -787,7 +837,8 @@ def is_template_blank(desc: str) -> bool:
         if "@" not in val:
             return True
 
-    if ("Company:" in d and "Email:" in d and "Website:" in d and "@" not in d):
+    dl = d.lower()
+    if ("company:" in dl and "email:" in dl and "website:" in dl and "@" not in dl):
         return True
 
     return False
@@ -863,7 +914,13 @@ def main():
     for (city, country) in iter_cities():
         last_city, last_country = city, country
 
-        south, west, north, east = geocode_city(city, country)
+        # guard geocode so one failure doesn't abort the run
+        try:
+            south, west, north, east = geocode_city(city, country)
+        except Exception as e:
+            dbg(f"Geocode failed for {city}, {country}: {e}")
+            continue
+
         lat = (south + north) / 2.0
         lon = (west + east) / 2.0
 
@@ -912,8 +969,10 @@ def main():
             if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
                 STATS["skip_freemail_reject"] += 1
                 email = ""
-            if email and "@" in email and not domain_has_mx(email_domain(email)):
-                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
+            if email and "@" in email and not _mx_ok(email_domain(email)):
+                # if DNS unavailable, _mx_ok == True; otherwise verify site domain as fallback
+                fallback_ok = (site_dom and _mx_ok(site_dom))
+                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
                     email = f"info@{site_dom}"
                 else:
                     STATS["skip_mx"] += 1
@@ -985,8 +1044,9 @@ def main():
                 if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
                     STATS["skip_freemail_reject"] += 1
                     email = ""
-                if email and "@" in email and not domain_has_mx(email_domain(email)):
-                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
+                if email and "@" in email and not _mx_ok(email_domain(email)):
+                    fallback_ok = (site_dom and _mx_ok(site_dom))
+                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
                         email = f"info@{site_dom}"
                     else:
                         STATS["skip_mx"] += 1
@@ -1017,6 +1077,11 @@ def main():
     if leads:
         leads.sort(key=lambda x: x.get("q", 0), reverse=True)
         leads = leads[:DAILY_LIMIT]
+
+    # pre-clone enough blanks (disabled unless PRECLONE=1)
+    need = min(DAILY_LIMIT, len(leads))
+    if PRECLONE and need > 0 and TRELLO_TEMPLATE_CARD_ID:
+        ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
 
     # optional: CSV for inspection (uses last city/country looked at)
     if leads and last_city and last_country:
@@ -1050,7 +1115,7 @@ def main():
             site_dom = etld1_from_url(lead["Website"])
             if site_dom and site_dom not in seen:
                 append_seen_domain(site_dom)
-                seen.add(site_dom)  # keep memory and file in sync
+                seen.add(site_dom)
 
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
