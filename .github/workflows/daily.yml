@@ -6,7 +6,7 @@ on:
     - cron: "0 7 * * *"   # 07:00 UTC daily
 
 permissions:
-  contents: write   # required so GITHUB_TOKEN can push
+  contents: write   # needed if you keep the auto-commit step
 
 concurrency:
   group: daily-realestate
@@ -15,33 +15,26 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    # timeout-minutes: 60   # optional overall cap
 
     steps:
-      # --- Checkout (let commit action provide its own token) ---
+      # --- Checkout (full history so commits work) ---
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
-
-      # --- Restore persisted state file from a dedicated branch (if it exists) ---
-      - name: Restore state (seen_domains.txt)
-        run: |
-          git fetch origin gh-actions-state || true
-          git checkout gh-actions-state -- seen_domains.txt || true
+          persist-credentials: false   # auto-commit action will handle auth
 
       # --- Python runtime ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --- Deps (tolerant if requirements.txt is absent) ---
+      # --- Deps (tolerant) ---
       - name: Install deps
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt || true
 
-      # --- Preflight: verify keys + show flags (helps debugging) ---
+      # --- Preflight: verify keys + show flags ---
       - name: Preflight
         env:
           # Required Trello
@@ -84,10 +77,8 @@ jobs:
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          # Optional throughput knobs (use script defaults if unset)
-          # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+          # Pre-clone (disabled)
+          PRECLONE: "0"
         run: |
           python - <<'PY'
           import os, sys
@@ -99,20 +90,12 @@ jobs:
           print("Features:")
           for k in ["USE_COMPANIES_HOUSE","USE_SIRENE","USE_OPENCORP","USE_ZEFIX"]:
               print(f"  {k}: {'ON' if on(k) else 'OFF'}")
-          if on("USE_COMPANIES_HOUSE") and not os.getenv("CH_API_KEY"):
-              print("❌ USE_COMPANIES_HOUSE=1 but CH_API_KEY missing."); sys.exit(1)
-          if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")):
-              print("❌ USE_SIRENE=1 but SIRENE_KEY/SIRENE_SECRET missing."); sys.exit(1)
           print("Quality:")
-          print(f"  QUALITY_MIN={os.getenv('QUALITY_MIN','3.0')}")
-          print(f"  REQUIRE_EXPLICIT_EMAIL={os.getenv('REQUIRE_EXPLICIT_EMAIL','0')}")
-          print(f"  ADD_SIGNALS_NOTE={os.getenv('ADD_SIGNALS_NOTE','0')}")
-          print(f"  SKIP_GENERIC_EMAILS={os.getenv('SKIP_GENERIC_EMAILS','0')}")
-          print(f"  REQUIRE_BUSINESS_DOMAIN={os.getenv('REQUIRE_BUSINESS_DOMAIN','0')}")
-          print(f"  ALLOW_FREEMAIL={os.getenv('ALLOW_FREEMAIL','1')}")
-          print(f"  FREEMAIL_EXTRA_Q={os.getenv('FREEMAIL_EXTRA_Q','0.3')}")
-          print("Country/city:")
-          print(f"  COUNTRY_WHITELIST='{os.getenv('COUNTRY_WHITELIST','')}', CITY_MODE={os.getenv('CITY_MODE','rotate')}, FORCE_COUNTRY='{os.getenv('FORCE_COUNTRY','')}', FORCE_CITY='{os.getenv('FORCE_CITY','')}'")
+          for k in ["QUALITY_MIN","REQUIRE_EXPLICIT_EMAIL","ADD_SIGNALS_NOTE","SKIP_GENERIC_EMAILS","REQUIRE_BUSINESS_DOMAIN","ALLOW_FREEMAIL","FREEMAIL_EXTRA_Q"]:
+              print(f"  {k}={os.getenv(k,'')}")
+          print("City selection:")
+          for k in ["COUNTRY_WHITELIST","CITY_MODE","FORCE_COUNTRY","FORCE_CITY","PRECLONE"]:
+              print(f"  {k}={os.getenv(k,'')}")
           PY
 
       # --- Run the lead finder / Trello filler ---
@@ -151,15 +134,22 @@ jobs:
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          # Optional overrides; comment out if you prefer script defaults
-          # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+          # Runtime knobs (optional)
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+
+          # Debug / performance
+          DEBUG: ${{ secrets.DEBUG }}
+          USE_WHOIS: ${{ secrets.USE_WHOIS }}
+
+          # Pre-clone disabled
+          PRECLONE: "0"
         run: |
           set -xe
           python realestate_to_trello.py
 
-      # --- Save a CSV of the run results (nice for inspection) ---
+      # --- Upload CSV artifact (optional) ---
       - name: Upload leads CSV
         uses: actions/upload-artifact@v4
         with:
@@ -169,14 +159,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # --- Commit seen_domains.txt to a dedicated state branch using GITHUB_TOKEN ---
+      # --- Commit seen_domains.txt (safe; will not fail build) ---
       - name: Commit seen_domains.txt
         uses: stefanzweifel/git-auto-commit-action@v5
         continue-on-error: true
         with:
           commit_message: "Update seen_domains.txt [skip ci]"
           file_pattern: seen_domains.txt
-          branch: gh-actions-state     # keep state off main
-          create_branch: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+          create_branch: false
