@@ -6,7 +6,7 @@ on:
     - cron: "0 7 * * *"   # 07:00 UTC daily
 
 permissions:
-  contents: write   # needed for auto-commit
+  contents: write   # required so GITHUB_TOKEN can push
 
 concurrency:
   group: daily-realestate
@@ -15,20 +15,27 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # timeout-minutes: 60   # optional overall cap
 
     steps:
-      # --- Checkout (full history so commits work) ---
+      # --- Checkout (let commit action provide its own token) ---
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false   # let the auto-commit action provide its token
+          persist-credentials: false
+
+      # --- Restore persisted state file from a dedicated branch (if it exists) ---
+      - name: Restore state (seen_domains.txt)
+        run: |
+          git fetch origin gh-actions-state || true
+          git checkout gh-actions-state -- seen_domains.txt || true
 
       # --- Python runtime ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --- Deps (keep tolerant if you tweak requirements) ---
+      # --- Deps (tolerant if requirements.txt is absent) ---
       - name: Install deps
         run: |
           pip install --upgrade pip
@@ -66,10 +73,10 @@ jobs:
           QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
           REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
           ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # strict filter
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
           REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
-          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}              # 1 = allow
-          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}          # e.g. 0.3
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
+          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
 
           # Country/city selection
           COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
@@ -77,7 +84,7 @@ jobs:
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          # Optional throughput knobs (use python defaults if unset)
+          # Optional throughput knobs (use script defaults if unset)
           # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
           # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
           # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
@@ -162,12 +169,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # --- Commit state file (seen_domains.txt) safely ---
+      # --- Commit seen_domains.txt to a dedicated state branch using GITHUB_TOKEN ---
       - name: Commit seen_domains.txt
         uses: stefanzweifel/git-auto-commit-action@v5
-        continue-on-error: true            # avoid failing the whole run if branch protection blocks push
+        continue-on-error: true
         with:
           commit_message: "Update seen_domains.txt [skip ci]"
           file_pattern: seen_domains.txt
-          branch: ${{ github.ref_name }}
-          create_branch: false
+          branch: gh-actions-state     # keep state off main
+          create_branch: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
