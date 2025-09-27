@@ -41,7 +41,7 @@ SIRENE_KEY          = os.getenv("SIRENE_KEY")       # INSEE client_id
 SIRENE_SECRET       = os.getenv("SIRENE_SECRET")    # INSEE client_secret
 
 USE_OPENCORP        = os.getenv("USE_OPENCORP", "0") == "1"         # US/CA
-OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")
+OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")                 # optional
 
 USE_ZEFIX           = os.getenv("USE_ZEFIX", "0") == "1"            # Switzerland (no key)
 
@@ -347,16 +347,46 @@ def fr_sirene(city=None):
         return []
 
 def opencorp_search(country_code):
+    """
+    OpenCorporates search without requiring an API key.
+    If OPENCORP_API_KEY is present, we include it (higher quota); otherwise unauthenticated.
+    Handles 429 (rate-limited) with small backoff.
+    """
     if not USE_OPENCORP:
         return []
+
     url = "https://api.opencorporates.com/v0.4/companies/search"
-    params = {"q":"real estate", "country_code": country_code, "per_page": 50}
+
+    queries = [
+        'real estate',
+        'realtor OR brokerage',
+        'immobilier',  # improves recall for CA (QC)
+    ]
+    q = random.choice(queries)
+
+    params = {
+        "q": q,
+        "country_code": country_code,  # 'us' or 'ca'
+        "per_page": 40,
+        "order": "score",
+    }
     if OPENCORP_API_KEY:
         params["api_token"] = OPENCORP_API_KEY
-    try:
-        r = requests.get(url, params=params, timeout=30)
-        if r.status_code != 200: return []
-        data = r.json()
+
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params=params, timeout=30)
+        except Exception:
+            return []
+        if r.status_code == 429:
+            time.sleep(3 * (attempt + 1))
+            continue
+        if r.status_code != 200:
+            return []
+        try:
+            data = r.json()
+        except Exception:
+            return []
         results = (data.get("results") or {}).get("companies") or []
         out = []
         for c in results:
@@ -364,15 +394,21 @@ def opencorp_search(country_code):
             nm = (co.get("name") or "").strip()
             if nm:
                 out.append({"business_name": nm, "website": None, "email": None})
-        random.shuffle(out)
-        return out
-    except Exception:
-        return []
+        # de-dupe by name
+        seen, uniq = set(), []
+        for x in out:
+            k = x["business_name"].lower()
+            if k not in seen:
+                uniq.append(x); seen.add(k)
+        random.shuffle(uniq)
+        return uniq
+
+    return []
 
 def ch_zefix():
     """
     ZEFIX (Swiss central company index) — name search; no API key required.
-    We try several language terms. Returns names only; website via FSQ later.
+    Returns names only; website via FSQ later.
     """
     if not USE_ZEFIX:
         return []
