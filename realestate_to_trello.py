@@ -43,6 +43,9 @@ REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
 QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)          # stricter default
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
+# Butler grace (fixed): extra time after each push so Butler can move/duplicate
+BUTLER_GRACE_S   = 20
+
 # Behavior/quality toggles
 REQUIRE_EXPLICIT_EMAIL = env_on("REQUIRE_EXPLICIT_EMAIL", False)  # require on-site email (no fallback)
 ADD_SIGNALS_NOTE       = env_on("ADD_SIGNALS_NOTE", False)        # append "Signals: ..." note
@@ -699,6 +702,25 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     r.raise_for_status()
     return r.json()["id"]
 
+def next_empty_or_clone(list_id, template_id, grace_s=BUTLER_GRACE_S, poll_s=5):
+    """Wait/poll for a blank template card. If none, clone once, then poll until grace expires."""
+    t_end = time.time() + max(0, grace_s)
+    cloned = False
+    while time.time() < t_end:
+        empties = find_empty_template_cards(list_id, max_needed=1)
+        if empties:
+            return empties[0]
+        if template_id and not cloned:
+            try:
+                clone_template_into_list(template_id, list_id)
+                cloned = True
+            except Exception:
+                pass
+        time.sleep(poll_s)
+    # final quick check
+    empties = find_empty_template_cards(list_id, max_needed=1)
+    return empties[0] if empties else None
+
 # ---- dedupe + CSV ----
 def load_seen():
     try:
@@ -765,7 +787,6 @@ def main():
                     email = f"info@{site_dom}"
                 else:
                     email = ""
-            # else: allow freemail; quality bump applied after q calc
 
         # If strict, drop generic local-part even if on-page
         if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
@@ -868,7 +889,7 @@ def main():
     save_seen(seen)
     append_csv(leads, city, country)
 
-    # 2) Push to Trello — one per minute (FINAL safety guard)
+    # 2) Push to Trello — one per minute + 20s Butler grace (FINAL safety guard)
     pushed = 0
     for lead in leads:
         # FINAL SAFETY: never push generic mailboxes in strict mode
@@ -878,17 +899,14 @@ def main():
                 print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
                 continue
 
-        # find (or create) the next empty template card
-        empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
-        if not empties and TRELLO_TEMPLATE_CARD_ID:
-            clone_template_into_list(TRELLO_TEMPLATE_CARD_ID, TRELLO_LIST_ID)
-            empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
-        if not empties:
-            print("No empty template card available; skipping.")
+        # Get the next blank template (wait/poll, clone once if needed)
+        card_id = next_empty_or_clone(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID)
+        if not card_id:
+            print("No empty template card available (even after grace); skipping.")
             continue
 
         changed = update_card_header(
-            card_id=empties[0],
+            card_id=card_id,
             company=lead["Company"],
             email=lead["Email"],
             website=lead["Website"],
@@ -897,8 +915,9 @@ def main():
             pushed += 1
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
-                append_note(empties[0], lead.get("signals",""))
-            time.sleep(PUSH_INTERVAL_S)
+                append_note(card_id, lead.get("signals",""))
+            # existing 1-minute wait + fixed extra grace for Butler
+            time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
         else:
             print("Card unchanged; trying next lead.")
 
