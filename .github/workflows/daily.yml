@@ -1,20 +1,23 @@
-name: Daily Real Estate Leads
+name: Daily Real Estate Leads (quality)
 
 on:
   workflow_dispatch:
-    inputs:
-      daily_limit:
-        description: "Override leads count (optional)"
-        required: false
-      push_interval_s:
-        description: "Override delay seconds (optional)"
-        required: false
   schedule:
-    - cron: "0 7 * * *"   # daily at 07:00 UTC
+    - cron: "0 7 * * *"   # Runs 07:00 UTC daily
+
+# Allows committing seen_domains.txt back to the repo
+permissions:
+  contents: write
+
+# Avoid overlapping runs
+concurrency:
+  group: daily-realestate
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,49 +27,139 @@ jobs:
 
       - name: Install deps
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --upgrade pip
+          pip install -r requirements.txt || true
 
-      - name: Preflight secrets
+      # Sanity check: required secrets + feature flag dependencies + quality flags
+      - name: Preflight
         env:
+          # Required Trello
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+
+          # Optional Trello
+          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+
+          # Website discovery / geocoding
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+          # Country feature flags + credentials
+          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+          CH_API_KEY: ${{ secrets.CH_API_KEY }}
+
+          USE_SIRENE: ${{ secrets.USE_SIRENE }}
+          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+
+          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+
+          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+
+          # Quality / behavior flags (optional)
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+
+          # Throughput/timing (optional)
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
         run: |
           python - <<'PY'
           import os, sys
-          req = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
-          miss = [k for k in req if not os.getenv(k)]
-          if miss:
-              print("❌ Missing secrets:", ", ".join(miss)); sys.exit(1)
-          print("✅ Secrets present.")
+          def on(k): return (os.getenv(k) or "").strip() not in ("", "0", "false", "False")
+          def val(k, d=None):
+              v = os.getenv(k)
+              return v if (v is not None and v != "") else d
+
+          # Required
+          missing = [k for k in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(k)]
+          if missing:
+              print("❌ Missing required secrets:", ", ".join(missing)); sys.exit(1)
+          print("✅ Trello secrets present.")
+
+          # Feature flags summary
+          print("Features:")
+          print(f"  USE_COMPANIES_HOUSE: {'ON' if on('USE_COMPANIES_HOUSE') else 'OFF'}")
+          print(f"  USE_SIRENE:          {'ON' if on('USE_SIRENE') else 'OFF'}")
+          print(f"  USE_OPENCORP:        {'ON' if on('USE_OPENCORP') else 'OFF'}")
+          print(f"  USE_ZEFIX:           {'ON' if on('USE_ZEFIX') else 'OFF'}")
+
+          # Dependencies when flags are ON
+          if on("USE_COMPANIES_HOUSE") and not os.getenv("CH_API_KEY"):
+              print("❌ USE_COMPANIES_HOUSE=1 but CH_API_KEY is missing."); sys.exit(1)
+          if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")):
+              print("❌ USE_SIRENE=1 but SIRENE_KEY and/or SIRENE_SECRET are missing."); sys.exit(1)
+
+          # Quality / behavior
+          qmin = val("QUALITY_MIN", "3.0")  # default stricter here; script default is 2.5
+          rexpl = "ON" if on("REQUIRE_EXPLICIT_EMAIL") else "OFF"
+          addsig = "ON" if on("ADD_SIGNALS_NOTE") else "OFF"
+          print(f"Quality: QUALITY_MIN={qmin}, REQUIRE_EXPLICIT_EMAIL={rexpl}, ADD_SIGNALS_NOTE={addsig}")
+
+          # Timing
+          print("Timing:")
+          print(f"  DAILY_LIMIT      = {val('DAILY_LIMIT', '10')}")
+          print(f"  PUSH_INTERVAL_S  = {val('PUSH_INTERVAL_S', '60')}")
+          print(f"  REQUEST_DELAY_S  = {val('REQUEST_DELAY_S', '1.0')}")
+          print("✅ Preflight OK.")
           PY
 
-      - name: Trello list check
+      - name: Run pipeline
         env:
+          # Required Trello
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-        run: |
-          python - <<'PY'
-          import os, sys, requests
-          lid=os.getenv("TRELLO_LIST_ID"); key=os.getenv("TRELLO_KEY"); tok=os.getenv("TRELLO_TOKEN")
-          r=requests.get(f"https://api.trello.com/1/lists/{lid}", params={"key":key,"token":tok}, timeout=30)
-          print("Status:", r.status_code)
-          if r.status_code!=200:
-              print(r.text[:500]); sys.exit(1)
-          print("✅ Trello list OK:", r.json().get("name"))
-          PY
 
-      - name: Run daily pipeline
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          # Optional Trello
           TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+
+          # Discovery / geocoding
           FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          USER_AGENT: "EditorLeads/1.0"
-          DAILY_LIMIT: ${{ inputs.daily_limit || '10' }}
-          PUSH_INTERVAL_S: ${{ inputs.push_interval_s || '60' }}
-          REQUEST_DELAY_S: "1.0"
-        run: python realestate_to_trello.py
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+          # Country feature flags + credentials
+          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+          CH_API_KEY: ${{ secrets.CH_API_KEY }}
+
+          USE_SIRENE: ${{ secrets.USE_SIRENE }}
+          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+
+          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+
+          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+
+          # Quality / behavior (defaults handled in script if unset)
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}           # e.g. "3.0"
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}  # "1" to skip info@ fallbacks
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }} # "1" to append Signals: ... in Trello
+
+          # Throughput/timing
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}           # e.g. "10"
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}   # e.g. "60"
+          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}   # e.g. "1.0"
+        run: |
+          set -xe
+          python realestate_to_trello.py
+
+      - name: Commit seen_domains.txt (if changed)
+        run: |
+          if [ -f seen_domains.txt ]; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add seen_domains.txt || true
+            if ! git diff --cached --quiet; then
+              git commit -m "Update seen_domains.txt"
+              git push
+            else
+              echo "No changes to seen_domains.txt"
+            fi
+          else
+            echo "seen_domains.txt not created this run."
+          fi
