@@ -58,6 +58,7 @@ jobs:
           QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
           REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
           ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # <-- NEW
 
           # Country/city selection
           COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
@@ -65,12 +66,10 @@ jobs:
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          # Throughput/timing (optional)
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
-
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
+          # Throughput/timing (optional) — remove if you use script defaults
+          # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
         run: |
           python - <<'PY'
           import os, sys
@@ -88,6 +87,7 @@ jobs:
               print("❌ USE_SIRENE=1 but SIRENE_KEY/SIRENE_SECRET missing."); sys.exit(1)
           print("Quality:")
           print(f"  QUALITY_MIN={os.getenv('QUALITY_MIN','3.0')}, REQUIRE_EXPLICIT_EMAIL={os.getenv('REQUIRE_EXPLICIT_EMAIL','0')}, ADD_SIGNALS_NOTE={os.getenv('ADD_SIGNALS_NOTE','0')}")
+          print(f"  SKIP_GENERIC_EMAILS={os.getenv('SKIP_GENERIC_EMAILS','0')}")  # <-- shows strict flag
           print("Country/city:")
           print(f"  COUNTRY_WHITELIST='{os.getenv('COUNTRY_WHITELIST','')}', CITY_MODE={os.getenv('CITY_MODE','rotate')}, FORCE_COUNTRY='{os.getenv('FORCE_COUNTRY','')}', FORCE_CITY='{os.getenv('FORCE_CITY','')}'")
           PY
@@ -114,18 +114,20 @@ jobs:
 
           USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
 
-          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}              # e.g. "3.0"
-          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}  # "1" to skip info@
-          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}    # "1" to add Signals line
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # <-- NEW
 
-          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}  # e.g. "United Kingdom,United States,France,Switzerland,Germany,Canada"
-          CITY_MODE: ${{ secrets.CITY_MODE }}                  # rotate|random|force
+          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
+          CITY_MODE: ${{ secrets.CITY_MODE }}
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}              # optional; default 10
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}      # default 60
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}      # default 1.0
+          # Optional overrides; comment out if you prefer script defaults
+          # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
         run: |
           set -xe
           python realestate_to_trello.py
@@ -148,9 +150,9 @@ jobs:
             if ! git diff --cached --quiet; then
               git commit -m "Update seen_domains.txt"
               git push
-            else
+            else:
               echo "No changes to seen_domains.txt"
             fi
-          else
+          else:
             echo "seen_domains.txt not created this run."
           fi
