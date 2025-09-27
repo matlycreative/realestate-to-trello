@@ -1,10 +1,10 @@
 # realestate_to_trello.py
-# Fill Trello template cards with Company / Email / Website.
-# Header is normalized at the top as:
-# Company, First, Email, Hook, Variant, Website (First/Hook/Variant preserved).
+# Fills Trello template cards with Company / Email / Website (1/min).
+# Header (kept at the very top, exact order):
+# Company, First, Email, Hook, Variant, Website  (First/Hook/Variant preserved)
 
-import os, re, json, time, random
-from datetime import date
+import os, re, json, time, random, csv, pathlib
+from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
@@ -20,14 +20,20 @@ except Exception:
 
 # ========= Config =========
 DAILY_LIMIT     = int(os.getenv("DAILY_LIMIT", "10"))
-PUSH_INTERVAL_S = int(os.getenv("PUSH_INTERVAL_S", "60"))     # 1 per minute
+PUSH_INTERVAL_S = int(os.getenv("PUSH_INTERVAL_S", "60"))        # 1 per minute
 REQUEST_DELAY_S = float(os.getenv("REQUEST_DELAY_S", "1.0"))
-QUALITY_MIN     = float(os.getenv("QUALITY_MIN", "2.5"))      # set 3.0 for stricter
+QUALITY_MIN     = float(os.getenv("QUALITY_MIN", "3.0"))         # stricter default
 SEEN_FILE       = os.getenv("SEEN_FILE", "seen_domains.txt")
 
 # Optional behavior
 REQUIRE_EXPLICIT_EMAIL = os.getenv("REQUIRE_EXPLICIT_EMAIL","0") == "1"  # skip info@ fallback
-ADD_SIGNALS_NOTE       = os.getenv("ADD_SIGNALS_NOTE","0") == "1"        # append one-liner
+ADD_SIGNALS_NOTE       = os.getenv("ADD_SIGNALS_NOTE","0") == "1"        # append one-liner under header
+
+# Country/city control (high ROI)
+COUNTRY_WHITELIST = [s.strip() for s in os.getenv("COUNTRY_WHITELIST","").split(",") if s.strip()]
+CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
+FORCE_COUNTRY = os.getenv("FORCE_COUNTRY", "").strip()
+FORCE_CITY    = os.getenv("FORCE_CITY", "").strip()
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -106,7 +112,23 @@ GENERIC_MAIL_PROVIDERS = {
 }
 
 def _sleep(): time.sleep(REQUEST_DELAY_S)
-def pick_today_city(): return CITY_ROTATION[date.today().toordinal() % len(CITY_ROTATION)]
+
+def pick_today_city():
+    # filter pool
+    pool = CITY_ROTATION[:]
+    if COUNTRY_WHITELIST:
+        pool = [c for c in pool if c[1] in COUNTRY_WHITELIST]
+    if FORCE_COUNTRY:
+        pool = [c for c in pool if c[1].lower() == FORCE_COUNTRY.lower()]
+    if FORCE_CITY:
+        pool = [c for c in pool if c[0].lower() == FORCE_CITY.lower()]
+    if not pool:
+        pool = CITY_ROTATION
+    mode = CITY_MODE.lower()
+    if mode == "random":
+        return random.choice(pool)
+    # default deterministic rotation by date
+    return pool[date.today().toordinal() % len(pool)]
 
 # ========= small utils =========
 def normalize_url(u):
@@ -171,17 +193,14 @@ EDITORIAL_PREFS = [
 
 def looks_parked(html: str) -> bool:
     hay = (html or "").lower()
-    red_flags = [
-        "this domain is for sale", "coming soon", "sedo", "godaddy",
-        "namecheap", "parking", "parked domain"
-    ]
+    red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parking","parked domain"]
     return any(p in hay for p in red_flags)
 
 def domain_has_mx(domain: str) -> bool:
     if not domain: return False
     try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=5.0)
-        return bool(answers)
+        dns.resolver.resolve(domain, 'MX', lifetime=5.0)
+        return True
     except Exception:
         return False
 
@@ -189,8 +208,7 @@ def domain_has_dmarc(domain: str) -> bool:
     if not domain: return False
     try:
         name = f"_dmarc.{domain}"
-        answers = dns.resolver.resolve(name, "TXT", lifetime=5.0)
-        for r in answers:
+        for r in dns.resolver.resolve(name, "TXT", lifetime=5.0):
             txt = b"".join(r.strings).decode("utf-8", "ignore").lower()
             if txt.startswith("v=dmarc"):
                 return True
@@ -198,9 +216,7 @@ def domain_has_dmarc(domain: str) -> bool:
         return False
 
 def domain_age_years(domain: str) -> float:
-    """Rough domain age in years. Returns 0 if unknown."""
-    if not domain or not pywhois:
-        return 0.0
+    if not domain or not pywhois: return 0.0
     try:
         w = pywhois.whois(domain)
         cd = w.creation_date
@@ -211,107 +227,79 @@ def domain_age_years(domain: str) -> float:
         return 0.0
 
 def has_listings_signals(soup: BeautifulSoup) -> bool:
-    needles = [
-        "for sale", "for rent", "to let", "buy", "sell", "rent",
-        "listings", "properties", "our properties", "immobili", "immobilier",
-        "angebote", "objekte"
-    ]
+    needles = ["for sale","for rent","to let","buy","sell","rent","listings","properties",
+               "our properties","immobili","immobilier","angebote","objekte"]
     txt = soup.get_text(" ").lower()
-    if any(n in txt for n in needles):
-        return True
+    if any(n in txt for n in needles): return True
     for a in soup.find_all("a", href=True):
         h = a.get("href","").lower()
-        if any(x in h for x in ["/listings", "/properties", "/property", "/immobili", "/angebote"]):
+        if any(x in h for x in ["/listings","/properties","/property","/immobili","/angebote"]):
             return True
     return False
 
 def has_recent_content(soup: BeautifulSoup, max_days=365) -> bool:
     import datetime as dt
     text = soup.get_text(" ")
-    patterns = [
-        r"(20[2-9][0-9])",
-        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}",
-        r"\b\d{1,2}[/-]\d{1,2}[/-](20[2-9][0-9])"
-    ]
+    patterns = [r"(20[2-9][0-9])",
+                r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}",
+                r"\b\d{1,2}[/-]\d{1,2}[/-](20[2-9][0-9])"]
     now = dt.datetime.utcnow()
     for pat in patterns:
         for m in re.finditer(pat, text, flags=re.I):
             s = m.group(0)
             try:
-                if re.fullmatch(r"20[2-9][0-9]", s):
-                    d = dt.datetime(int(s), 12, 31)
+                if re.fullmatch(r"20[2-9][0-9]", s): d = dt.datetime(int(s), 12, 31)
                 elif re.match(r"[A-Za-z]{3,}\s+\d{4}", s):
-                    parts = s.split()
-                    y = int(parts[-1]); mon = parts[0][:3].title()
+                    parts = s.split(); y = int(parts[-1]); mon = parts[0][:3].title()
                     month_num = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].index(mon)+1
                     d = dt.datetime(y, month_num, 1)
                 else:
-                    y = int(re.findall(r"\d+", s)[-1])
-                    d = dt.datetime(y, 1, 1)
-                if (now - d).days <= max_days:
-                    return True
+                    y = int(re.findall(r"\d+", s)[-1]); d = dt.datetime(y,1,1)
+                if (now - d).days <= max_days: return True
             except Exception:
                 continue
     return False
 
 def count_team_members(soup: BeautifulSoup) -> int:
-    sels = "[class*='team'],[class*='agent'],[class*='member'],[class*='broker']"
-    blocks = soup.select(sels)
-    count = 0
-    for b in blocks:
-        txt = b.get_text(" ").lower()
-        if any(k in txt for k in ["agent", "broker", "team", "associate", "advisor"]):
-            count += 1
-    return count
+    blocks = soup.select("[class*='team'],[class*='agent'],[class*='member'],[class*='broker']")
+    return sum(1 for b in blocks if any(k in b.get_text(" ").lower() for k in ["agent","broker","team","associate","advisor"]))
 
 def choose_best_email(emails):
     if not emails: return None
     bad = ("noreply","no-reply","donotreply","do-not-reply")
     def score(e):
         local = e.split("@")[0].lower()
-        if any(b in local for b in bad):
-            return (999, 1, len(local))
+        if any(b in local for b in bad): return (999,1,len(local))
         pref = 0
-        for i, p in enumerate(EDITORIAL_PREFS):
+        for i,p in enumerate(EDITORIAL_PREFS):
             if local.startswith(p): pref = 100 - i; break
         penalty = 1 if local.startswith("info") else 0
         return (-(pref), penalty, len(local))
     return sorted(emails, key=score)[0]
 
 def uses_https(url: str) -> bool:
-    try:
-        return urlparse(url or "").scheme == "https"
-    except Exception:
-        return False
+    return (urlparse(url or "").scheme == "https")
 
 def rss_recent(soup: BeautifulSoup, html: str, max_days=365) -> bool:
     for l in soup.find_all("link"):
         if (l.get("type") or "").lower() in ("application/rss+xml","application/atom+xml"):
             return True
-    if has_recent_content(soup, max_days=max_days):
-        return True
-    return False
+    return has_recent_content(soup, max_days=max_days)
 
 def quality_score(website: str, html: str, soup: BeautifulSoup, email: str) -> float:
-    """
-    0..5 score. Keep >= QUALITY_MIN (default 2.5). Consider setting 3.0 for stricter.
-    """
     score = 0.0
     if not looks_parked(html): score += 1.0
     if has_listings_signals(soup): score += 1.0
-    if has_recent_content(soup, max_days=365): score += 0.7
-    site_dom = etld1_from_url(website)
-    mail_dom = email_domain(email)
+    if has_recent_content(soup, 365): score += 0.7
+    site_dom = etld1_from_url(website); mail_dom = email_domain(email)
     if site_dom and mail_dom == site_dom: score += 0.7
     if domain_has_mx(mail_dom or site_dom): score += 0.6
     age = domain_age_years(site_dom)
     if age >= 1.0: score += 0.4
-    tm = count_team_members(soup)
-    if tm >= 3: score += 0.3
-    # New minor signals
+    if count_team_members(soup) >= 3: score += 0.3
     if domain_has_dmarc(mail_dom or site_dom): score += 0.3
     if uses_https(website): score += 0.2
-    if rss_recent(soup, html, max_days=365): score += 0.3
+    if rss_recent(soup, html, 365): score += 0.3
     return min(score, 5.0)
 
 def summarize_signals(q, website, email, soup):
@@ -328,23 +316,19 @@ def summarize_signals(q, website, email, soup):
 
 # ========= Geo & OSM =========
 def geocode_city(city, country):
-    r = SESS.get(
-        "https://nominatim.openstreetmap.org/search",
+    r = SESS.get("https://nominatim.openstreetmap.org/search",
         params={"q": f"{city}, {country}", "format":"json", "limit":1},
-        headers={"Referer":"https://nominatim.org"},
-        timeout=30
-    )
+        headers={"Referer":"https://nominatim.org"}, timeout=30)
     r.raise_for_status()
     data = r.json()
-    if not data:
-        raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
+    if not data: raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
     south, north, west, east = map(float, data[0]["boundingbox"])
     return south, west, north, east
 
 def overpass_estate_agents(bbox):
     south, west, north, east = bbox
     parts = []
-    for k, v in OSM_FILTERS:
+    for k,v in OSM_FILTERS:
         for t in ("node","way","relation"):
             parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
     q = f"""[out:json][timeout:25];({ ' '.join(parts) });out center tags;"""
@@ -358,38 +342,30 @@ def overpass_estate_agents(bbox):
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
         email = tags.get("email") or tags.get("contact:email")
         if name:
-            rows.append({
-                "business_name": name.strip(),
-                "website": normalize_url(website) if website else None,
-                "email": email
-            })
-    # dedupe by (name, domain)
+            rows.append({"business_name": name.strip(),
+                         "website": normalize_url(website) if website else None,
+                         "email": email})
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), domain_from_url(r0["website"] or ""))
-        if key not in dedup:
-            dedup[key] = r0
-    out = list(dedup.values())
-    random.shuffle(out)
+        if key not in dedup: dedup[key] = r0
+    out = list(dedup.values()); random.shuffle(out)
     return out
 
 # ========= Foursquare website finder =========
 def fsq_find_website(name, lat, lon):
-    if not FOURSQUARE_API_KEY:
-        return None
+    if not FOURSQUARE_API_KEY: return None
     headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
     try:
         params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000, "fields": "website"}
         r = requests.get("https://api.foursquare.com/v3/places/search",
                          headers=headers, params=params, timeout=20)
         if r.status_code == 200:
-            data = r.json()
-            results = data.get("results") or []
+            results = (r.json().get("results") or [])
             if results:
                 first = results[0]
                 website = first.get("website")
-                if website:
-                    return normalize_url(website)
+                if website: return normalize_url(website)
                 fsq_id = first.get("fsq_id")
                 if fsq_id:
                     d = requests.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
@@ -402,26 +378,29 @@ def fsq_find_website(name, lat, lon):
     return None
 
 # ========= Crawl contact page for email =========
+def cf_decode(hexstr: str) -> str:
+    try:
+        b = bytes.fromhex(hexstr)
+        key = b[0]
+        return ''.join(chr(c ^ key) for c in b[1:])
+    except Exception:
+        return ""
+
 def gather_candidate_pages(base):
     pages = [base]
-    common = [
-        "/contact","/contact-us","/about","/about-us","/who-we-are","/our-story",
-        "/team","/our-team","/agents","/our-agents","/brokers","/staff",
-        "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo"
-    ]
-    for p in common:
-        pages.append(urljoin(base, p))
+    common = ["/contact","/contact-us","/about","/about-us","/who-we-are","/our-story",
+              "/team","/our-team","/agents","/our-agents","/brokers","/staff",
+              "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo"]
+    for p in common: pages.append(urljoin(base, p))
     return pages
 
 def crawl_contact(site_url):
     out = {"email": ""}
-    if not site_url:
-        return out
+    if not site_url: return out
     for url in gather_candidate_pages(site_url):
         base = f"{urlparse(url).scheme}://{urlparse(url).netloc}/"
         path = urlparse(url).path or "/"
-        if not allowed_by_robots(base, path):
-            continue
+        if not allowed_by_robots(base, path): continue
         try:
             resp = fetch(url)
         except Exception:
@@ -432,11 +411,15 @@ def crawl_contact(site_url):
         for a in soup.select('a[href^="mailto:"]'):
             m = EMAIL_RE.search(a.get("href",""))
             if m: emails.add(m.group(0))
+        # Cloudflare-protected emails
+        for sp in soup.select("span.__cf_email__, [data-cfemail]"):
+            enc = sp.get("data-cfemail")
+            dec = cf_decode(enc) if enc else ""
+            if dec and EMAIL_RE.search(dec): emails.add(dec)
 
         if emails:
             out["email"] = choose_best_email(list(emails))
             break
-
         _sleep()
 
     if not out["email"]:
@@ -446,64 +429,46 @@ def crawl_contact(site_url):
 
 # ========= Official / registry sources =========
 def uk_companies_house():
-    if not (USE_COMPANIES_HOUSE and CH_API_KEY):
-        return []
+    if not (USE_COMPANIES_HOUSE and CH_API_KEY): return []
     url = "https://api.company-information.service.gov.uk/advanced-search/companies"
     try:
         r = requests.get(url, params={"sic_codes":"68310", "size":50}, auth=(CH_API_KEY, ""), timeout=30)
         if r.status_code != 200: return []
-        data = r.json()
-        items = data.get("items") or []
+        items = r.json().get("items") or []
         out = []
         for it in items:
             nm = (it.get("company_name") or "").strip()
-            if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
-        random.shuffle(out)
-        return out
+            if nm: out.append({"business_name": nm, "website": None, "email": None})
+        random.shuffle(out); return out
     except Exception:
         return []
 
 # --- SIRENE OAuth2 token cache ---
 _SIRENE_TOKEN_CACHE = {"token": None, "expires_at": 0}
 def sirene_get_token():
-    """Fetch & cache a SIRENE OAuth2 token using client_credentials."""
-    if not (SIRENE_KEY and SIRENE_SECRET):
-        return None
+    if not (SIRENE_KEY and SIRENE_SECRET): return None
     if _SIRENE_TOKEN_CACHE["token"] and time.time() < _SIRENE_TOKEN_CACHE["expires_at"] - 60:
         return _SIRENE_TOKEN_CACHE["token"]
-    r = requests.post(
-        "https://api.insee.fr/token",
-        data={"grant_type": "client_credentials"},
-        auth=(SIRENE_KEY, SIRENE_SECRET),
-        timeout=30,
-    )
+    r = requests.post("https://api.insee.fr/token",
+        data={"grant_type": "client_credentials"}, auth=(SIRENE_KEY, SIRENE_SECRET), timeout=30)
     r.raise_for_status()
     js = r.json()
-    tok = js["access_token"]
-    ttl = js.get("expires_in", 3600)
-    _SIRENE_TOKEN_CACHE["token"] = tok
-    _SIRENE_TOKEN_CACHE["expires_at"] = time.time() + ttl
-    return tok
+    _SIRENE_TOKEN_CACHE["token"] = js["access_token"]
+    _SIRENE_TOKEN_CACHE["expires_at"] = time.time() + js.get("expires_in", 3600)
+    return _SIRENE_TOKEN_CACHE["token"]
 
 def fr_sirene(city=None):
-    """INSEE SIRENE V3, NAF 68.31Z. Returns names; website via FSQ later."""
-    if not USE_SIRENE:
-        return []
+    if not USE_SIRENE: return []
     tok = sirene_get_token()
-    if not tok:
-        return []
+    if not tok: return []
     url = "https://api.insee.fr/entreprises/sirene/V3/siret"
     headers = {"Authorization": f"Bearer {tok}"}
     q = 'activitePrincipaleUniteLegale:"68.31Z"'
-    if city:
-        q += f' AND libelleCommuneEtablissement:"{city}"'
+    if city: q += f' AND libelleCommuneEtablissement:"{city}"'
     try:
         r = requests.get(url, headers=headers, params={"q": q, "nombre": 50}, timeout=30)
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        etabs = (data.get("etablissements") or [])
+        if r.status_code != 200: return []
+        etabs = (r.json().get("etablissements") or [])
         out = []
         for e in etabs:
             ul = e.get("uniteLegale") or {}
@@ -511,136 +476,82 @@ def fr_sirene(city=None):
             if not nm:
                 nm = (e.get("periodesEtablissement") or [{}])[-1].get("enseigne1Etablissement") or ""
                 nm = nm.strip()
-            if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
-        random.shuffle(out)
-        return out
+            if nm: out.append({"business_name": nm, "website": None, "email": None})
+        random.shuffle(out); return out
     except Exception:
         return []
 
 def opencorp_search(country_code):
-    """
-    OpenCorporates search without requiring an API key.
-    If OPENCORP_API_KEY is present, we include it (higher quota); otherwise unauthenticated.
-    Handles 429 (rate-limited) with small backoff.
-    """
-    if not USE_OPENCORP:
-        return []
-
+    if not USE_OPENCORP: return []
     url = "https://api.opencorporates.com/v0.4/companies/search"
-
-    queries = [
-        'real estate',
-        'realtor OR brokerage',
-        'immobilier',   # FR/CA-QC
-        'immobilien',   # DE/AT/CH
-    ]
+    queries = ['real estate','realtor OR brokerage','immobilier','immobilien']
     q = random.choice(queries)
-
     params = {"q": q, "country_code": country_code, "per_page": 40, "order": "score"}
-    if OPENCORP_API_KEY:
-        params["api_token"] = OPENCORP_API_KEY
-
+    if OPENCORP_API_KEY: params["api_token"] = OPENCORP_API_KEY
     for attempt in range(3):
         try:
             r = requests.get(url, params=params, timeout=30)
         except Exception:
             return []
         if r.status_code == 429:
-            time.sleep(3 * (attempt + 1))
-            continue
-        if r.status_code != 200:
-            return []
-        try:
-            data = r.json()
-        except Exception:
-            return []
-        results = (data.get("results") or {}).get("companies") or []
+            time.sleep(3*(attempt+1)); continue
+        if r.status_code != 200: return []
+        results = (r.json().get("results") or {}).get("companies") or []
         out = []
         for c in results:
-            co = c.get("company") or {}
-            nm = (co.get("name") or "").strip()
-            if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
-        # de-dupe by name
+            nm = (c.get("company") or {}).get("name") or ""
+            nm = nm.strip()
+            if nm: out.append({"business_name": nm, "website": None, "email": None})
         seen, uniq = set(), []
         for x in out:
             k = x["business_name"].lower()
             if k not in seen:
                 uniq.append(x); seen.add(k)
-        random.shuffle(uniq)
-        return uniq
-
+        random.shuffle(uniq); return uniq
     return []
 
 def ch_zefix():
-    """
-    ZEFIX (Swiss central company index) — name search; no API key required.
-    Returns names only; website via FSQ later.
-    """
-    if not USE_ZEFIX:
-        return []
-    terms = ["immobilien", "real estate", "immobilier", "agenzia immobiliare", "makler"]
-    langs = ["de","fr","it","en"]
-    out = []
+    if not USE_ZEFIX: return []
+    terms = ["immobilien","real estate","immobilier","agenzia immobiliare","makler"]
+    langs = ["de","fr","it","en"]; out = []
     try:
         for term in terms:
             for lang in langs:
                 try:
-                    r = requests.get(
-                        "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
-                        params={"name": term, "maxEntries": 50, "language": lang},
-                        timeout=30,
-                    )
+                    r = requests.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                                     params={"name": term, "maxEntries": 50, "language": lang}, timeout=30)
                     if r.status_code != 200:
-                        r = requests.get(
-                            "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
-                            params={"queryString": term, "maxEntries": 50, "language": lang},
-                            timeout=30,
-                        )
-                        if r.status_code != 200:
-                            continue
+                        r = requests.get("https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                                         params={"queryString": term, "maxEntries": 50, "language": lang}, timeout=30)
+                        if r.status_code != 200: continue
                     data = r.json()
                     items = data if isinstance(data, list) else data.get("list") or data.get("items") or []
                     for it in items:
                         nm = (it.get("name") or it.get("companyName") or it.get("firmName") or "").strip()
-                        if nm:
-                            out.append({"business_name": nm, "website": None, "email": None})
-                    if len(out) >= 50:
-                        break
+                        if nm: out.append({"business_name": nm, "website": None, "email": None})
+                    if len(out) >= 50: break
                 except Exception:
                     continue
-            if len(out) >= 50:
-                break
+            if len(out) >= 50: break
     except Exception:
         return []
-    # dedupe by lowercase name
     seen, uniq = set(), []
     for x in out:
         k = x["business_name"].lower()
-        if k not in seen:
-            uniq.append(x); seen.add(k)
-    random.shuffle(uniq)
-    return uniq
+        if k not in seen: uniq.append(x); seen.add(k)
+    random.shuffle(uniq); return uniq
 
 def official_sources(city, country, lat, lon):
     out = []
     try:
-        if country in ("United Kingdom",):
-            out += uk_companies_house()
-        elif country in ("France",):
-            out += fr_sirene(city)
-        elif country in ("United States",):
-            out += opencorp_search("us")
-        elif country in ("Canada",):
-            out += opencorp_search("ca")
-        elif country in ("Germany",):
-            out += opencorp_search("de")
-        elif country in ("Switzerland",):
-            out += ch_zefix()
+        if country in ("United Kingdom",): out += uk_companies_house()
+        elif country in ("France",):       out += fr_sirene(city)
+        elif country in ("United States",):out += opencorp_search("us")
+        elif country in ("Canada",):       out += opencorp_search("ca")
+        elif country in ("Germany",):      out += opencorp_search("de")
+        elif country in ("Switzerland",):  out += ch_zefix()
     except Exception:
         pass
-    # unique by name
     seen = set(); uniq = []
     for x in out:
         k = x["business_name"].lower()
@@ -648,7 +559,7 @@ def official_sources(city, country, lat, lon):
             uniq.append(x); seen.add(k)
     return uniq
 
-# ========= Trello: header normalization =========
+# ========= Trello helpers =========
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 
@@ -660,38 +571,25 @@ def trello_get_card_desc(card_id):
     return r.json().get("desc") or ""
 
 def normalize_header_block(desc, company, email, website):
-    """
-    Build header block at top in fixed order.
-    Preserve existing First/Hook/Variant values; keep the rest of the description.
-    """
     lines = desc.splitlines()
     preserved = {"First": "", "Hook": "", "Variant": ""}
-
-    keep = []
-    i = 0
+    keep = []; i = 0
     while i < len(lines):
-        line = lines[i]
-        matched = False
+        line = lines[i]; matched = False
         for lab in TARGET_LABELS:
             m = LABEL_RE[lab].match(line)
             if m:
                 matched = True
                 val = (m.group(1) or "").strip()
-                if not val and (i + 1) < len(lines):
-                    nxt = lines[i + 1]
+                if not val and (i+1) < len(lines):
+                    nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                        val = nxt.strip()
-                        i += 1
-                if lab in preserved and not preserved[lab]:
-                    preserved[lab] = val
+                        val = nxt.strip(); i += 1
+                if lab in preserved and not preserved[lab]: preserved[lab] = val
                 break
-        if not matched:
-            keep.append(line)
+        if not matched: keep.append(line)
         i += 1
-
-    while keep and keep[0].strip() == "":
-        keep.pop(0)
-
+    while keep and keep[0].strip() == "": keep.pop(0)
     block = [
         f"Company: {company or ''}",
         f"First: {preserved['First']}",
@@ -700,53 +598,43 @@ def normalize_header_block(desc, company, email, website):
         f"Variant: {preserved['Variant']}",
         f"Website: {website or ''}",
     ]
-    new_desc = "\n".join(block + ([""] if keep else []) + keep)
-    return new_desc
+    return "\n".join(block + ([""] if keep else []) + keep)
 
 def update_card_header(card_id, company, email, website):
     desc_old = trello_get_card_desc(card_id)
-    # keep email aligned with website domain when possible
     site_dom = etld1_from_url(website)
     if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
         email = f"info@{site_dom}"
     desc_new = normalize_header_block(desc_old, company, email, website)
-    if desc_new == desc_old:
-        return False
+    if desc_new == desc_old: return False
     r = SESS.put(f"https://api.trello.com/1/cards/{card_id}",
-                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": desc_new},
-                 timeout=30)
+                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": desc_new}, timeout=30)
     r.raise_for_status()
     return True
 
 def append_note(card_id, note):
     if not note: return
     desc = trello_get_card_desc(card_id)
-    if "Signals:" in desc:
-        return
+    if "Signals:" in desc: return
     new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
-    r = SESS.put(f"https://api.trello.com/1/cards/{card_id}",
-                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc},
-                 timeout=30)
-    r.raise_for_status()
+    SESS.put(f"https://api.trello.com/1/cards/{card_id}",
+             params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc}, timeout=30).raise_for_status()
 
 def find_empty_template_cards(list_id, max_needed=1):
     r = SESS.get(f"https://api.trello.com/1/lists/{list_id}/cards",
                  params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "id,name,desc"},
                  timeout=30)
     r.raise_for_status()
-    cards = r.json()
     empties = []
-    for c in cards:
+    for c in r.json():
         desc = c.get("desc") or ""
         if re.search(r"(?mi)^\s*Company\s*:\s*$", desc):
             empties.append(c["id"])
-        if len(empties) >= max_needed:
-            break
+        if len(empties) >= max_needed: break
     return empties
 
 def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
-    if not template_card_id:
-        return None
+    if not template_card_id: return None
     r = SESS.post("https://api.trello.com/1/cards",
                   params={"key":TRELLO_KEY,"token":TRELLO_TOKEN,
                           "idList":list_id,"idCardSource":template_card_id,"name":name},
@@ -754,7 +642,7 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     r.raise_for_status()
     return r.json()["id"]
 
-# ---- dedupe helpers ----
+# ---- dedupe + CSV ----
 def load_seen():
     try:
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
@@ -765,16 +653,26 @@ def load_seen():
 def save_seen(seen):
     try:
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            for d in sorted(seen):
-                f.write(d+"\n")
+            for d in sorted(seen): f.write(d+"\n")
     except Exception:
         pass
+
+def append_csv(leads, city, country):
+    if not leads: return
+    fname = os.getenv("LEADS_CSV", f"leads_{date.today().isoformat()}.csv")
+    file_exists = pathlib.Path(fname).exists()
+    with open(fname, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if not file_exists:
+            w.writerow(["timestamp","city","country","company","email","website","q"])
+        ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
+        for L in leads:
+            w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
 
 # ========= Main =========
 def main():
     missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
-    if missing:
-        raise SystemExit(f"Missing env: {', '.join(missing)}")
+    if missing: raise SystemExit(f"Missing env: {', '.join(missing)}")
 
     city, country = pick_today_city()
     south, west, north, east = geocode_city(city, country)
@@ -784,129 +682,76 @@ def main():
     leads = []
     seen = load_seen()
 
-    # 0) Official sources first (country-specific)
+    # 0) Official sources first
     off = official_sources(city, country, lat, lon)
     for biz in off:
         if len(leads) >= DAILY_LIMIT: break
-
-        website = biz.get("website")
-        if not website:
-            website = fsq_find_website(biz["business_name"], lat, lon)
-        if not website:
-            continue
-
+        website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+        if not website: continue
         site_dom = etld1_from_url(website)
-        if site_dom in seen:
-            continue
-
-        # robots + homepage fetch
-        if not allowed_by_robots(website, "/"):
-            continue
+        if site_dom in seen: continue
+        if not allowed_by_robots(website, "/"): continue
         try:
             home = fetch(website)
         except Exception:
             continue
         soup_home = BeautifulSoup(home.text, "html.parser")
-
         contact = crawl_contact(website)
         email = (contact.get("email") or "").strip()
-
-        # align/clean email
         if not email or "@" not in email:
-            if site_dom:
-                email = f"info@{site_dom}"
+            if site_dom: email = f"info@{site_dom}"
         if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
             email = f"info@{site_dom}"
         if "@" in email and not domain_has_mx(email_domain(email)):
-            if site_dom and domain_has_mx(site_dom):
-                email = f"info@{site_dom}"
-            else:
-                continue
-
-        # Optional: require explicit on-site email (no info@ fallback)
-        if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower():
-            continue
-
-        # Quality filter
+            if site_dom and domain_has_mx(site_dom): email = f"info@{site_dom}"
+            else: continue
+        if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower(): continue
         q = quality_score(website, home.text, soup_home, email)
-        if q < QUALITY_MIN:
-            continue
+        if q < QUALITY_MIN: continue
+        leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                      "signals": summarize_signals(q, website, email, soup_home)})
+        seen.add(site_dom); _sleep()
 
-        leads.append({
-            "Company": biz["business_name"],
-            "Email": email,
-            "Website": website,
-            "q": q,
-            "signals": summarize_signals(q, website, email, soup_home)
-        })
-        seen.add(site_dom)
-        _sleep()
-
-    # 1) If still short, use OSM around the city
+    # 1) OSM fallback
     if len(leads) < DAILY_LIMIT:
-        candidates = overpass_estate_agents((south, west, north, east))
-        for biz in candidates:
+        for biz in overpass_estate_agents((south, west, north, east)):
             if len(leads) >= DAILY_LIMIT: break
-
-            website = biz.get("website")
-            if not website:
-                website = fsq_find_website(biz["business_name"], lat, lon)
+            website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
             if not website and biz.get("email"):
                 dom = email_domain(biz["email"])
-                if dom and dom not in GENERIC_MAIL_PROVIDERS:
-                    website = f"https://{dom}"
-            if not website:
-                continue
-
+                if dom and dom not in GENERIC_MAIL_PROVIDERS: website = f"https://{dom}"
+            if not website: continue
             site_dom = etld1_from_url(website)
-            if site_dom in seen:
-                continue
-
-            if not allowed_by_robots(website, "/"):
-                continue
+            if site_dom in seen: continue
+            if not allowed_by_robots(website, "/"): continue
             try:
                 home = fetch(website)
             except Exception:
                 continue
             soup_home = BeautifulSoup(home.text, "html.parser")
-
             contact = crawl_contact(website)
             email = (contact.get("email") or "").strip()
             if not email or "@" not in email:
-                if site_dom:
-                    email = f"info@{site_dom}"
+                if site_dom: email = f"info@{site_dom}"
             if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
                 email = f"info@{site_dom}"
             if "@" in email and not domain_has_mx(email_domain(email)):
-                if site_dom and domain_has_mx(site_dom):
-                    email = f"info@{site_dom}"
-                else:
-                    continue
-
-            if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower():
-                continue
-
+                if site_dom and domain_has_mx(site_dom): email = f"info@{site_dom}"
+                else: continue
+            if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower(): continue
             q = quality_score(website, home.text, soup_home, email)
-            if q < QUALITY_MIN:
-                continue
+            if q < QUALITY_MIN: continue
+            leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                          "signals": summarize_signals(q, website, email, soup_home)})
+            seen.add(site_dom); _sleep()
 
-            leads.append({
-                "Company": biz["business_name"],
-                "Email": email,
-                "Website": website,
-                "q": q,
-                "signals": summarize_signals(q, website, email, soup_home)
-            })
-            seen.add(site_dom)
-            _sleep()
-
-    # keep best-scoring leads
+    # keep top N
     if leads:
         leads.sort(key=lambda x: x.get("q", 0), reverse=True)
         leads = leads[:DAILY_LIMIT]
 
-    # save dedupe file (persist via commit/cache in workflow if you want cross-day dedupe)
     save_seen(seen)
+    append_csv(leads, city, country)
 
     # 2) Push to Trello — one per minute
     pushed = 0
@@ -916,15 +761,9 @@ def main():
             clone_template_into_list(TRELLO_TEMPLATE_CARD_ID, TRELLO_LIST_ID)
             empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
-            print("No empty template card available; skipping.")
-            continue
+            print("No empty template card available; skipping."); continue
 
-        changed = update_card_header(
-            card_id=empties[0],
-            company=lead["Company"],
-            email=lead["Email"],
-            website=lead["Website"],
-        )
+        changed = update_card_header(empties[0], lead["Company"], lead["Email"], lead["Website"])
         if changed:
             pushed += 1
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
