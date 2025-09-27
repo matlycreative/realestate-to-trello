@@ -409,30 +409,51 @@ def gather_candidate_pages(base):
 
 def crawl_contact(site_url):
     out = {"email": ""}
-    if not site_url: return out
+    if not site_url:
+        return out
+
     for url in gather_candidate_pages(site_url):
         base = f"{urlparse(url).scheme}://{urlparse(url).netloc}/"
         path = urlparse(url).path or "/"
-        if not allowed_by_robots(base, path): continue
+        if not allowed_by_robots(base, path):
+            continue
+
         try:
             resp = fetch(url)
         except Exception:
             continue
+
         soup = BeautifulSoup(resp.text, "html.parser")
         emails = set(extract_emails(resp.text))
+
+        # mailto: links
         for a in soup.select('a[href^="mailto:"]'):
-            m = EMAIL_RE.search(a.get("href","")); if m: emails.add(m.group(0))
+            href = a.get("href", "")
+            m = EMAIL_RE.search(href)
+            if m:
+                emails.add(m.group(0))
+
+        # Cloudflare-protected emails
         for sp in soup.select("span.__cf_email__, [data-cfemail]"):
-            enc = sp.get("data-cfemail"); dec = cf_decode(enc) if enc else ""
-            if dec and EMAIL_RE.search(dec): emails.add(dec)
+            enc = sp.get("data-cfemail")
+            dec = cf_decode(enc) if enc else ""
+            if dec and EMAIL_RE.search(dec):
+                emails.add(dec)
+
         if emails:
             chosen = choose_best_email(list(emails))
             if chosen:
-                out["email"] = chosen; break
+                out["email"] = chosen
+                break
+
         _sleep()
+
+    # fallback only if allowed (not strict explicit + not skipping generic)
     if not out["email"] and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
         dom = etld1_from_url(site_url)
-        if dom: out["email"] = f"info@{dom}"
+        if dom:
+            out["email"] = f"info@{dom}"
+
     return out
 
 # ==== Official / registry ====
