@@ -6,7 +6,7 @@ on:
     - cron: "0 7 * * *"   # 07:00 UTC daily
 
 permissions:
-  contents: write   # for committing seen_domains.txt
+  contents: write   # needed for auto-commit
 
 concurrency:
   group: daily-realestate
@@ -15,18 +15,26 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
+    steps:
+      # --- Checkout (full history so commits work) ---
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false   # let the auto-commit action provide its token
+
+      # --- Python runtime ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # --- Deps (keep tolerant if you tweak requirements) ---
       - name: Install deps
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt || true
 
+      # --- Preflight: verify keys + show flags (helps debugging) ---
       - name: Preflight
         env:
           # Required Trello
@@ -58,7 +66,10 @@ jobs:
           QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
           REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
           ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # <-- NEW
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # strict filter
+          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}              # 1 = allow
+          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}          # e.g. 0.3
 
           # Country/city selection
           COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
@@ -66,14 +77,14 @@ jobs:
           FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
           FORCE_CITY: ${{ secrets.FORCE_CITY }}
 
-          # Throughput/timing (optional) — remove if you use script defaults
+          # Optional throughput knobs (use python defaults if unset)
           # DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
           # PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
           # REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
         run: |
           python - <<'PY'
           import os, sys
-          def on(k): return (os.getenv(k) or "").strip() not in ("", "0", "false", "False")
+          def on(k): return (os.getenv(k) or "").strip().lower() in ("1","true","yes","on")
           missing = [k for k in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(k)]
           if missing:
               print("❌ Missing required:", ", ".join(missing)); sys.exit(1)
@@ -86,12 +97,18 @@ jobs:
           if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")):
               print("❌ USE_SIRENE=1 but SIRENE_KEY/SIRENE_SECRET missing."); sys.exit(1)
           print("Quality:")
-          print(f"  QUALITY_MIN={os.getenv('QUALITY_MIN','3.0')}, REQUIRE_EXPLICIT_EMAIL={os.getenv('REQUIRE_EXPLICIT_EMAIL','0')}, ADD_SIGNALS_NOTE={os.getenv('ADD_SIGNALS_NOTE','0')}")
-          print(f"  SKIP_GENERIC_EMAILS={os.getenv('SKIP_GENERIC_EMAILS','0')}")  # <-- shows strict flag
+          print(f"  QUALITY_MIN={os.getenv('QUALITY_MIN','3.0')}")
+          print(f"  REQUIRE_EXPLICIT_EMAIL={os.getenv('REQUIRE_EXPLICIT_EMAIL','0')}")
+          print(f"  ADD_SIGNALS_NOTE={os.getenv('ADD_SIGNALS_NOTE','0')}")
+          print(f"  SKIP_GENERIC_EMAILS={os.getenv('SKIP_GENERIC_EMAILS','0')}")
+          print(f"  REQUIRE_BUSINESS_DOMAIN={os.getenv('REQUIRE_BUSINESS_DOMAIN','0')}")
+          print(f"  ALLOW_FREEMAIL={os.getenv('ALLOW_FREEMAIL','1')}")
+          print(f"  FREEMAIL_EXTRA_Q={os.getenv('FREEMAIL_EXTRA_Q','0.3')}")
           print("Country/city:")
           print(f"  COUNTRY_WHITELIST='{os.getenv('COUNTRY_WHITELIST','')}', CITY_MODE={os.getenv('CITY_MODE','rotate')}, FORCE_COUNTRY='{os.getenv('FORCE_COUNTRY','')}', FORCE_CITY='{os.getenv('FORCE_CITY','')}'")
           PY
 
+      # --- Run the lead finder / Trello filler ---
       - name: Run pipeline
         env:
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
@@ -117,7 +134,10 @@ jobs:
           QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
           REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
           ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # <-- NEW
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
+          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
+          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
 
           COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
           CITY_MODE: ${{ secrets.CITY_MODE }}
@@ -132,6 +152,7 @@ jobs:
           set -xe
           python realestate_to_trello.py
 
+      # --- Save a CSV of the run results (nice for inspection) ---
       - name: Upload leads CSV
         uses: actions/upload-artifact@v4
         with:
@@ -141,18 +162,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Commit seen_domains.txt (if changed)
-        run: |
-          if [ -f seen_domains.txt ]; then
-            git config user.name "github-actions"
-            git config user.email "actions@github.com"
-            git add seen_domains.txt || true
-            if ! git diff --cached --quiet; then
-              git commit -m "Update seen_domains.txt"
-              git push
-            else:
-              echo "No changes to seen_domains.txt"
-            fi
-          else:
-            echo "seen_domains.txt not created this run."
-          fi
+      # --- Commit state file (seen_domains.txt) safely ---
+      - name: Commit seen_domains.txt
+        uses: stefanzweifel/git-auto-commit-action@v5
+        continue-on-error: true            # avoid failing the whole run if branch protection blocks push
+        with:
+          commit_message: "Update seen_domains.txt [skip ci]"
+          file_pattern: seen_domains.txt
+          branch: ${{ github.ref_name }}
+          create_branch: false
