@@ -1,6 +1,5 @@
 # realestate_to_trello.py
-# Find real-estate leads and fill Trello template cards (1/minute).
-# Only edits: Company / First / Email / Website.
+# Fill Trello template cards with Company / Email / Website (no First).
 
 import os, re, json, time, random
 from datetime import date
@@ -10,7 +9,7 @@ from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 
-# Optional: load .env locally (ignored on GitHub Actions if not installed)
+# Optional: load .env locally
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -26,8 +25,8 @@ UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})
 
 TRELLO_KEY      = os.getenv("TRELLO_KEY")
 TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
-TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")  # "Start here" list
-TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional: clone if no blank exists
+TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")                 # "Start here" list ID
+TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional
 
 FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")  # optional fallback
 
@@ -37,29 +36,7 @@ SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# Expanded, multilingual role keywords (editor/marketing-friendly)
-ROLE_WORDS = list(set([
-    # EN
-    "owner","founder","managing director","managing partner","director","ceo",
-    "principal","broker","agent","manager","marketing","content","social media","growth","editor",
-    # DE
-    "geschäftsführer","inhaber","inhaberin","leiter","verkauf","makler","agenturleitung","marketingleitung",
-    # FR
-    "propriétaire","fondateur","fondatrice","directeur","directrice","gérant","gérante","responsable","courtier","agent",
-    # IT
-    "titolare","fondatore","fondatrice","direttore","direttrice","amministratore","responsabile","agente","broker",
-    # ES / PT
-    "propietario","propietaria","fundador","fundadora","director","directora","gerente","responsable","agente",
-    "corretor","corretora","proprietário","proprietária","diretor","diretora",
-    # NL / BE
-    "eigenaar","directeur","zaakvoerder","verantwoordelijke","makelaar",
-    # Nordics
-    "daglig leder","eier","direktør","markedsføring","markedschef","marknadsföring","ägare","vd",
-    # HR
-    "vlasnik","vlasnica","direktor","direktorica","voditelj","marketing",
-]))
-
-# --- Only your requested regions (rotate daily) ---
+# --- Countries/cities you asked for (rotate daily) ---
 CITY_ROTATION = [
     # Switzerland
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
@@ -104,12 +81,6 @@ GENERIC_MAIL_PROVIDERS = {
     "gmail.com","yahoo.com","outlook.com","hotmail.com","icloud.com",
     "proton.me","protonmail.com","aol.com","live.com","msn.com"
 }
-GENERIC_MAILBOXES = {
-    "info","contact","hello","hi","office","team","sales","support",
-    "admin","enquiries","marketing","media","press","service","mail"
-}
-
-NAME_RE = re.compile(r"\b([A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’\-]+)\s+([A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’\-]+)\b")
 
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 def pick_today_city(): return CITY_ROTATION[date.today().toordinal() % len(CITY_ROTATION)]
@@ -223,12 +194,9 @@ def fetch(url):
 def gather_candidate_pages(base):
     pages = [base]
     common = [
-        "/about","/about-us","/who-we-are","/our-story",
-        "/team","/our-team","/meet-the-team","/leadership","/staff",
-        "/agents","/our-agents","/brokers","/consultants","/people",
-        "/contact","/contact-us",
-        "/impressum","/kontakt","/ueber-uns","/uber-uns",
-        "/equipe","/equipe-comercial","/equipo"
+        "/contact","/contact-us","/about","/about-us","/who-we-are","/our-story",
+        "/team","/our-team","/agents","/our-agents","/brokers","/staff",
+        "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo"
     ]
     for p in common:
         pages.append(urljoin(base, p))
@@ -237,115 +205,9 @@ def gather_candidate_pages(base):
 def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
-def extract_people_jsonld_deep(soup):
-    """Find Person names in any ld+json, including @graph and nested fields."""
-    people = []
-    def walk(obj):
-        if isinstance(obj, dict):
-            t = obj.get("@type")
-            if (t == "Person") or (isinstance(t, list) and "Person" in t):
-                nm = obj.get("name")
-                if isinstance(nm, str):
-                    people.append((nm.strip(), (obj.get("jobTitle") or "").strip()))
-            for k in ["founder","founders","employee","employees","member","members","contactPoint","author"]:
-                if k in obj:
-                    walk(obj[k])
-            for v in obj.values():
-                walk(v)
-        elif isinstance(obj, list):
-            for it in obj: walk(it)
-
-    for script in soup.find_all("script", type=lambda t: t and "ld+json" in t):
-        try:
-            data = json.loads(script.string)
-            walk(data)
-        except Exception:
-            continue
-    return people
-
-def extract_people_heuristic(soup):
-    text = soup.get_text(" ").strip()
-    hits = []
-    for role in ROLE_WORDS:
-        pat = re.compile(rf"{role}[:\s\-–]*([A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+){{1,2}})", re.I)
-        for m in pat.finditer(text):
-            hits.append((m.group(1).strip(), role))
-    for tag in soup.select("[class*='team'],[class*='person'],[class*='member'],[class*='agent']"):
-        nm = tag.get_text(" ", strip=True)
-        m = re.search(r"([A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+){1,2})", nm)
-        if m:
-            hits.append((m.group(1).strip(), "team"))
-    # de-dup
-    return list({(n, r) for n, r in hits})
-
-def extract_hcard_names(soup):
-    names = set()
-    selectors = [
-        ".vcard .fn", ".vcard .given-name", ".vcard .n .given-name",
-        ".h-card .p-name", ".h-card .p-given-name",
-        "[itemtype*='Person'] [itemprop='name']",
-        "[class*='agent-name']", "[class*='broker-name']",
-        "[class*='team-member'] [class*='name']",
-    ]
-    for sel in selectors:
-        for el in soup.select(sel):
-            txt = el.get_text(" ", strip=True)
-            m = NAME_RE.search(txt)
-            if m: names.add(m.group(0))
-    return [(n, "hcard") for n in names]
-
-def extract_mailto_context(soup):
-    """If a mailto link has name-like text, capture it."""
-    out = []
-    for a in soup.select('a[href^="mailto:"]'):
-        txt = a.get_text(" ", strip=True)
-        for cand in [txt, a.parent.get_text(" ", strip=True) if a.parent else ""]:
-            m = NAME_RE.search(cand)
-            if m:
-                out.append((m.group(0), "mailto"))
-    return list({t[0]: t for t in out}.values())
-
-def score_person(name, role_hint_text):
-    score = 0
-    for r in ROLE_WORDS:
-        if r.lower() in role_hint_text:
-            score += 2; break
-    if len(name.split()) == 2: score += 1
-    return score
-
-def choose_best_person(soup, people):
-    if not people: return None
-    text = soup.get_text(" ").lower()
-    ranked = sorted(people, key=lambda p: score_person(p[0], text), reverse=True)
-    return ranked[0][0]
-
-def choose_email(emails):
-    if not emails: return None
-    prefs = ["owner","ceo","md","sales","hello","contact","media","marketing"]
-    def key(e):
-        local = e.split("@")[0].lower()
-        return (not any(local.startswith(p) for p in prefs), local.startswith("info"))
-    return sorted(emails, key=key)[0]
-
-def guess_first_from_email(email: str) -> str:
-    """Best-effort first-name guess from email local part; returns '' if unsure."""
-    if not email or "@" not in email:
-        return ""
-    local = email.split("@", 1)[0]
-    local = re.sub(r"^(info|contact|hello|hi|team|office|sales|support|admin|marketing|media|press|service)[._\-+]*",
-                   "", local, flags=re.I)
-    parts = [p for p in re.split(r"[._\-+0-9]+", local) if p]
-    if parts and parts[0].lower() in GENERIC_MAILBOXES:
-        return ""
-    for p in parts[:2]:
-        if len(p) >= 2 and not re.fullmatch(r"[A-Za-z]", p):
-            return p.capitalize()
-    if len(parts) == 1 and len(parts[0]) >= 3:
-        return parts[0].capitalize()
-    return ""
-
 def crawl_contact(site_url):
-    out = {"first": "", "email": ""}
+    """Return only an email (no first name)."""
+    out = {"email": ""}
     if not site_url:
         return out
     for url in gather_candidate_pages(site_url):
@@ -359,29 +221,20 @@ def crawl_contact(site_url):
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # collect emails
         emails = set(extract_emails(resp.text))
         for a in soup.select('a[href^="mailto:"]'):
             m = EMAIL_RE.search(a.get("href",""))
             if m: emails.add(m.group(0))
-        chosen_email = choose_email(list(emails))
 
-        # collect people from multiple signals
-        people = []
-        people += extract_people_jsonld_deep(soup)
-        people += extract_people_heuristic(soup)
-        people += extract_hcard_names(soup)
-        people += extract_mailto_context(soup)
-
-        full_name = choose_best_person(soup, people) if people else None
-        if full_name and not out["first"]:
-            out["first"] = full_name.split()[0].strip("-,;:()")
-
-        if chosen_email and not out["email"]:
-            out["email"] = chosen_email
-
-        if out["email"] and out["first"]:
+        if emails:
+            # prefer non-info/mailbox addresses
+            prefs = ["owner","ceo","md","sales","hello","contact","media","marketing"]
+            def key(e):
+                local = e.split("@")[0].lower()
+                return (not any(local.startswith(p) for p in prefs), local.startswith("info"))
+            out["email"] = sorted(emails, key=key)[0]
             break
+
         _sleep()
 
     if not out["email"]:
@@ -389,15 +242,14 @@ def crawl_contact(site_url):
         if dom: out["email"] = f"info@{dom}"
     return out
 
-# ---------- Trello (only these four lines) ----------
+# ---------- Trello (only these three lines) ----------
 _FIELD_PATTERNS = {
     "Company": re.compile(r"(?mi)^(?P<prefix>\s*Company\s*:\s*)(?P<value>.*)$"),
-    "First":   re.compile(r"(?mi)^(?P<prefix>\s*First\s*:\s*)(?P<value>.*)$"),
     "Email":   re.compile(r"(?mi)^(?P<prefix>\s*Email\s*:\s*)(?P<value>.*)$"),
     "Website": re.compile(r"(?mi)^(?P<prefix>\s*Website\s*:\s*)(?P<value>.*)$"),
 }
 
-# A line that looks like a field label, e.g., "Hook:" or "Website:"
+# Detect other field labels so we don't delete them when collapsing
 FIELD_LABEL_LINE_RE = re.compile(r'^\s*[A-Za-z][A-Za-z0-9 _/\-]{0,40}\s*:\s*$', re.I)
 
 def trello_get_card_desc(card_id):
@@ -411,8 +263,8 @@ def replace_line(desc, label, new_value):
     """
     Safer replacer:
       - Writes the value inline on the same line as 'Label:'.
-      - Only collapses a next line if it looks like a standalone *value* (no colon).
-      - Never removes a line that looks like another field label (e.g., 'Hook:', 'Variant:', etc.).
+      - Only collapses a next line if it looks like a value (no colon).
+      - Never removes another field label line.
     """
     lines = desc.splitlines()
     pat = re.compile(rf'^\s*{re.escape(label)}\s*:\s*(.*)$', re.I)
@@ -421,8 +273,8 @@ def replace_line(desc, label, new_value):
         m = pat.match(line)
         if not m:
             continue
-
         trailing = (m.group(1) or "").rstrip()
+
         lines[i] = f"{label}: {new_value or ''}"
 
         if not trailing and (i + 1) < len(lines):
@@ -435,13 +287,12 @@ def replace_line(desc, label, new_value):
 
     return desc, False
 
-def update_card_fields(card_id, company, first, email, website):
-    """Only touches Company/First/Email/Website lines. Everything else remains unchanged."""
+def update_card_fields(card_id, company, email, website):
+    """Only touches Company/Email/Website lines. Everything else remains unchanged."""
     desc = trello_get_card_desc(card_id)
     changed = False
     for label, value in [
         ("Company", company or ""),
-        ("First",   first   or ""),
         ("Email",   email   or ""),
         ("Website", website or ""),
     ]:
@@ -504,6 +355,7 @@ def main():
         if not website:
             website = fsq_find_website(biz["business_name"], lat, lon)
 
+        # last resort: infer from OSM email domain
         if not website and biz.get("email"):
             dom = biz["email"].split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
@@ -513,16 +365,13 @@ def main():
             continue  # need a site to scrape for contact
 
         contact = crawl_contact(website)
-        first = contact.get("first") or ""
         email = contact.get("email") or ""
-
-        if not first:
-            first = guess_first_from_email(email)
 
         # Need '@' to trigger Butler; skip if no email at all
         if not email or "@" not in email:
             continue
 
+        # If still missing website, derive from the email domain
         if not website and "@" in email:
             dom = email.split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
@@ -530,7 +379,6 @@ def main():
 
         leads.append({
             "Company": biz["business_name"],
-            "First": first,
             "Email": email,
             "Website": website or ""
         })
@@ -551,13 +399,12 @@ def main():
         changed = update_card_fields(
             card_id=card_id,
             company=lead["Company"],
-            first=lead["First"],
             email=lead["Email"],
             website=lead["Website"],
         )
         if changed:
             pushed += 1
-            print(f"[{pushed}/{DAILY_LIMIT}] Filled card: {lead['Company']} — {lead['First']} — {lead['Email']} — {lead['Website']}")
+            print(f"[{pushed}/{DAILY_LIMIT}] Filled card: {lead['Company']} — {lead['Email']} — {lead['Website']}")
             time.sleep(PUSH_INTERVAL_S)  # give Butler time to move + duplicate
         else:
             print("Card unchanged (labels missing or already filled); trying next lead.")
