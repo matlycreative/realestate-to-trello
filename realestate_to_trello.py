@@ -36,6 +36,16 @@ def env_on(name, default=False):
     if v in ("0","false","no","off"): return False
     return bool(default)
 
+def append_seen_domain(domain: str):
+    if not domain:
+        return
+    d = domain.strip().lower()
+    try:
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write(d + "\n")
+    except Exception:
+        pass
+
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)     # 1/min
@@ -981,7 +991,7 @@ def main():
     if leads and last_city and last_country:
         append_csv(leads, last_city, last_country)
 
-    # push: one per minute + grace
+       # push: one per minute + grace
     pushed = 0
     for lead in leads:
         if SKIP_GENERIC_EMAILS and "@" in lead["Email"]:
@@ -996,12 +1006,20 @@ def main():
             continue
 
         card_id = empties[0]
-        changed = update_card_header(card_id=card_id,
-                                     company=lead["Company"],
-                                     email=lead["Email"],
-                                     website=lead["Website"])
+        changed = update_card_header(
+            card_id=card_id,
+            company=lead["Company"],
+            email=lead["Email"],
+            website=lead["Website"],
+        )
         if changed:
             pushed += 1
+
+            # Persist domain immediately so future runs won’t reuse it
+            site_dom = etld1_from_url(lead["Website"])
+            if site_dom:
+                append_seen_domain(site_dom)
+
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
                 append_note(card_id, lead.get("signals",""))
