@@ -1,5 +1,8 @@
 # realestate_to_trello.py
-# Fill Trello template cards with Company / Email / Website (no First).
+# Fills Trello template cards with Company / Email / Website.
+# Rewrites the header block to enforce this order (one label per line):
+# Company, First, Email, Hook, Variant, Website.
+# First/Hook/Variant are preserved (not modified); other fields unchanged.
 
 import os, re, json, time, random
 from datetime import date
@@ -9,26 +12,26 @@ from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 
-# Optional: load .env locally
+# Optional for local use
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ---------- Config (env) ----------
+# ---------- Config ----------
 DAILY_LIMIT     = int(os.getenv("DAILY_LIMIT", "10"))
 PUSH_INTERVAL_S = int(os.getenv("PUSH_INTERVAL_S", "60"))     # 1 per minute
-REQUEST_DELAY_S = float(os.getenv("REQUEST_DELAY_S", "1.0"))  # polite crawl delay
+REQUEST_DELAY_S = float(os.getenv("REQUEST_DELAY_S", "1.0"))
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
 
 TRELLO_KEY      = os.getenv("TRELLO_KEY")
 TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
-TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")                 # "Start here" list ID
+TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
 TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional
 
-FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")  # optional fallback
+FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")            # optional
 
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
@@ -36,7 +39,7 @@ SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# --- Countries/cities you asked for (rotate daily) ---
+# --- Countries/cities to rotate ---
 CITY_ROTATION = [
     # Switzerland
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
@@ -242,15 +245,9 @@ def crawl_contact(site_url):
         if dom: out["email"] = f"info@{dom}"
     return out
 
-# ---------- Trello (only these three lines) ----------
-_FIELD_PATTERNS = {
-    "Company": re.compile(r"(?mi)^(?P<prefix>\s*Company\s*:\s*)(?P<value>.*)$"),
-    "Email":   re.compile(r"(?mi)^(?P<prefix>\s*Email\s*:\s*)(?P<value>.*)$"),
-    "Website": re.compile(r"(?mi)^(?P<prefix>\s*Website\s*:\s*)(?P<value>.*)$"),
-}
-
-# Detect other field labels so we don't delete them when collapsing
-FIELD_LABEL_LINE_RE = re.compile(r'^\s*[A-Za-z][A-Za-z0-9 _/\-]{0,40}\s*:\s*$', re.I)
+# ---------- Trello helpers (header normalization) ----------
+TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
+LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 
 def trello_get_card_desc(card_id):
     r = SESS.get(f"https://api.trello.com/1/cards/{card_id}",
@@ -259,43 +256,71 @@ def trello_get_card_desc(card_id):
     r.raise_for_status()
     return r.json().get("desc") or ""
 
-def replace_line(desc, label, new_value):
+def normalize_header_block(desc, company, email, website):
     """
-    Write the value inline on the same line as 'Label:' and
-    NEVER remove or modify the next line. This prevents cases where
-    'First:' (or any other field) could get pulled up onto the same line.
+    Build a clean header block at the very top with fixed order:
+    Company, First, Email, Hook, Variant, Website
+    - Preserve original values for First/Hook/Variant if present.
+    - Remove any previous instances of those header lines (and their immediate
+      value-only next line) from the rest of the description.
+    - Keep everything else exactly as-is.
     """
     lines = desc.splitlines()
-    pat = re.compile(rf'^\s*{re.escape(label)}\s*:\s*(.*)$', re.I)
+    preserved = {"First": "", "Hook": "", "Variant": ""}
 
-    for i, line in enumerate(lines):
-        if pat.match(line):
-            lines[i] = f"{label}: {new_value or ''}"
-            return "\n".join(lines), True
+    keep = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        matched = False
+        for lab in TARGET_LABELS:
+            m = LABEL_RE[lab].match(line)
+            if m:
+                matched = True
+                val = (m.group(1) or "").strip()
+                # If the value was on the next line, capture it and drop that next line
+                if not val and (i + 1) < len(lines):
+                    nxt = lines[i + 1]
+                    # treat next line as a value-only line if it has text and doesn't look like another label
+                    if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
+                        val = nxt.strip()
+                        i += 1  # skip the next line too
+                if lab in preserved and not preserved[lab]:
+                    preserved[lab] = val
+                break
+        if not matched:
+            keep.append(line)
+        i += 1
 
-    return desc, False
+    # Trim extra blank lines at the very top of remaining content
+    while keep and keep[0].strip() == "":
+        keep.pop(0)
 
-def update_card_fields(card_id, company, email, website):
-    """Only touches Company/Email/Website lines. Everything else remains unchanged."""
-    desc = trello_get_card_desc(card_id)
-    changed = False
-    for label, value in [
-        ("Company", company or ""),
-        ("Email",   email   or ""),
-        ("Website", website or ""),
-    ]:
-        desc, did = replace_line(desc, label, value)
-        changed = changed or did
-    if not changed:
+    block = [
+        f"Company: {company or ''}",
+        f"First: {preserved['First']}",
+        f"Email: {email or ''}",
+        f"Hook: {preserved['Hook']}",
+        f"Variant: {preserved['Variant']}",
+        f"Website: {website or ''}",
+    ]
+
+    # Assemble new description: header block + a blank line + rest
+    new_desc = "\n".join(block + ([""] if keep else []) + keep)
+    return new_desc
+
+def update_card_header(card_id, company, email, website):
+    desc_old = trello_get_card_desc(card_id)
+    desc_new = normalize_header_block(desc_old, company, email, website)
+    if desc_new == desc_old:
         return False
     r = SESS.put(f"https://api.trello.com/1/cards/{card_id}",
-                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": desc},
+                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": desc_new},
                  timeout=30)
     r.raise_for_status()
     return True
 
 def find_empty_template_cards(list_id, max_needed=1):
-    """Find cards whose 'Company:' line exists but is blank (next template to fill)."""
     r = SESS.get(f"https://api.trello.com/1/lists/{list_id}/cards",
                  params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "id,name,desc"},
                  timeout=30)
@@ -304,7 +329,8 @@ def find_empty_template_cards(list_id, max_needed=1):
     empties = []
     for c in cards:
         desc = c.get("desc") or ""
-        if re.search(r"(?mi)^ *Company\s*:\s*$", desc):
+        # empty company (line exists but no value on same line or next value-only line)
+        if re.search(r"(?mi)^\s*Company\s*:\s*$", desc):
             empties.append(c["id"])
         if len(empties) >= max_needed:
             break
@@ -322,11 +348,11 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
 
 # --------------------------- Main ---------------------------
 def main():
-    missing = [name for name in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(name)]
+    missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
     if missing:
         raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
 
-    # 1) Choose today's city and get agencies
+    # 1) Pick city & fetch candidates
     city, country = pick_today_city()
     south, west, north, east = geocode_city(city, country)
     lat = (south + north) / 2.0
@@ -343,23 +369,22 @@ def main():
         if not website:
             website = fsq_find_website(biz["business_name"], lat, lon)
 
-        # last resort: infer from OSM email domain
+        # last resort from OSM email domain
         if not website and biz.get("email"):
             dom = biz["email"].split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
                 website = f"https://{dom}"
 
         if not website:
-            continue  # need a site to scrape for contact
+            continue  # need a site to scrape contact
 
         contact = crawl_contact(website)
         email = contact.get("email") or ""
 
-        # Need '@' to trigger Butler; skip if no email at all
         if not email or "@" not in email:
             continue
 
-        # If still missing website, derive from the email domain
+        # one more website fallback from email domain
         if not website and "@" in email:
             dom = email.split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
@@ -372,7 +397,7 @@ def main():
         })
         _sleep()
 
-    # 2) Push to Trello — one per minute, always re-finding the next empty card
+    # 2) Push to Trello — one per minute so Butler can move/duplicate
     pushed = 0
     for lead in leads:
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
@@ -384,7 +409,7 @@ def main():
             continue
 
         card_id = empties[0]
-        changed = update_card_fields(
+        changed = update_card_header(
             card_id=card_id,
             company=lead["Company"],
             email=lead["Email"],
@@ -393,9 +418,9 @@ def main():
         if changed:
             pushed += 1
             print(f"[{pushed}/{DAILY_LIMIT}] Filled card: {lead['Company']} — {lead['Email']} — {lead['Website']}")
-            time.sleep(PUSH_INTERVAL_S)  # give Butler time to move + duplicate
+            time.sleep(PUSH_INTERVAL_S)
         else:
-            print("Card unchanged (labels missing or already filled); trying next lead.")
+            print("Card unchanged; trying next lead.")
 
     print(f"Done. Leads pushed: {pushed}/{len(leads)}")
 
