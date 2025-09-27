@@ -36,11 +36,28 @@ SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-ROLE_WORDS = [
+
+# Expanded, multilingual role keywords (editor/marketing-friendly)
+ROLE_WORDS = list(set([
+    # EN
     "owner","founder","managing director","managing partner","director","ceo",
-    "principal","broker","agent","manager","geschäftsführer","inhaber","leiter",
-    "marketing","content","social media"
-]
+    "principal","broker","agent","manager","marketing","content","social media","growth","editor",
+    # DE
+    "geschäftsführer","inhaber","inhaberin","leiter","verkauf","makler","agenturleitung","marketingleitung",
+    # FR
+    "propriétaire","fondateur","fondatrice","directeur","directrice","gérant","gérante","responsable","courtier","agent",
+    # IT
+    "titolare","fondatore","fondatrice","direttore","direttrice","amministratore","responsabile","agente","broker",
+    # ES / PT
+    "propietario","propietaria","fundador","fundadora","director","directora","gerente","responsable","agente",
+    "corretor","corretora","proprietário","proprietária","diretor","diretora",
+    # NL / BE
+    "eigenaar","directeur","zaakvoerder","verantwoordelijke","makelaar",
+    # Nordics
+    "daglig leder","eier","direktør","markedsføring","markedschef","marknadsföring","ägare","vd",
+    # HR
+    "vlasnik","vlasnica","direktor","direktorica","voditelj","marketing",
+]))
 
 # --- Only your requested regions (rotate daily) ---
 CITY_ROTATION = [
@@ -91,6 +108,8 @@ GENERIC_MAILBOXES = {
     "info","contact","hello","hi","office","team","sales","support",
     "admin","enquiries","marketing","media","press","service","mail"
 }
+
+NAME_RE = re.compile(r"\b([A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’\-]+)\s+([A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ'’\-]+)\b")
 
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 def pick_today_city(): return CITY_ROTATION[date.today().toordinal() % len(CITY_ROTATION)]
@@ -203,41 +222,102 @@ def fetch(url):
 
 def gather_candidate_pages(base):
     pages = [base]
-    for p in ["/about","/team","/impressum","/kontakt","/contact","/contact-us","/ueber-uns","/uber-uns","/staff"]:
+    common = [
+        "/about","/about-us","/who-we-are","/our-story",
+        "/team","/our-team","/meet-the-team","/leadership","/staff",
+        "/agents","/our-agents","/brokers","/consultants","/people",
+        "/contact","/contact-us",
+        "/impressum","/kontakt","/ueber-uns","/uber-uns",
+        "/equipe","/equipe-comercial","/equipo"
+    ]
+    for p in common:
         pages.append(urljoin(base, p))
     return pages
 
 def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
-def extract_people_jsonld(soup):
+def extract_people_jsonld_deep(soup):
+    """Find Person names in any ld+json, including @graph and nested fields."""
     people = []
+    def walk(obj):
+        if isinstance(obj, dict):
+            t = obj.get("@type")
+            if (t == "Person") or (isinstance(t, list) and "Person" in t):
+                nm = obj.get("name")
+                if isinstance(nm, str):
+                    people.append((nm.strip(), (obj.get("jobTitle") or "").strip()))
+            for k in ["founder","founders","employee","employees","member","members","contactPoint","author"]:
+                if k in obj:
+                    walk(obj[k])
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for it in obj: walk(it)
+
     for script in soup.find_all("script", type=lambda t: t and "ld+json" in t):
         try:
             data = json.loads(script.string)
+            walk(data)
         except Exception:
             continue
-        items = data if isinstance(data, list) else [data]
-        for it in items:
-            if isinstance(it, dict) and it.get("@type") in ("Person","Employee","Organization"):
-                nm = it.get("name"); job = it.get("jobTitle") or it.get("description")
-                if nm and isinstance(nm, str):
-                    people.append((nm.strip(), (job or "").strip()))
     return people
 
 def extract_people_heuristic(soup):
     text = soup.get_text(" ").strip()
     hits = []
     for role in ROLE_WORDS:
-        pat = re.compile(rf"{role}[:\s\-–]*([A-ZÄÖÜ][a-zA-Zäöüß\-']+(?:\s+[A-ZÄÖÜ][a-zA-Zäöüß\-']+){{1,2}})", re.I)
+        pat = re.compile(rf"{role}[:\s\-–]*([A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+){{1,2}})", re.I)
         for m in pat.finditer(text):
             hits.append((m.group(1).strip(), role))
-    for tag in soup.select("[class*='team'],[class*='person'],[class*='member']"):
+    for tag in soup.select("[class*='team'],[class*='person'],[class*='member'],[class*='agent']"):
         nm = tag.get_text(" ", strip=True)
-        m = re.search(r"([A-ZÄÖÜ][a-zA-Zäöüß\-']+(?:\s+[A-ZÄÖÜ][a-zA-Zäöüß\-']+){1,2})", nm)
+        m = re.search(r"([A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-ZÀ-ÖØ-Ý][a-zA-ZÀ-ÖØ-öø-ÿ'’\-]+){1,2})", nm)
         if m:
             hits.append((m.group(1).strip(), "team"))
+    # de-dup
     return list({(n, r) for n, r in hits})
+
+def extract_hcard_names(soup):
+    names = set()
+    selectors = [
+        ".vcard .fn", ".vcard .given-name", ".vcard .n .given-name",
+        ".h-card .p-name", ".h-card .p-given-name",
+        "[itemtype*='Person'] [itemprop='name']",
+        "[class*='agent-name']", "[class*='broker-name']",
+        "[class*='team-member'] [class*='name']",
+    ]
+    for sel in selectors:
+        for el in soup.select(sel):
+            txt = el.get_text(" ", strip=True)
+            m = NAME_RE.search(txt)
+            if m: names.add(m.group(0))
+    return [(n, "hcard") for n in names]
+
+def extract_mailto_context(soup):
+    """If a mailto link has name-like text, capture it."""
+    out = []
+    for a in soup.select('a[href^="mailto:"]'):
+        txt = a.get_text(" ", strip=True)
+        for cand in [txt, a.parent.get_text(" ", strip=True) if a.parent else ""]:
+            m = NAME_RE.search(cand)
+            if m:
+                out.append((m.group(0), "mailto"))
+    return list({t[0]: t for t in out}.values())
+
+def score_person(name, role_hint_text):
+    score = 0
+    for r in ROLE_WORDS:
+        if r.lower() in role_hint_text:
+            score += 2; break
+    if len(name.split()) == 2: score += 1
+    return score
+
+def choose_best_person(soup, people):
+    if not people: return None
+    text = soup.get_text(" ").lower()
+    ranked = sorted(people, key=lambda p: score_person(p[0], text), reverse=True)
+    return ranked[0][0]
 
 def choose_email(emails):
     if not emails: return None
@@ -252,7 +332,6 @@ def guess_first_from_email(email: str) -> str:
     if not email or "@" not in email:
         return ""
     local = email.split("@", 1)[0]
-    # strip common prefixes
     local = re.sub(r"^(info|contact|hello|hi|team|office|sales|support|admin|marketing|media|press|service)[._\-+]*",
                    "", local, flags=re.I)
     parts = [p for p in re.split(r"[._\-+0-9]+", local) if p]
@@ -280,24 +359,26 @@ def crawl_contact(site_url):
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
 
+        # collect emails
         emails = set(extract_emails(resp.text))
         for a in soup.select('a[href^="mailto:"]'):
             m = EMAIL_RE.search(a.get("href",""))
             if m: emails.add(m.group(0))
-
-        people = extract_people_jsonld(soup) + extract_people_heuristic(soup)
-        contact_name = None
-        if people:
-            chosen = None
-            for p, r in people:
-                if any(k in (r or "").lower() for k in ["marketing","content","social","manager","owner","director","broker"]):
-                    chosen = (p, r); break
-            contact_name = (chosen or people[0])[0]
         chosen_email = choose_email(list(emails))
+
+        # collect people from multiple signals
+        people = []
+        people += extract_people_jsonld_deep(soup)
+        people += extract_people_heuristic(soup)
+        people += extract_hcard_names(soup)
+        people += extract_mailto_context(soup)
+
+        full_name = choose_best_person(soup, people) if people else None
+        if full_name and not out["first"]:
+            out["first"] = full_name.split()[0].strip("-,;:()")
+
         if chosen_email and not out["email"]:
             out["email"] = chosen_email
-        if contact_name and not out["first"]:
-            out["first"] = contact_name.split(" ")[0]
 
         if out["email"] and out["first"]:
             break
@@ -316,6 +397,9 @@ _FIELD_PATTERNS = {
     "Website": re.compile(r"(?mi)^(?P<prefix>\s*Website\s*:\s*)(?P<value>.*)$"),
 }
 
+# A line that looks like a field label, e.g., "Hook:" or "Website:"
+FIELD_LABEL_LINE_RE = re.compile(r'^\s*[A-Za-z][A-Za-z0-9 _/\-]{0,40}\s*:\s*$', re.I)
+
 def trello_get_card_desc(card_id):
     r = SESS.get(f"https://api.trello.com/1/cards/{card_id}",
                  params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "desc"},
@@ -325,20 +409,29 @@ def trello_get_card_desc(card_id):
 
 def replace_line(desc, label, new_value):
     """
-    Force the value onto the same line as 'Label:'.
-    If the template put the value on the next line, collapse it.
-    Only touches the target label line.
+    Safer replacer:
+      - Writes the value inline on the same line as 'Label:'.
+      - Only collapses a next line if it looks like a standalone *value* (no colon).
+      - Never removes a line that looks like another field label (e.g., 'Hook:', 'Variant:', etc.).
     """
     lines = desc.splitlines()
-    pat = re.compile(rf'^\s*{label}\s*:\s*.*$', re.I)
+    pat = re.compile(rf'^\s*{re.escape(label)}\s*:\s*(.*)$', re.I)
 
     for i, line in enumerate(lines):
-        if pat.match(line):
-            # If label line ends with ':' and the next line has text, remove it
-            if line.strip().endswith(":") and i + 1 < len(lines) and lines[i+1].strip():
-                lines.pop(i + 1)
-            lines[i] = f"{label}: {new_value or ''}"
-            return "\n".join(lines), True
+        m = pat.match(line)
+        if not m:
+            continue
+
+        trailing = (m.group(1) or "").rstrip()
+        lines[i] = f"{label}: {new_value or ''}"
+
+        if not trailing and (i + 1) < len(lines):
+            nxt = lines[i + 1]
+            if not FIELD_LABEL_LINE_RE.match(nxt):
+                if nxt.strip() and ":" not in nxt:
+                    lines.pop(i + 1)
+
+        return "\n".join(lines), True
 
     return desc, False
 
@@ -412,20 +505,17 @@ def main():
             website = fsq_find_website(biz["business_name"], lat, lon)
 
         if not website and biz.get("email"):
-            # last resort: website from email domain (skip generic mail providers)
             dom = biz["email"].split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
                 website = f"https://{dom}"
 
         if not website:
-            # no website → skip (we need a site to scrape for contact)
-            continue
+            continue  # need a site to scrape for contact
 
         contact = crawl_contact(website)
         first = contact.get("first") or ""
         email = contact.get("email") or ""
 
-        # If no scraped first name, try to guess from email
         if not first:
             first = guess_first_from_email(email)
 
@@ -433,7 +523,6 @@ def main():
         if not email or "@" not in email:
             continue
 
-        # If still missing website, derive from the email domain
         if not website and "@" in email:
             dom = email.split("@", 1)[-1].lower()
             if dom and dom not in GENERIC_MAIL_PROVIDERS:
