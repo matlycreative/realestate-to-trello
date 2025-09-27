@@ -797,7 +797,8 @@ def load_seen():
 def save_seen(seen):
     try:
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            for d in sorted(seen): f.write(d+"\n")
+            for d in sorted(seen):
+                f.write(d + "\n")
     except Exception:
         pass
 
@@ -980,18 +981,11 @@ def main():
         leads.sort(key=lambda x: x.get("q", 0), reverse=True)
         leads = leads[:DAILY_LIMIT]
 
-    save_seen(seen)
-
-    # pre-clone enough blanks (disabled unless PRECLONE=1)
-    need = min(DAILY_LIMIT, len(leads))
-    if PRECLONE and need > 0 and TRELLO_TEMPLATE_CARD_ID:
-        ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
-
     # optional: CSV for inspection (uses last city/country looked at)
     if leads and last_city and last_country:
         append_csv(leads, last_city, last_country)
 
-       # push: one per minute + grace
+    # push: one per minute + grace
     pushed = 0
     for lead in leads:
         if SKIP_GENERIC_EMAILS and "@" in lead["Email"]:
@@ -1017,8 +1011,9 @@ def main():
 
             # Persist domain immediately so future runs won’t reuse it
             site_dom = etld1_from_url(lead["Website"])
-            if site_dom:
+            if site_dom and site_dom not in seen:
                 append_seen_domain(site_dom)
+                seen.add(site_dom)  # keep memory and file in sync
 
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
@@ -1029,6 +1024,9 @@ def main():
 
     if DEBUG:
         print("Skip summary:", json.dumps(STATS, indent=2))
+
+    # Canonicalize seen file (dedupe/sort) at the end
+    save_seen(seen)
 
     print(f"Done. Leads pushed: {pushed}/{len(leads)}")
 
