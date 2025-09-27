@@ -1,8 +1,7 @@
 # realestate_to_trello.py
-# Fills Trello template cards with Company / Email / Website.
-# Rewrites the header block to enforce this order (one label per line):
-# Company, First, Email, Hook, Variant, Website.
-# First/Hook/Variant are preserved (not modified); other fields unchanged.
+# Fill Trello template cards with Company / Email / Website.
+# Header is normalized at the top as:
+# Company, First, Email, Hook, Variant, Website (First/Hook/Variant preserved).
 
 import os, re, json, time, random
 from datetime import date
@@ -12,14 +11,14 @@ from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 
-# Optional for local use
+# ---- optional local .env ----
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ---------- Config ----------
+# ========= Config =========
 DAILY_LIMIT     = int(os.getenv("DAILY_LIMIT", "10"))
 PUSH_INTERVAL_S = int(os.getenv("PUSH_INTERVAL_S", "60"))     # 1 per minute
 REQUEST_DELAY_S = float(os.getenv("REQUEST_DELAY_S", "1.0"))
@@ -31,15 +30,28 @@ TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
 TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
 TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional
 
-FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")            # optional
+FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")             # website discovery
 
+# Official/registry sources (optional but recommended)
+USE_COMPANIES_HOUSE = os.getenv("USE_COMPANIES_HOUSE", "0") == "1"  # UK
+CH_API_KEY          = os.getenv("CH_API_KEY")
+
+USE_SIRENE          = os.getenv("USE_SIRENE", "0") == "1"           # France
+SIRENE_TOKEN        = os.getenv("SIRENE_TOKEN")
+
+USE_OPENCORP        = os.getenv("USE_OPENCORP", "0") == "1"         # US/CA
+OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")
+
+USE_ZEFIX           = os.getenv("USE_ZEFIX", "0") == "1"            # Switzerland (no key)
+
+# ======== HTTP session ========
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# --- Countries/cities to rotate ---
+# Countries/cities rotation
 CITY_ROTATION = [
     # Switzerland
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
@@ -88,7 +100,56 @@ GENERIC_MAIL_PROVIDERS = {
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 def pick_today_city(): return CITY_ROTATION[date.today().toordinal() % len(CITY_ROTATION)]
 
-# ----------------- OSM geocode + search -----------------
+# ========= small utils =========
+def normalize_url(u):
+    if not u: return None
+    if u.startswith("mailto:"): return None
+    parsed = urlparse(u)
+    if not parsed.scheme:
+        u = "https://" + u.strip("/")
+    return u
+
+def domain_from_url(u):
+    try:
+        ext = tldextract.extract(u)
+        if not ext.domain: return ""
+        return ".".join([ext.domain, ext.suffix]) if ext.suffix else ext.domain
+    except Exception:
+        return ""
+
+def email_domain(email: str) -> str:
+    try:
+        return email.split("@", 1)[1].lower().strip()
+    except Exception:
+        return ""
+
+def etld1_from_url(u: str) -> str:
+    try:
+        ex = tldextract.extract(u or "")
+        if ex.domain:
+            return f"{ex.domain}.{ex.suffix}" if ex.suffix else ex.domain
+    except Exception:
+        pass
+    return ""
+
+def allowed_by_robots(base_url, path="/"):
+    try:
+        rp = robotparser.RobotFileParser()
+        rp.set_url(urljoin(base_url, "/robots.txt"))
+        rp.read()
+        return rp.can_fetch(UA, urljoin(base_url, path))
+    except Exception:
+        return True
+
+def fetch(url):
+    r = SESS.get(url, timeout=30)
+    r.raise_for_status()
+    return r
+
+def extract_emails(text):
+    return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
+
+# ========= Geo & OSM =========
 def geocode_city(city, country):
     r = SESS.get(
         "https://nominatim.openstreetmap.org/search",
@@ -135,7 +196,7 @@ def overpass_estate_agents(bbox):
     random.shuffle(out)
     return out
 
-# ----------------- Foursquare fallback (website) -----------------
+# ========= Foursquare website finder =========
 def fsq_find_website(name, lat, lon):
     if not FOURSQUARE_API_KEY:
         return None
@@ -163,37 +224,7 @@ def fsq_find_website(name, lat, lon):
         return None
     return None
 
-# ----------------- Scraping helpers -----------------
-def normalize_url(u):
-    if not u: return None
-    if u.startswith("mailto:"): return None
-    parsed = urlparse(u)
-    if not parsed.scheme:
-        u = "https://" + u.strip("/")
-    return u
-
-def domain_from_url(u):
-    try:
-        ext = tldextract.extract(u)
-        if not ext.domain: return ""
-        return ".".join([ext.domain, ext.suffix]) if ext.suffix else ext.domain
-    except Exception:
-        return ""
-
-def allowed_by_robots(base_url, path="/"):
-    try:
-        rp = robotparser.RobotFileParser()
-        rp.set_url(urljoin(base_url, "/robots.txt"))
-        rp.read()
-        return rp.can_fetch(UA, urljoin(base_url, path))
-    except Exception:
-        return True
-
-def fetch(url):
-    r = SESS.get(url, timeout=30)
-    r.raise_for_status()
-    return r
-
+# ========= Crawl contact page for email =========
 def gather_candidate_pages(base):
     pages = [base]
     common = [
@@ -205,11 +236,7 @@ def gather_candidate_pages(base):
         pages.append(urljoin(base, p))
     return pages
 
-def extract_emails(text):
-    return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
-
 def crawl_contact(site_url):
-    """Return only an email (no first name)."""
     out = {"email": ""}
     if not site_url:
         return out
@@ -230,7 +257,6 @@ def crawl_contact(site_url):
             if m: emails.add(m.group(0))
 
         if emails:
-            # prefer non-info/mailbox addresses
             prefs = ["owner","ceo","md","sales","hello","contact","media","marketing"]
             def key(e):
                 local = e.split("@")[0].lower()
@@ -245,7 +271,152 @@ def crawl_contact(site_url):
         if dom: out["email"] = f"info@{dom}"
     return out
 
-# ---------- Trello helpers (header normalization) ----------
+# ========= Official / registry sources =========
+def uk_companies_house():
+    if not (USE_COMPANIES_HOUSE and CH_API_KEY):
+        return []
+    url = "https://api.company-information.service.gov.uk/advanced-search/companies"
+    try:
+        r = requests.get(url, params={"sic_codes":"68310", "size":50}, auth=(CH_API_KEY, ""), timeout=30)
+        if r.status_code != 200: return []
+        data = r.json()
+        items = data.get("items") or []
+        out = []
+        for it in items:
+            nm = (it.get("company_name") or "").strip()
+            if nm:
+                out.append({"business_name": nm, "website": None, "email": None})
+        random.shuffle(out)
+        return out
+    except Exception:
+        return []
+
+def fr_sirene(city=None):
+    if not (USE_SIRENE and SIRENE_TOKEN):
+        return []
+    url = "https://api.insee.fr/entreprises/sirene/V3/siret"
+    headers = {"Authorization": f"Bearer {SIRENE_TOKEN}"}
+    q = 'activitePrincipaleUniteLegale:"68.31Z"'
+    if city:
+        q += f' AND libelleCommuneEtablissement:"{city}"'
+    try:
+        r = requests.get(url, headers=headers, params={"q": q, "nombre": 50}, timeout=30)
+        if r.status_code != 200: return []
+        data = r.json()
+        etabs = (data.get("etablissements") or [])
+        out = []
+        for e in etabs:
+            ul = e.get("uniteLegale") or {}
+            nm = (ul.get("denominationUniteLegale") or ul.get("nomUniteLegale") or "").strip()
+            if not nm:
+                nm = (e.get("periodesEtablissement") or [{}])[-1].get("enseigne1Etablissement") or ""
+                nm = nm.strip()
+            if nm:
+                out.append({"business_name": nm, "website": None, "email": None})
+        random.shuffle(out)
+        return out
+    except Exception:
+        return []
+
+def opencorp_search(country_code):
+    if not USE_OPENCORP:
+        return []
+    url = "https://api.opencorporates.com/v0.4/companies/search"
+    params = {"q":"real estate", "country_code": country_code, "per_page": 50}
+    if OPENCORP_API_KEY:
+        params["api_token"] = OPENCORP_API_KEY
+    try:
+        r = requests.get(url, params=params, timeout=30)
+        if r.status_code != 200: return []
+        data = r.json()
+        results = (data.get("results") or {}).get("companies") or []
+        out = []
+        for c in results:
+            co = c.get("company") or {}
+            nm = (co.get("name") or "").strip()
+            if nm:
+                out.append({"business_name": nm, "website": None, "email": None})
+        random.shuffle(out)
+        return out
+    except Exception:
+        return []
+
+def ch_zefix():
+    """
+    ZEFIX (Swiss central company index) — name search; no API key required.
+    We try several language terms. Returns names only; website via FSQ later.
+    """
+    if not USE_ZEFIX:
+        return []
+    terms = ["immobilien", "real estate", "immobilier", "agenzia immobiliare", "makler"]
+    langs = ["de","fr","it","en"]
+    out = []
+    try:
+        for term in terms:
+            for lang in langs:
+                try:
+                    # primary attempt
+                    r = requests.get(
+                        "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                        params={"name": term, "maxEntries": 50, "language": lang},
+                        timeout=30,
+                    )
+                    if r.status_code != 200:
+                        # fallback param names used historically
+                        r = requests.get(
+                            "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
+                            params={"queryString": term, "maxEntries": 50, "language": lang},
+                            timeout=30,
+                        )
+                        if r.status_code != 200:
+                            continue
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("list") or data.get("items") or []
+                    for it in items:
+                        nm = (it.get("name") or it.get("companyName") or it.get("firmName") or "").strip()
+                        if nm:
+                            out.append({"business_name": nm, "website": None, "email": None})
+                    if len(out) >= 50:
+                        break
+                except Exception:
+                    continue
+            if len(out) >= 50:
+                break
+    except Exception:
+        return []
+    # dedupe by lowercase name
+    seen, uniq = set(), []
+    for x in out:
+        k = x["business_name"].lower()
+        if k not in seen:
+            uniq.append(x); seen.add(k)
+    random.shuffle(uniq)
+    return uniq
+
+def official_sources(city, country, lat, lon):
+    out = []
+    try:
+        if country in ("United Kingdom",):
+            out += uk_companies_house()
+        elif country in ("France",):
+            out += fr_sirene(city)
+        elif country in ("United States",):
+            out += opencorp_search("us")
+        elif country in ("Canada",):
+            out += opencorp_search("ca")
+        elif country in ("Switzerland",):
+            out += ch_zefix()
+    except Exception:
+        pass
+    # unique by name
+    seen = set(); uniq = []
+    for x in out:
+        k = x["business_name"].lower()
+        if k not in seen:
+            uniq.append(x); seen.add(k)
+    return uniq
+
+# ========= Trello: header normalization =========
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 
@@ -258,12 +429,8 @@ def trello_get_card_desc(card_id):
 
 def normalize_header_block(desc, company, email, website):
     """
-    Build a clean header block at the very top with fixed order:
-    Company, First, Email, Hook, Variant, Website
-    - Preserve original values for First/Hook/Variant if present.
-    - Remove any previous instances of those header lines (and their immediate
-      value-only next line) from the rest of the description.
-    - Keep everything else exactly as-is.
+    Build header block at top in fixed order.
+    Preserve existing First/Hook/Variant values; keep the rest of the description.
     """
     lines = desc.splitlines()
     preserved = {"First": "", "Hook": "", "Variant": ""}
@@ -278,13 +445,11 @@ def normalize_header_block(desc, company, email, website):
             if m:
                 matched = True
                 val = (m.group(1) or "").strip()
-                # If the value was on the next line, capture it and drop that next line
                 if not val and (i + 1) < len(lines):
                     nxt = lines[i + 1]
-                    # treat next line as a value-only line if it has text and doesn't look like another label
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
                         val = nxt.strip()
-                        i += 1  # skip the next line too
+                        i += 1  # drop value-only next line
                 if lab in preserved and not preserved[lab]:
                     preserved[lab] = val
                 break
@@ -292,7 +457,6 @@ def normalize_header_block(desc, company, email, website):
             keep.append(line)
         i += 1
 
-    # Trim extra blank lines at the very top of remaining content
     while keep and keep[0].strip() == "":
         keep.pop(0)
 
@@ -304,13 +468,15 @@ def normalize_header_block(desc, company, email, website):
         f"Variant: {preserved['Variant']}",
         f"Website: {website or ''}",
     ]
-
-    # Assemble new description: header block + a blank line + rest
     new_desc = "\n".join(block + ([""] if keep else []) + keep)
     return new_desc
 
 def update_card_header(card_id, company, email, website):
     desc_old = trello_get_card_desc(card_id)
+    # keep email aligned with website domain when possible
+    site_dom = etld1_from_url(website)
+    if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
+        email = f"info@{site_dom}"
     desc_new = normalize_header_block(desc_old, company, email, website)
     if desc_new == desc_old:
         return False
@@ -329,7 +495,6 @@ def find_empty_template_cards(list_id, max_needed=1):
     empties = []
     for c in cards:
         desc = c.get("desc") or ""
-        # empty company (line exists but no value on same line or next value-only line)
         if re.search(r"(?mi)^\s*Company\s*:\s*$", desc):
             empties.append(c["id"])
         if len(empties) >= max_needed:
@@ -346,58 +511,64 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     r.raise_for_status()
     return r.json()["id"]
 
-# --------------------------- Main ---------------------------
+# ========= Main =========
 def main():
     missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
     if missing:
-        raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
+        raise SystemExit(f"Missing env: {', '.join(missing)}")
 
-    # 1) Pick city & fetch candidates
     city, country = pick_today_city()
     south, west, north, east = geocode_city(city, country)
     lat = (south + north) / 2.0
     lon = (west + east) / 2.0
 
-    candidates = overpass_estate_agents((south, west, north, east))
     leads = []
 
-    for biz in candidates:
-        if len(leads) >= DAILY_LIMIT:
-            break
-
+    # 0) Official sources first (country-specific)
+    off = official_sources(city, country, lat, lon)
+    for biz in off:
+        if len(leads) >= DAILY_LIMIT: break
         website = biz.get("website")
         if not website:
             website = fsq_find_website(biz["business_name"], lat, lon)
-
-        # last resort from OSM email domain
-        if not website and biz.get("email"):
-            dom = biz["email"].split("@", 1)[-1].lower()
-            if dom and dom not in GENERIC_MAIL_PROVIDERS:
-                website = f"https://{dom}"
-
         if not website:
-            continue  # need a site to scrape contact
-
+            continue
         contact = crawl_contact(website)
         email = contact.get("email") or ""
-
+        if not email or "@" not in email:
+            dom = etld1_from_url(website)
+            if dom: email = f"info@{dom}"
         if not email or "@" not in email:
             continue
-
-        # one more website fallback from email domain
-        if not website and "@" in email:
-            dom = email.split("@", 1)[-1].lower()
-            if dom and dom not in GENERIC_MAIL_PROVIDERS:
-                website = f"https://{dom}"
-
-        leads.append({
-            "Company": biz["business_name"],
-            "Email": email,
-            "Website": website or ""
-        })
+        leads.append({"Company": biz["business_name"], "Email": email, "Website": website})
         _sleep()
 
-    # 2) Push to Trello — one per minute so Butler can move/duplicate
+    # 1) If still short, use OSM around the city
+    if len(leads) < DAILY_LIMIT:
+        candidates = overpass_estate_agents((south, west, north, east))
+        for biz in candidates:
+            if len(leads) >= DAILY_LIMIT: break
+            website = biz.get("website")
+            if not website:
+                website = fsq_find_website(biz["business_name"], lat, lon)
+            if not website:
+                if biz.get("email"):
+                    dom = email_domain(biz["email"])
+                    if dom and dom not in GENERIC_MAIL_PROVIDERS:
+                        website = f"https://{dom}"
+            if not website:
+                continue
+            contact = crawl_contact(website)
+            email = contact.get("email") or ""
+            if not email or "@" not in email:
+                dom = etld1_from_url(website)
+                if dom: email = f"info@{dom}"
+            if not email or "@" not in email:
+                continue
+            leads.append({"Company": biz["business_name"], "Email": email, "Website": website})
+            _sleep()
+
+    # 2) Push to Trello — one per minute
     pushed = 0
     for lead in leads:
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
@@ -405,24 +576,23 @@ def main():
             clone_template_into_list(TRELLO_TEMPLATE_CARD_ID, TRELLO_LIST_ID)
             empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
-            print("No empty template card available; skipping this lead.")
+            print("No empty template card available; skipping.")
             continue
 
-        card_id = empties[0]
         changed = update_card_header(
-            card_id=card_id,
+            card_id=empties[0],
             company=lead["Company"],
             email=lead["Email"],
             website=lead["Website"],
         )
         if changed:
             pushed += 1
-            print(f"[{pushed}/{DAILY_LIMIT}] Filled card: {lead['Company']} — {lead['Email']} — {lead['Website']}")
+            print(f"[{pushed}/{DAILY_LIMIT}] {lead['Company']} — {lead['Email']} — {lead['Website']}")
             time.sleep(PUSH_INTERVAL_S)
         else:
             print("Card unchanged; trying next lead.")
 
-    print(f"Done. Leads pushed: {pushed}/{len(leads)}")
+    print(f"Done. Leads pushed: {pushed}/{len(leads)} (city={city}, country={country})")
 
 if __name__ == "__main__":
     main()
