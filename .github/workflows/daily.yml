@@ -3,13 +3,11 @@ name: Daily Real Estate Leads (quality)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 7 * * *"   # Runs 07:00 UTC daily
+    - cron: "0 7 * * *"   # 07:00 UTC daily
 
-# Allows committing seen_domains.txt back to the repo
 permissions:
-  contents: write
+  contents: write   # for committing seen_domains.txt
 
-# Avoid overlapping runs
 concurrency:
   group: daily-realestate
   cancel-in-progress: false
@@ -17,7 +15,6 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -30,85 +27,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt || true
 
-      # Sanity check: required secrets + feature flag dependencies + quality flags
       - name: Preflight
-        env:
-          # Required Trello
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-
-          # Optional Trello
-          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-
-          # Website discovery / geocoding
-          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
-
-          # Country feature flags + credentials
-          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
-          CH_API_KEY: ${{ secrets.CH_API_KEY }}
-
-          USE_SIRENE: ${{ secrets.USE_SIRENE }}
-          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
-          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
-
-          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
-          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
-
-          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
-
-          # Quality / behavior flags (optional)
-          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
-          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
-          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-
-          # Throughput/timing (optional)
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
-        run: |
-          python - <<'PY'
-          import os, sys
-          def on(k): return (os.getenv(k) or "").strip() not in ("", "0", "false", "False")
-          def val(k, d=None):
-              v = os.getenv(k)
-              return v if (v is not None and v != "") else d
-
-          # Required
-          missing = [k for k in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(k)]
-          if missing:
-              print("❌ Missing required secrets:", ", ".join(missing)); sys.exit(1)
-          print("✅ Trello secrets present.")
-
-          # Feature flags summary
-          print("Features:")
-          print(f"  USE_COMPANIES_HOUSE: {'ON' if on('USE_COMPANIES_HOUSE') else 'OFF'}")
-          print(f"  USE_SIRENE:          {'ON' if on('USE_SIRENE') else 'OFF'}")
-          print(f"  USE_OPENCORP:        {'ON' if on('USE_OPENCORP') else 'OFF'}")
-          print(f"  USE_ZEFIX:           {'ON' if on('USE_ZEFIX') else 'OFF'}")
-
-          # Dependencies when flags are ON
-          if on("USE_COMPANIES_HOUSE") and not os.getenv("CH_API_KEY"):
-              print("❌ USE_COMPANIES_HOUSE=1 but CH_API_KEY is missing."); sys.exit(1)
-          if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")):
-              print("❌ USE_SIRENE=1 but SIRENE_KEY and/or SIRENE_SECRET are missing."); sys.exit(1)
-
-          # Quality / behavior
-          qmin = val("QUALITY_MIN", "3.0")  # default stricter here; script default is 2.5
-          rexpl = "ON" if on("REQUIRE_EXPLICIT_EMAIL") else "OFF"
-          addsig = "ON" if on("ADD_SIGNALS_NOTE") else "OFF"
-          print(f"Quality: QUALITY_MIN={qmin}, REQUIRE_EXPLICIT_EMAIL={rexpl}, ADD_SIGNALS_NOTE={addsig}")
-
-          # Timing
-          print("Timing:")
-          print(f"  DAILY_LIMIT      = {val('DAILY_LIMIT', '10')}")
-          print(f"  PUSH_INTERVAL_S  = {val('PUSH_INTERVAL_S', '60')}")
-          print(f"  REQUEST_DELAY_S  = {val('REQUEST_DELAY_S', '1.0')}")
-          print("✅ Preflight OK.")
-          PY
-
-      - name: Run pipeline
         env:
           # Required Trello
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
@@ -135,18 +54,88 @@ jobs:
 
           USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
 
-          # Quality / behavior (defaults handled in script if unset)
-          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}           # e.g. "3.0"
-          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}  # "1" to skip info@ fallbacks
-          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }} # "1" to append Signals: ... in Trello
+          # Quality / behavior
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
 
-          # Throughput/timing
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}           # e.g. "10"
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}   # e.g. "60"
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}   # e.g. "1.0"
+          # Country/city selection
+          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
+          CITY_MODE: ${{ secrets.CITY_MODE }}
+          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
+          FORCE_CITY: ${{ secrets.FORCE_CITY }}
+
+          # Throughput/timing (optional)
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          def on(k): return (os.getenv(k) or "").strip() not in ("", "0", "false", "False")
+          missing = [k for k in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(k)]
+          if missing:
+              print("❌ Missing required:", ", ".join(missing)); sys.exit(1)
+          print("✅ Trello secrets present.")
+          print("Features:")
+          for k in ["USE_COMPANIES_HOUSE","USE_SIRENE","USE_OPENCORP","USE_ZEFIX"]:
+              print(f"  {k}: {'ON' if on(k) else 'OFF'}")
+          if on("USE_COMPANIES_HOUSE") and not os.getenv("CH_API_KEY"):
+              print("❌ USE_COMPANIES_HOUSE=1 but CH_API_KEY missing."); sys.exit(1)
+          if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")):
+              print("❌ USE_SIRENE=1 but SIRENE_KEY/SIRENE_SECRET missing."); sys.exit(1)
+          print("Quality:")
+          print(f"  QUALITY_MIN={os.getenv('QUALITY_MIN','3.0')}, REQUIRE_EXPLICIT_EMAIL={os.getenv('REQUIRE_EXPLICIT_EMAIL','0')}, ADD_SIGNALS_NOTE={os.getenv('ADD_SIGNALS_NOTE','0')}")
+          print("Country/city:")
+          print(f"  COUNTRY_WHITELIST='{os.getenv('COUNTRY_WHITELIST','')}', CITY_MODE={os.getenv('CITY_MODE','rotate')}, FORCE_COUNTRY='{os.getenv('FORCE_COUNTRY','')}', FORCE_CITY='{os.getenv('FORCE_CITY','')}'")
+          PY
+
+      - name: Run pipeline
+        env:
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+          CH_API_KEY: ${{ secrets.CH_API_KEY }}
+
+          USE_SIRENE: ${{ secrets.USE_SIRENE }}
+          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+
+          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+
+          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}              # e.g. "3.0"
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}  # "1" to skip info@
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}    # "1" to add Signals line
+
+          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}  # e.g. "United Kingdom,United States,France,Switzerland,Germany,Canada"
+          CITY_MODE: ${{ secrets.CITY_MODE }}                  # rotate|random|force
+          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
+          FORCE_CITY: ${{ secrets.FORCE_CITY }}
+
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}              # optional; default 10
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}      # default 60
+          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}      # default 1.0
         run: |
           set -xe
           python realestate_to_trello.py
+
+      - name: Upload leads CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: leads-${{ github.run_id }}
+          path: |
+            leads_*.csv
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Commit seen_domains.txt (if changed)
         run: |
