@@ -7,121 +7,124 @@ on:
 
 permissions:
   contents: write
+  actions: write   # needed for actions/cache to save caches
 
 concurrency:
-  group: daily-realestate
+  group: daily-realestate-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # buffer for DAILY_LIMIT * (PUSH_INTERVAL_S + ~20s grace)
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+      TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+
+      FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+      NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+      USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+      CH_API_KEY: ${{ secrets.CH_API_KEY }}
+
+      USE_SIRENE: ${{ secrets.USE_SIRENE }}
+      SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+      SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+
+      USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+      OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+
+      USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+
+      QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+      REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+      ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+
+      SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
+      REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
+      ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
+      FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
+
+      COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
+      CITY_MODE: ${{ secrets.CITY_MODE }}
+      FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
+      FORCE_CITY: ${{ secrets.FORCE_CITY }}
+
+      DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+      PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+      REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - id: setup-python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "requirements.txt"
 
       - name: Install deps
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt || true
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # cache the public suffix list used by tldextract to speed runs
+      - name: Prepare tldextract cache dir
+        run: mkdir -p ~/.cache/tldextract
+
+      - name: Cache tldextract PSL
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tldextract
+          key: tldextract-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}
+          restore-keys: |
+            tldextract-${{ runner.os }}-
+
+      # small jitter helps avoid hammering Overpass/Nominatim at the exact same second daily
+      - name: Jitter start (scheduled runs only)
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          sleep $((RANDOM % 60 + 5))
 
       - name: Preflight
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-
-          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
-
-          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
-          CH_API_KEY: ${{ secrets.CH_API_KEY }}
-
-          USE_SIRENE: ${{ secrets.USE_SIRENE }}
-          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
-          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
-
-          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
-          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
-
-          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
-
-          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
-          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
-          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
-          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
-          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
-          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
-
-          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
-          CITY_MODE: ${{ secrets.CITY_MODE }}
-          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
-          FORCE_CITY: ${{ secrets.FORCE_CITY }}
-
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
         run: |
           python - <<'PY'
-          import os, sys
+          import os, sys, re
           need = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
           miss = [k for k in need if not os.getenv(k)]
           if miss:
-              print("Missing:", ", ".join(miss)); sys.exit(1)
+              print("Missing required secrets:", ", ".join(miss)); sys.exit(1)
+          em = os.getenv("NOMINATIM_EMAIL","")
+          if not em or "example.com" in em or not re.search(r".+@.+\..+", em):
+              print("NOMINATIM_EMAIL is missing or not a real email; set it to comply with Nominatim policy.")
+              sys.exit(1)
           PY
 
-      - name: Run pipeline
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-
-          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
-
-          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
-          CH_API_KEY: ${{ secrets.CH_API_KEY }}
-
-          USE_SIRENE: ${{ secrets.USE_SIRENE }}
-          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
-          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
-
-          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
-          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
-
-          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
-
-          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
-          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
-          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-
-          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
-          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
-          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
-          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
-
-          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
-          CITY_MODE: ${{ secrets.CITY_MODE }}
-          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
-          FORCE_CITY: ${{ secrets.FORCE_CITY }}
-
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-          REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+      # optional but moves PSL download up-front so the main step logs stay clean
+      - name: Warm tldextract PSL cache
         run: |
-          set -xe
-          python realestate_to_trello.py
+          python - <<'PY'
+          import tldextract
+          tldextract.extract("https://example.com")
+          print("tldextract PSL cache warmed.")
+          PY
+
+      - name: Run pipeline (with 1 retry)
+        run: |
+          set -euo pipefail
+          python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
 
       - name: Upload leads CSV
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: leads-${{ github.run_id }}
@@ -130,6 +133,7 @@ jobs:
           retention-days: 14
 
       - name: Commit seen_domains.txt
+        if: ${{ always() }}
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Update seen_domains.txt [skip ci]"
