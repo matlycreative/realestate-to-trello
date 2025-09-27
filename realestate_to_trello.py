@@ -36,8 +36,9 @@ FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")             # website disco
 USE_COMPANIES_HOUSE = os.getenv("USE_COMPANIES_HOUSE", "0") == "1"  # UK
 CH_API_KEY          = os.getenv("CH_API_KEY")
 
-USE_SIRENE          = os.getenv("USE_SIRENE", "0") == "1"           # France
-SIRENE_TOKEN        = os.getenv("SIRENE_TOKEN")
+USE_SIRENE          = os.getenv("USE_SIRENE", "0") == "1"           # France (OAuth2)
+SIRENE_KEY          = os.getenv("SIRENE_KEY")       # INSEE client_id
+SIRENE_SECRET       = os.getenv("SIRENE_SECRET")    # INSEE client_secret
 
 USE_OPENCORP        = os.getenv("USE_OPENCORP", "0") == "1"         # US/CA
 OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")
@@ -291,17 +292,44 @@ def uk_companies_house():
     except Exception:
         return []
 
+# --- SIRENE OAuth2 token cache ---
+_SIRENE_TOKEN_CACHE = {"token": None, "expires_at": 0}
+def sirene_get_token():
+    """Fetch & cache a SIRENE OAuth2 token using client_credentials."""
+    if not (SIRENE_KEY and SIRENE_SECRET):
+        return None
+    if _SIRENE_TOKEN_CACHE["token"] and time.time() < _SIRENE_TOKEN_CACHE["expires_at"] - 60:
+        return _SIRENE_TOKEN_CACHE["token"]
+    r = requests.post(
+        "https://api.insee.fr/token",
+        data={"grant_type": "client_credentials"},
+        auth=(SIRENE_KEY, SIRENE_SECRET),
+        timeout=30,
+    )
+    r.raise_for_status()
+    js = r.json()
+    tok = js["access_token"]
+    ttl = js.get("expires_in", 3600)
+    _SIRENE_TOKEN_CACHE["token"] = tok
+    _SIRENE_TOKEN_CACHE["expires_at"] = time.time() + ttl
+    return tok
+
 def fr_sirene(city=None):
-    if not (USE_SIRENE and SIRENE_TOKEN):
+    """INSEE SIRENE V3, NAF 68.31Z. Returns names; website via FSQ later."""
+    if not USE_SIRENE:
+        return []
+    tok = sirene_get_token()
+    if not tok:
         return []
     url = "https://api.insee.fr/entreprises/sirene/V3/siret"
-    headers = {"Authorization": f"Bearer {SIRENE_TOKEN}"}
+    headers = {"Authorization": f"Bearer {tok}"}
     q = 'activitePrincipaleUniteLegale:"68.31Z"'
     if city:
         q += f' AND libelleCommuneEtablissement:"{city}"'
     try:
         r = requests.get(url, headers=headers, params={"q": q, "nombre": 50}, timeout=30)
-        if r.status_code != 200: return []
+        if r.status_code != 200:
+            return []
         data = r.json()
         etabs = (data.get("etablissements") or [])
         out = []
@@ -355,14 +383,12 @@ def ch_zefix():
         for term in terms:
             for lang in langs:
                 try:
-                    # primary attempt
                     r = requests.get(
                         "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
                         params={"name": term, "maxEntries": 50, "language": lang},
                         timeout=30,
                     )
                     if r.status_code != 200:
-                        # fallback param names used historically
                         r = requests.get(
                             "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/firm/search.json",
                             params={"queryString": term, "maxEntries": 50, "language": lang},
