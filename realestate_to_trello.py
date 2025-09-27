@@ -261,29 +261,17 @@ def trello_get_card_desc(card_id):
 
 def replace_line(desc, label, new_value):
     """
-    Safer replacer:
-      - Writes the value inline on the same line as 'Label:'.
-      - Only collapses a next line if it looks like a value (no colon).
-      - Never removes another field label line.
+    Write the value inline on the same line as 'Label:' and
+    NEVER remove or modify the next line. This prevents cases where
+    'First:' (or any other field) could get pulled up onto the same line.
     """
     lines = desc.splitlines()
     pat = re.compile(rf'^\s*{re.escape(label)}\s*:\s*(.*)$', re.I)
 
     for i, line in enumerate(lines):
-        m = pat.match(line)
-        if not m:
-            continue
-        trailing = (m.group(1) or "").rstrip()
-
-        lines[i] = f"{label}: {new_value or ''}"
-
-        if not trailing and (i + 1) < len(lines):
-            nxt = lines[i + 1]
-            if not FIELD_LABEL_LINE_RE.match(nxt):
-                if nxt.strip() and ":" not in nxt:
-                    lines.pop(i + 1)
-
-        return "\n".join(lines), True
+        if pat.match(line):
+            lines[i] = f"{label}: {new_value or ''}"
+            return "\n".join(lines), True
 
     return desc, False
 
