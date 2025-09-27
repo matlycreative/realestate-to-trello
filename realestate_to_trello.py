@@ -152,7 +152,6 @@ EDITORIAL_PREFS = [
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 
 def pick_today_city():
-    # filter pool
     pool = CITY_ROTATION[:]
     if COUNTRY_WHITELIST:
         pool = [c for c in pool if c[1] in COUNTRY_WHITELIST]
@@ -760,7 +759,6 @@ def main():
 
         if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
             continue
-
         if not email or "@" not in email:
             continue
 
@@ -807,7 +805,6 @@ def main():
 
             if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
                 continue
-
             if not email or "@" not in email:
                 continue
 
@@ -826,17 +823,31 @@ def main():
     save_seen(seen)
     append_csv(leads, city, country)
 
-    # 2) Push to Trello — one per minute
+    # 2) Push to Trello — one per minute (FINAL safety guard)
     pushed = 0
     for lead in leads:
+        # FINAL SAFETY: never push generic mailboxes in strict mode
+        if SKIP_GENERIC_EMAILS and "@" in lead["Email"]:
+            local = lead["Email"].split("@", 1)[0]
+            if is_generic_mailbox_local(local):
+                print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
+                continue
+
+        # find (or create) the next empty template card
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties and TRELLO_TEMPLATE_CARD_ID:
             clone_template_into_list(TRELLO_TEMPLATE_CARD_ID, TRELLO_LIST_ID)
             empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
-            print("No empty template card available; skipping."); continue
+            print("No empty template card available; skipping.")
+            continue
 
-        changed = update_card_header(empties[0], lead["Company"], lead["Email"], lead["Website"])
+        changed = update_card_header(
+            card_id=empties[0],
+            company=lead["Company"],
+            email=lead["Email"],
+            website=lead["Website"],
+        )
         if changed:
             pushed += 1
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
