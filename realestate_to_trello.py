@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
+from functools import lru_cache
 
 # ---------- optional local .env ----------
 try:
@@ -21,7 +22,10 @@ except Exception:
 # ---------- env helpers ----------
 def env_int(name, default):
     v = (os.getenv(name) or "").strip()
-    return int(v) if v.isdigit() else int(default)
+    try:
+        return int(v)
+    except Exception:
+        return int(default)
 
 def env_float(name, default):
     v = (os.getenv(name) or "").strip()
@@ -204,6 +208,7 @@ def iter_cities():
 # ---------- utils ----------
 def normalize_url(u):
     if not u: return None
+    u = u.strip()
     if u.startswith("mailto:"): return None
     p = urlparse(u)
     if not p.scheme:
@@ -225,12 +230,18 @@ def email_domain(email: str) -> str:
     except Exception:
         return ""
 
+@lru_cache(maxsize=4096)
+def _allowed_by_robots_cached(base: str, path: str) -> bool:
+    rp = robotparser.RobotFileParser()
+    rp.set_url(urljoin(base, "/robots.txt"))
+    rp.read()
+    return rp.can_fetch(UA, urljoin(base, path))
+
 def allowed_by_robots(base_url, path="/"):
     try:
-        rp = robotparser.RobotFileParser()
-        rp.set_url(urljoin(base_url, "/robots.txt"))
-        rp.read()
-        return rp.can_fetch(UA, urljoin(base_url, path))
+        p = urlparse(base_url)
+        base = f"{p.scheme}://{p.netloc}"
+        return _allowed_by_robots_cached(base, path or "/")
     except Exception:
         return True
 
@@ -254,6 +265,7 @@ def looks_parked(html: str) -> bool:
     red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parking","parked domain"]
     return any(p in hay for p in red_flags)
 
+@lru_cache(maxsize=4096)
 def domain_has_mx(domain: str) -> bool:
     if not domain: return False
     try:
@@ -262,12 +274,23 @@ def domain_has_mx(domain: str) -> bool:
     except Exception:
         return False
 
+@lru_cache(maxsize=4096)
 def domain_has_dmarc(domain: str) -> bool:
     if not domain: return False
     try:
         for r in dns.resolver.resolve(f"_dmarc.{domain}", "TXT", lifetime=5.0):
-            txt = b"".join(r.strings).decode("utf-8", "ignore").lower()
-            if txt.startswith("v=dmarc"): return True
+            # dnspython 2.x may not expose .strings; use to_text fallback
+            txts = getattr(r, "strings", None)
+            if txts:
+                txt = b"".join(txts).decode("utf-8", "ignore").lower()
+            else:
+                # Remove surrounding quotes and collapse spaces between TXT chunks
+                t = r.to_text()
+                if t.startswith('"') and t.endswith('"'):
+                    t = t[1:-1]
+                txt = t.replace('" "', "").replace('"', "").lower()
+            if txt.strip().startswith("v=dmarc"):
+                return True
     except Exception:
         return False
 
@@ -279,6 +302,19 @@ def domain_age_years(domain: str) -> float:
         cd = w.creation_date
         if isinstance(cd, list): cd = cd[0]
         if not cd: return 0.0
+        if isinstance(cd, str):
+            for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%b-%Y", "%Y.%m.%d %H:%M:%S"):
+                try:
+                    cd = datetime.strptime(cd, fmt)
+                    break
+                except Exception:
+                    pass
+            if isinstance(cd, str):  # still str
+                return 0.0
+        # cd might be a datetime.date (not datetime)
+        from datetime import date as _date
+        if isinstance(cd, _date) and not isinstance(cd, datetime):
+            cd = datetime(cd.year, cd.month, cd.day)
         return max(0.0, (time.time() - cd.timestamp()) / (365.25*24*3600))
     except Exception:
         return 0.0
@@ -402,7 +438,8 @@ def overpass_estate_agents(bbox):
     for k,v in OSM_FILTERS:
         for t in ("node","way","relation"):
             parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
-    q = f"""[out:json][timeout:25];({ ' '.join(parts) });out center tags;"""
+    # fixed order: tags before center
+    q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
 
     js = None
     for url in ("https://overpass-api.de/api/interpreter",
@@ -439,7 +476,7 @@ def fsq_find_website(name, lat, lon):
     if not FOURSQUARE_API_KEY: return None
     headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
     try:
-        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000, "fields": "website"}
+        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}  # fields optional/ignored
         r = requests.get("https://api.foursquare.com/v3/places/search",
                          headers=headers, params=params, timeout=20)
         if r.status_code == 200:
