@@ -11,24 +11,20 @@ from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 
-# ---- optional local .env (for laptop runs) ----
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ========= Env helpers (robust to blank secrets) =========
 def env_int(name, default):
     v = (os.getenv(name) or "").strip()
     return int(v) if v.isdigit() else int(default)
 
 def env_float(name, default):
     v = (os.getenv(name) or "").strip()
-    try:
-        return float(v)
-    except Exception:
-        return float(default)
+    try: return float(v)
+    except Exception: return float(default)
 
 def env_on(name, default=False):
     v = (os.getenv(name) or "").strip().lower()
@@ -36,29 +32,30 @@ def env_on(name, default=False):
     if v in ("0","false","no","off"): return False
     return bool(default)
 
-# ========= Config =========
+# ==== Config ====
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
-PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)         # 1 per minute
+PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)    # 1/min
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
-QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)          # stricter default
+QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
-# Butler grace (fixed): extra time after each push so Butler can move/duplicate
+# extra grace so Butler can move/duplicate (fixed 20s)
 BUTLER_GRACE_S   = 20
 
-# Behavior/quality toggles
-REQUIRE_EXPLICIT_EMAIL = env_on("REQUIRE_EXPLICIT_EMAIL", False)  # require on-site email (no fallback)
-ADD_SIGNALS_NOTE       = env_on("ADD_SIGNALS_NOTE", False)        # append "Signals: ..." note
-SKIP_GENERIC_EMAILS    = env_on("SKIP_GENERIC_EMAILS", False)     # drop info@/contact@/service@ etc.
-REQUIRE_BUSINESS_DOMAIN= env_on("REQUIRE_BUSINESS_DOMAIN", False) # email must be on the website's domain
-ALLOW_FREEMAIL         = env_on("ALLOW_FREEMAIL", True)           # allow personal webmail if found on-site
-FREEMAIL_EXTRA_Q       = env_float("FREEMAIL_EXTRA_Q", 0.3)       # extra quality needed for freemail
+# Behavior / quality
+REQUIRE_EXPLICIT_EMAIL = env_on("REQUIRE_EXPLICIT_EMAIL", False)
+ADD_SIGNALS_NOTE       = env_on("ADD_SIGNALS_NOTE", False)
+SKIP_GENERIC_EMAILS    = env_on("SKIP_GENERIC_EMAILS", False)
+REQUIRE_BUSINESS_DOMAIN= env_on("REQUIRE_BUSINESS_DOMAIN", False)
+ALLOW_FREEMAIL         = env_on("ALLOW_FREEMAIL", True)
+FREEMAIL_EXTRA_Q       = env_float("FREEMAIL_EXTRA_Q", 0.3)
 
-# Country/city control
+# Country / city
 COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
+CITY_HOPS     = 5  # <-- try up to 5 cities per run (increase/decrease here if you want)
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -67,32 +64,25 @@ UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})
 TRELLO_KEY      = os.getenv("TRELLO_KEY")
 TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
 TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
-TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional
+TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # required for pre-clone
 
-# Website discovery
+# Discovery keys
 FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
 
-# Official/registry sources (optional)
-USE_COMPANIES_HOUSE = env_on("USE_COMPANIES_HOUSE", False)  # UK
-CH_API_KEY          = os.getenv("CH_API_KEY")
+# Official sources
+USE_COMPANIES_HOUSE = env_on("USE_COMPANIES_HOUSE", False); CH_API_KEY = os.getenv("CH_API_KEY")
+USE_SIRENE          = env_on("USE_SIRENE", False); SIRENE_KEY = os.getenv("SIRENE_KEY"); SIRENE_SECRET = os.getenv("SIRENE_SECRET")
+USE_OPENCORP        = env_on("USE_OPENCORP", False); OPENCORP_API_KEY = os.getenv("OPENCORP_API_KEY")
+USE_ZEFIX           = env_on("USE_ZEFIX", False)
 
-USE_SIRENE          = env_on("USE_SIRENE", False)           # France
-SIRENE_KEY          = os.getenv("SIRENE_KEY")
-SIRENE_SECRET       = os.getenv("SIRENE_SECRET")
-
-USE_OPENCORP        = env_on("USE_OPENCORP", False)         # US/CA/DE
-OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")
-
-USE_ZEFIX           = env_on("USE_ZEFIX", False)            # Switzerland
-
-# ======== HTTP session ========
+# ====== HTTP ======
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# ======== Freemail detection ========
+# Freemail detection
 FREEMAIL_PATTERNS = [
     r"gmail\.com$", r"googlemail\.com$",
     r"outlook\.com$", r"hotmail\.com$", r"live\.com$",
@@ -106,48 +96,29 @@ def is_freemail(domain: str) -> bool:
     d = (domain or "").lower()
     return any(re.search(p, d) for p in FREEMAIL_PATTERNS)
 
-# Countries/cities rotation
+# Cities
 CITY_ROTATION = [
-    # Switzerland
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
-    # United Kingdom
     ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
-    # United States
     ("New York","United States"), ("Los Angeles","United States"), ("Chicago","United States"),
     ("Miami","United States"), ("San Francisco","United States"), ("Dallas","United States"),
-    # France
     ("Paris","France"), ("Lyon","France"), ("Marseille","France"), ("Toulouse","France"),
-    # Germany
     ("Berlin","Germany"), ("Munich","Germany"), ("Hamburg","Germany"), ("Frankfurt","Germany"),
-    # Italy
     ("Milan","Italy"), ("Rome","Italy"), ("Naples","Italy"), ("Turin","Italy"),
-    # Norway
     ("Oslo","Norway"), ("Bergen","Norway"),
-    # Denmark
     ("Copenhagen","Denmark"), ("Aarhus","Denmark"),
-    # Austria
     ("Vienna","Austria"), ("Salzburg","Austria"), ("Graz","Austria"),
-    # Spain
     ("Madrid","Spain"), ("Barcelona","Spain"), ("Valencia","Spain"),
-    # Portugal
     ("Lisbon","Portugal"), ("Porto","Portugal"),
-    # Netherlands
     ("Amsterdam","Netherlands"), ("Rotterdam","Netherlands"), ("The Hague","Netherlands"),
-    # Belgium
     ("Brussels","Belgium"), ("Antwerp","Belgium"), ("Ghent","Belgium"),
-    # Luxembourg
     ("Luxembourg City","Luxembourg"),
-    # Croatia
     ("Zagreb","Croatia"), ("Split","Croatia"), ("Rijeka","Croatia"),
-    # Dubai (UAE)
     ("Dubai","United Arab Emirates"),
-    # Indonesia
     ("Jakarta","Indonesia"), ("Surabaya","Indonesia"), ("Bandung","Indonesia"), ("Denpasar","Indonesia"),
-    # Canada
     ("Toronto","Canada"), ("Vancouver","Canada"), ("Montreal","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
 ]
 
-# Generic local parts we want to avoid in strict mode
 GENERIC_MAILBOX_PREFIXES = {
     "info","contact","hello","support","service","sales","office","admin",
     "enquiries","inquiries","booking","mail","team","general","kundenservice"
@@ -158,14 +129,11 @@ def is_generic_mailbox_local(local: str) -> bool:
     if L in ("noreply","no-reply","donotreply","do-not-reply"): return True
     return any(L.startswith(p) for p in GENERIC_MAILBOX_PREFIXES)
 
-EDITORIAL_PREFS = [
-    "marketing","content","editor","editorial","press","media",
-    "owner","ceo","md","sales","hello","contact"
-]
+EDITORIAL_PREFS = ["marketing","content","editor","editorial","press","media","owner","ceo","md","sales","hello","contact"]
 
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 
-def pick_today_city():
+def iter_cities():
     pool = CITY_ROTATION[:]
     if COUNTRY_WHITELIST:
         pool = [c for c in pool if c[1] in COUNTRY_WHITELIST]
@@ -175,14 +143,17 @@ def pick_today_city():
         pool = [c for c in pool if c[0].lower() == FORCE_CITY.lower()]
     if not pool:
         pool = CITY_ROTATION
-    return random.choice(pool) if CITY_MODE.lower() == "random" else pool[date.today().toordinal() % len(pool)]
+    start = date.today().toordinal() % len(pool)
+    hops = min(CITY_HOPS, len(pool))
+    for i in range(hops):
+        yield pool[(start + i) % len(pool)]
 
-# ========= small utils =========
+# ==== utils ====
 def normalize_url(u):
     if not u: return None
     if u.startswith("mailto:"): return None
-    parsed = urlparse(u)
-    if not parsed.scheme:
+    p = urlparse(u)
+    if not p.scheme:
         u = "https://" + u.strip("/")
     return u
 
@@ -196,10 +167,8 @@ def etld1_from_url(u: str) -> str:
     return ""
 
 def email_domain(email: str) -> str:
-    try:
-        return email.split("@", 1)[1].lower().strip()
-    except Exception:
-        return ""
+    try: return email.split("@", 1)[1].lower().strip()
+    except Exception: return ""
 
 def allowed_by_robots(base_url, path="/"):
     try:
@@ -218,7 +187,7 @@ def fetch(url):
 def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
-# ---- Quality + hygiene helpers ----
+# ---- quality helpers ----
 import dns.resolver
 try:
     import whois as pywhois
@@ -303,30 +272,20 @@ def choose_best_email(emails):
         if "@" not in e: continue
         local, dom = e.split("@", 1)
         dom = dom.lower()
-
-        # ---- freemail handling in selection ----
         if not ALLOW_FREEMAIL and is_freemail(dom):
             continue
-
-        # ---- generic local-part filter (strict) ----
         if SKIP_GENERIC_EMAILS and is_generic_mailbox_local(local):
             continue
-
         cleaned.append(f"{local}@{dom}")
-
-    # If strict mode nuked everything, bail
     if SKIP_GENERIC_EMAILS and not cleaned:
         return None
-
-    pool = cleaned or emails  # allow non-strict to fall back
-
+    pool = cleaned or emails
     bad = ("noreply","no-reply","donotreply","do-not-reply")
     def score(e):
         local = e.split("@",1)[0].lower()
-        pref = 0
+        pref=0
         for i,p in enumerate(EDITORIAL_PREFS):
-            if local.startswith(p):
-                pref = 100 - i; break
+            if local.startswith(p): pref = 100 - i; break
         penalty = 10 if local.startswith("info") else 0
         person_bonus = 1 if (("." in local) or ("-" in local)) else 0
         if any(b in local for b in bad): return (999,1,0)
@@ -370,7 +329,7 @@ def summarize_signals(q, website, email, soup):
     if tm >= 3: bits.append(f"team~{tm}")
     return f"Signals: q={q:.2f}; " + ", ".join(bits)
 
-# ========= Geo & OSM =========
+# ==== Geo & OSM ====
 def geocode_city(city, country):
     r = SESS.get("https://nominatim.openstreetmap.org/search",
         params={"q": f"{city}, {country}", "format":"json", "limit":1},
@@ -408,7 +367,7 @@ def overpass_estate_agents(bbox):
     out = list(dedup.values()); random.shuffle(out)
     return out
 
-# ========= Foursquare website finder =========
+# ==== Foursquare website finder ====
 def fsq_find_website(name, lat, lon):
     if not FOURSQUARE_API_KEY: return None
     headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
@@ -433,14 +392,12 @@ def fsq_find_website(name, lat, lon):
         return None
     return None
 
-# ========= Crawl contact page for email =========
+# ==== Contact crawl ====
 def cf_decode(hexstr: str) -> str:
     try:
-        b = bytes.fromhex(hexstr)
-        key = b[0]
+        b = bytes.fromhex(hexstr); key = b[0]
         return ''.join(chr(c ^ key) for c in b[1:])
-    except Exception:
-        return ""
+    except Exception: return ""
 
 def gather_candidate_pages(base):
     pages = [base]
@@ -462,31 +419,23 @@ def crawl_contact(site_url):
         except Exception:
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
-
         emails = set(extract_emails(resp.text))
         for a in soup.select('a[href^="mailto:"]'):
-            m = EMAIL_RE.search(a.get("href",""))
-            if m: emails.add(m.group(0))
-        # Cloudflare-protected emails
+            m = EMAIL_RE.search(a.get("href","")); if m: emails.add(m.group(0))
         for sp in soup.select("span.__cf_email__, [data-cfemail]"):
-            enc = sp.get("data-cfemail")
-            dec = cf_decode(enc) if enc else ""
+            enc = sp.get("data-cfemail"); dec = cf_decode(enc) if enc else ""
             if dec and EMAIL_RE.search(dec): emails.add(dec)
-
         if emails:
             chosen = choose_best_email(list(emails))
             if chosen:
-                out["email"] = chosen
-                break
+                out["email"] = chosen; break
         _sleep()
-
     if not out["email"] and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
         dom = etld1_from_url(site_url)
-        if dom:
-            out["email"] = f"info@{dom}"
+        if dom: out["email"] = f"info@{dom}"
     return out
 
-# ========= Official / registry sources =========
+# ==== Official / registry ====
 def uk_companies_house():
     if not (USE_COMPANIES_HOUSE and CH_API_KEY): return []
     url = "https://api.company-information.service.gov.uk/advanced-search/companies"
@@ -617,7 +566,7 @@ def official_sources(city, country, lat, lon):
             uniq.append(x); seen.add(k)
     return uniq
 
-# ========= Trello helpers =========
+# ==== Trello ====
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 
@@ -662,7 +611,6 @@ def update_card_header(card_id, company, email, website):
     desc_old = trello_get_card_desc(card_id)
     site_dom = etld1_from_url(website)
     if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
-        # do not auto-convert in strict mode
         if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
             email = f"info@{site_dom}"
     desc_new = normalize_header_block(desc_old, company, email, website)
@@ -702,24 +650,14 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     r.raise_for_status()
     return r.json()["id"]
 
-def next_empty_or_clone(list_id, template_id, grace_s=BUTLER_GRACE_S, poll_s=5):
-    """Wait/poll for a blank template card. If none, clone once, then poll until grace expires."""
-    t_end = time.time() + max(0, grace_s)
-    cloned = False
-    while time.time() < t_end:
-        empties = find_empty_template_cards(list_id, max_needed=1)
-        if empties:
-            return empties[0]
-        if template_id and not cloned:
-            try:
-                clone_template_into_list(template_id, list_id)
-                cloned = True
-            except Exception:
-                pass
-        time.sleep(poll_s)
-    # final quick check
-    empties = find_empty_template_cards(list_id, max_needed=1)
-    return empties[0] if empties else None
+def ensure_min_blank_templates(list_id, template_id, need):
+    """Ensure at least `need` empty template cards exist in the list."""
+    if need <= 0: return
+    empties = find_empty_template_cards(list_id, max_needed=need)
+    missing = max(0, need - len(empties))
+    for i in range(missing):
+        clone_template_into_list(template_id, list_id, name=f"Lead (auto) {int(time.time())%100000}-{i+1}")
+        time.sleep(1.0)  # small pause to avoid rate limits
 
 # ---- dedupe + CSV ----
 def load_seen():
@@ -748,88 +686,24 @@ def append_csv(leads, city, country):
         for L in leads:
             w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
 
-# ========= Main =========
+# ==== Main ====
 def main():
     missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
     if missing: raise SystemExit(f"Missing env: {', '.join(missing)}")
 
-    city, country = pick_today_city()
-    south, west, north, east = geocode_city(city, country)
-    lat = (south + north) / 2.0
-    lon = (west + east) / 2.0
-
     leads = []
     seen = load_seen()
 
-    # 0) Official sources first
-    off = official_sources(city, country, lat, lon)
-    for biz in off:
-        if len(leads) >= DAILY_LIMIT: break
-        website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
-        if not website: continue
-        site_dom = etld1_from_url(website)
-        if site_dom in seen: continue
-        if not allowed_by_robots(website, "/"): continue
-        try:
-            home = fetch(website)
-        except Exception:
-            continue
-        soup_home = BeautifulSoup(home.text, "html.parser")
-        contact = crawl_contact(website)
-        email = (contact.get("email") or "").strip()
+    for (city, country) in iter_cities():
+        south, west, north, east = geocode_city(city, country)
+        lat = (south + north) / 2.0
+        lon = (west + east) / 2.0
 
-        # ---- Freemail handling & business-domain requirement ----
-        if is_freemail(email_domain(email)):
-            if REQUIRE_BUSINESS_DOMAIN:
-                email = ""
-            elif not ALLOW_FREEMAIL:
-                if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
-                    email = f"info@{site_dom}"
-                else:
-                    email = ""
-
-        # If strict, drop generic local-part even if on-page
-        if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
-            email = ""
-
-        # Enforce business-domain exact match if required
-        if REQUIRE_BUSINESS_DOMAIN and email and email_domain(email) != site_dom:
-            email = ""
-
-        # Require MX; if not, try info@ only if allowed
-        if email and "@" in email and not domain_has_mx(email_domain(email)):
-            if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
-                email = f"info@{site_dom}"
-            else:
-                email = ""
-
-        if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
-            email = ""
-
-        if not email or "@" not in email:
-            continue
-
-        q = quality_score(website, home.text, soup_home, email)
-
-        # Extra quality requirement for freemail (when allowed)
-        if ALLOW_FREEMAIL and is_freemail(email_domain(email)):
-            if q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                continue
-
-        if q < QUALITY_MIN: continue
-
-        leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
-                      "signals": summarize_signals(q, website, email, soup_home)})
-        seen.add(site_dom); _sleep()
-
-    # 1) OSM fallback
-    if len(leads) < DAILY_LIMIT:
-        for biz in overpass_estate_agents((south, west, north, east)):
+        # 0) Official sources
+        off = official_sources(city, country, lat, lon)
+        for biz in off:
             if len(leads) >= DAILY_LIMIT: break
             website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
-            if not website and biz.get("email"):
-                dom = email_domain(biz["email"])
-                if dom and not is_freemail(dom): website = f"https://{dom}"
             if not website: continue
             site_dom = etld1_from_url(website)
             if site_dom in seen: continue
@@ -842,7 +716,7 @@ def main():
             contact = crawl_contact(website)
             email = (contact.get("email") or "").strip()
 
-            # ---- Freemail handling & business-domain requirement ----
+            # Freemail & domain rules
             if is_freemail(email_domain(email)):
                 if REQUIRE_BUSINESS_DOMAIN:
                     email = ""
@@ -851,35 +725,82 @@ def main():
                         email = f"info@{site_dom}"
                     else:
                         email = ""
-
             if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
                 email = ""
-
             if REQUIRE_BUSINESS_DOMAIN and email and email_domain(email) != site_dom:
                 email = ""
-
             if email and "@" in email and not domain_has_mx(email_domain(email)):
                 if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
                     email = f"info@{site_dom}"
                 else:
                     email = ""
-
             if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
                 email = ""
-
             if not email or "@" not in email:
                 continue
 
             q = quality_score(website, home.text, soup_home, email)
-            if ALLOW_FREEMAIL and is_freemail(email_domain(email)):
-                if q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                    continue
-
+            if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                continue
             if q < QUALITY_MIN: continue
 
             leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                           "signals": summarize_signals(q, website, email, soup_home)})
             seen.add(site_dom); _sleep()
+
+        # 1) OSM fallback
+        if len(leads) < DAILY_LIMIT:
+            for biz in overpass_estate_agents((south, west, north, east)):
+                if len(leads) >= DAILY_LIMIT: break
+                website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+                if not website and biz.get("email"):
+                    dom = email_domain(biz["email"])
+                    if dom and not is_freemail(dom): website = f"https://{dom}"
+                if not website: continue
+                site_dom = etld1_from_url(website)
+                if site_dom in seen: continue
+                if not allowed_by_robots(website, "/"): continue
+                try:
+                    home = fetch(website)
+                except Exception:
+                    continue
+                soup_home = BeautifulSoup(home.text, "html.parser")
+                contact = crawl_contact(website)
+                email = (contact.get("email") or "").strip()
+
+                if is_freemail(email_domain(email)):
+                    if REQUIRE_BUSINESS_DOMAIN:
+                        email = ""
+                    elif not ALLOW_FREEMAIL:
+                        if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
+                            email = f"info@{site_dom}"
+                        else:
+                            email = ""
+                if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
+                    email = ""
+                if REQUIRE_BUSINESS_DOMAIN and email and email_domain(email) != site_dom:
+                    email = ""
+                if email and "@" in email and not domain_has_mx(email_domain(email)):
+                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
+                        email = f"info@{site_dom}"
+                    else:
+                        email = ""
+                if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+                    email = ""
+                if not email or "@" not in email:
+                    continue
+
+                q = quality_score(website, home.text, soup_home, email)
+                if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                    continue
+                if q < QUALITY_MIN: continue
+
+                leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                              "signals": summarize_signals(q, website, email, soup_home)})
+                seen.add(site_dom); _sleep()
+
+        if len(leads) >= DAILY_LIMIT:
+            break
 
     # keep top N
     if leads:
@@ -887,41 +808,53 @@ def main():
         leads = leads[:DAILY_LIMIT]
 
     save_seen(seen)
-    append_csv(leads, city, country)
 
-    # 2) Push to Trello — one per minute + 20s Butler grace (FINAL safety guard)
+    # Pre-clone enough blanks so we never wait on Butler
+    need = min(DAILY_LIMIT, len(leads))
+    if need > 0 and TRELLO_TEMPLATE_CARD_ID:
+        ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
+
+    # Optional: CSV for inspection (city/country from last iter)
+    if leads:
+        last_city, last_country = (city, country)  # from loop scope
+        fname = os.getenv("LEADS_CSV", f"leads_{date.today().isoformat()}.csv")
+        file_exists = pathlib.Path(fname).exists()
+        with open(fname, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if not file_exists: w.writerow(["timestamp","city","country","company","email","website","q"])
+            ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
+            for L in leads:
+                w.writerow([ts, last_city, last_country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
+
+    # Push: one per minute + 20s grace (even though we pre-cloned)
     pushed = 0
     for lead in leads:
-        # FINAL SAFETY: never push generic mailboxes in strict mode
         if SKIP_GENERIC_EMAILS and "@" in lead["Email"]:
             local = lead["Email"].split("@", 1)[0]
             if is_generic_mailbox_local(local):
                 print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
                 continue
 
-        # Get the next blank template (wait/poll, clone once if needed)
-        card_id = next_empty_or_clone(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID)
-        if not card_id:
-            print("No empty template card available (even after grace); skipping.")
+        empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
+        if not empties:
+            print("No empty template card available; skipping.")
             continue
 
-        changed = update_card_header(
-            card_id=card_id,
-            company=lead["Company"],
-            email=lead["Email"],
-            website=lead["Website"],
-        )
+        card_id = empties[0]
+        changed = update_card_header(card_id=card_id,
+                                     company=lead["Company"],
+                                     email=lead["Email"],
+                                     website=lead["Website"])
         if changed:
             pushed += 1
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
                 append_note(card_id, lead.get("signals",""))
-            # existing 1-minute wait + fixed extra grace for Butler
             time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
         else:
             print("Card unchanged; trying next lead.")
 
-    print(f"Done. Leads pushed: {pushed}/{len(leads)} (city={city}, country={country})")
+    print(f"Done. Leads pushed: {pushed}/{len(leads)}")
 
 if __name__ == "__main__":
     main()
