@@ -6,7 +6,7 @@ on:
     - cron: "0 7 * * *"   # 07:00 UTC daily
 
 permissions:
-  contents: write   # needed if you keep the auto-commit step
+  contents: write   # needed for auto-commit of seen_domains.txt
 
 concurrency:
   group: daily-realestate
@@ -17,24 +17,111 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --- Checkout (full history so commits work) ---
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false   # auto-commit action will handle auth
+          persist-credentials: false
 
-      # --- Python runtime ---
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --- Deps (tolerant) ---
       - name: Install deps
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt || true
 
-      # --- Preflight: verify keys + show flags ---
+      - name: Preflight
+        env:
+          # Required Trello
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          # Optional Trello
+          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+          # Discovery / geocoding
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+          # Country feature flags + credentials
+          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+          CH_API_KEY: ${{ secrets.CH_API_KEY }}
+          USE_SIRENE: ${{ secrets.USE_SIRENE }}
+          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+          # Quality / behavior
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
+          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
+          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
+          # Country/city selection
+          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
+          CITY_MODE: ${{ secrets.CITY_MODE }}
+          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
+          FORCE_CITY: ${{ secrets.FORCE_CITY }}
+        run: |
+          python - <<'PY'
+          import os, sys
+          def on(k): return (os.getenv(k) or "").strip().lower() in ("1","true","yes","on")
+          missing = [k for k in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(k)]
+          if missing: 
+              print("Missing:", ", ".join(missing)); sys.exit(1)
+          if on("USE_COMPANIES_HOUSE") and not os.getenv("CH_API_KEY"): sys.exit(1)
+          if on("USE_SIRENE") and (not os.getenv("SIRENE_KEY") or not os.getenv("SIRENE_SECRET")): sys.exit(1)
+          PY
+
+      - name: Run pipeline
+        env:
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+          USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
+          CH_API_KEY: ${{ secrets.CH_API_KEY }}
+          USE_SIRENE: ${{ secrets.USE_SIRENE }}
+          SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
+          SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+          USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
+          OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
+          USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
+          ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
+          REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
+          FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
+          COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
+          CITY_MODE: ${{ secrets.CITY_MODE }}
+          FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
+          FORCE_CITY: ${{ secrets.FORCE_CITY }}
+        run: |
+          python realestate_to_trello.py
+
+      - name: Upload leads CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: leads-${{ github.run_id }}
+          path: |
+            leads_*.csv
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Commit seen_domains.txt
+        uses: stefanzweifel/git-auto-commit-action@v5
+        continue-on-error: true
+        with:
+          commit_message: "Update seen_domains.txt [skip ci]"
+          file_pattern: seen_domains.txt
+          branch: ${{ github.ref_name }}
+          create_branch: false      # --- Preflight: verify keys + show flags ---
       - name: Preflight
         env:
           # Required Trello
