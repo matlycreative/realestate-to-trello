@@ -1,7 +1,7 @@
 # realestate_to_trello.py
 # Fills Trello template cards with Company / Email / Website (1/min).
-# Header (kept at the very top, exact order):
-# Company, First, Email, Hook, Variant, Website  (First/Hook/Variant preserved)
+# Header order is enforced and preserved for other fields:
+# Company, First, Email, Hook, Variant, Website
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -11,52 +11,73 @@ from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 
-# ---- optional local .env ----
+# ---- optional local .env (for laptop runs) ----
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
+# ========= Env helpers (robust to blank secrets) =========
+def env_int(name, default):
+    v = (os.getenv(name) or "").strip()
+    return int(v) if v.isdigit() else int(default)
+
+def env_float(name, default):
+    v = (os.getenv(name) or "").strip()
+    try:
+        return float(v)
+    except Exception:
+        return float(default)
+
+def env_on(name, default=False):
+    v = (os.getenv(name) or "").strip().lower()
+    if v in ("1","true","yes","on"): return True
+    if v in ("0","false","no","off"): return False
+    return bool(default)
+
 # ========= Config =========
-DAILY_LIMIT     = int(os.getenv("DAILY_LIMIT", "10"))
-PUSH_INTERVAL_S = int(os.getenv("PUSH_INTERVAL_S", "60"))        # 1 per minute
-REQUEST_DELAY_S = float(os.getenv("REQUEST_DELAY_S", "1.0"))
-QUALITY_MIN     = float(os.getenv("QUALITY_MIN", "3.0"))         # stricter default
-SEEN_FILE       = os.getenv("SEEN_FILE", "seen_domains.txt")
+DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
+PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)         # 1 per minute
+REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
+QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)          # stricter default
+SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
-# Optional behavior
-REQUIRE_EXPLICIT_EMAIL = os.getenv("REQUIRE_EXPLICIT_EMAIL","0") == "1"  # skip info@ fallback
-ADD_SIGNALS_NOTE       = os.getenv("ADD_SIGNALS_NOTE","0") == "1"        # append one-liner under header
+# Behavior/quality toggles
+REQUIRE_EXPLICIT_EMAIL = env_on("REQUIRE_EXPLICIT_EMAIL", False)  # require on-site email (no fallback)
+ADD_SIGNALS_NOTE       = env_on("ADD_SIGNALS_NOTE", False)        # append "Signals: ..." note
+SKIP_GENERIC_EMAILS    = env_on("SKIP_GENERIC_EMAILS", False)     # drop info@/contact@/service@ etc.
 
-# Country/city control (high ROI)
-COUNTRY_WHITELIST = [s.strip() for s in os.getenv("COUNTRY_WHITELIST","").split(",") if s.strip()]
+# Country/city control
+COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
-FORCE_COUNTRY = os.getenv("FORCE_COUNTRY", "").strip()
-FORCE_CITY    = os.getenv("FORCE_CITY", "").strip()
+FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
+FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
 
+# Trello
 TRELLO_KEY      = os.getenv("TRELLO_KEY")
 TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
 TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
 TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # optional
 
-FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")             # website discovery
+# Website discovery
+FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
 
-# Official/registry sources (optional but recommended)
-USE_COMPANIES_HOUSE = os.getenv("USE_COMPANIES_HOUSE", "0") == "1"  # UK
+# Official/registry sources (optional)
+USE_COMPANIES_HOUSE = env_on("USE_COMPANIES_HOUSE", False)  # UK
 CH_API_KEY          = os.getenv("CH_API_KEY")
 
-USE_SIRENE          = os.getenv("USE_SIRENE", "0") == "1"           # France (OAuth2)
-SIRENE_KEY          = os.getenv("SIRENE_KEY")       # INSEE client_id
-SIRENE_SECRET       = os.getenv("SIRENE_SECRET")    # INSEE client_secret
+USE_SIRENE          = env_on("USE_SIRENE", False)           # France
+SIRENE_KEY          = os.getenv("SIRENE_KEY")
+SIRENE_SECRET       = os.getenv("SIRENE_SECRET")
 
-USE_OPENCORP        = os.getenv("USE_OPENCORP", "0") == "1"         # US/CA/DE
-OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")                 # optional
+USE_OPENCORP        = env_on("USE_OPENCORP", False)         # US/CA/DE
+OPENCORP_API_KEY    = os.getenv("OPENCORP_API_KEY")
 
-USE_ZEFIX           = os.getenv("USE_ZEFIX", "0") == "1"            # Switzerland (no key)
+USE_ZEFIX           = env_on("USE_ZEFIX", False)            # Switzerland
 
 # ======== HTTP session ========
 SESS = requests.Session()
@@ -111,6 +132,23 @@ GENERIC_MAIL_PROVIDERS = {
     "proton.me","protonmail.com","aol.com","live.com","msn.com"
 }
 
+# Generic local parts we want to avoid in strict mode
+GENERIC_MAILBOX_PREFIXES = {
+    "info","contact","hello","support","service","sales","office","admin",
+    "enquiries","inquiries","booking","mail","team","general","kundenservice"
+}
+
+def is_generic_mailbox_local(local: str) -> bool:
+    if not local: return True
+    L = local.lower()
+    if L in ("noreply","no-reply","donotreply","do-not-reply"): return True
+    return any(L.startswith(p) for p in GENERIC_MAILBOX_PREFIXES)
+
+EDITORIAL_PREFS = [
+    "marketing","content","editor","editorial","press","media",
+    "owner","ceo","md","sales","hello","contact"
+]
+
 def _sleep(): time.sleep(REQUEST_DELAY_S)
 
 def pick_today_city():
@@ -124,11 +162,7 @@ def pick_today_city():
         pool = [c for c in pool if c[0].lower() == FORCE_CITY.lower()]
     if not pool:
         pool = CITY_ROTATION
-    mode = CITY_MODE.lower()
-    if mode == "random":
-        return random.choice(pool)
-    # default deterministic rotation by date
-    return pool[date.today().toordinal() % len(pool)]
+    return random.choice(pool) if CITY_MODE.lower() == "random" else pool[date.today().toordinal() % len(pool)]
 
 # ========= small utils =========
 def normalize_url(u):
@@ -139,20 +173,6 @@ def normalize_url(u):
         u = "https://" + u.strip("/")
     return u
 
-def domain_from_url(u):
-    try:
-        ext = tldextract.extract(u)
-        if not ext.domain: return ""
-        return ".".join([ext.domain, ext.suffix]) if ext.suffix else ext.domain
-    except Exception:
-        return ""
-
-def email_domain(email: str) -> str:
-    try:
-        return email.split("@", 1)[1].lower().strip()
-    except Exception:
-        return ""
-
 def etld1_from_url(u: str) -> str:
     try:
         ex = tldextract.extract(u or "")
@@ -161,6 +181,12 @@ def etld1_from_url(u: str) -> str:
     except Exception:
         pass
     return ""
+
+def email_domain(email: str) -> str:
+    try:
+        return email.split("@", 1)[1].lower().strip()
+    except Exception:
+        return ""
 
 def allowed_by_robots(base_url, path="/"):
     try:
@@ -186,11 +212,6 @@ try:
 except Exception:
     pywhois = None
 
-EDITORIAL_PREFS = [
-    "marketing", "content", "editor", "editorial", "press", "media",
-    "owner", "ceo", "md", "sales", "hello", "contact"
-]
-
 def looks_parked(html: str) -> bool:
     hay = (html or "").lower()
     red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parking","parked domain"]
@@ -207,11 +228,9 @@ def domain_has_mx(domain: str) -> bool:
 def domain_has_dmarc(domain: str) -> bool:
     if not domain: return False
     try:
-        name = f"_dmarc.{domain}"
-        for r in dns.resolver.resolve(name, "TXT", lifetime=5.0):
+        for r in dns.resolver.resolve(f"_dmarc.{domain}", "TXT", lifetime=5.0):
             txt = b"".join(r.strings).decode("utf-8", "ignore").lower()
-            if txt.startswith("v=dmarc"):
-                return True
+            if txt.startswith("v=dmarc"): return True
     except Exception:
         return False
 
@@ -266,16 +285,35 @@ def count_team_members(soup: BeautifulSoup) -> int:
 
 def choose_best_email(emails):
     if not emails: return None
+    cleaned = []
+    for e in emails:
+        if "@" not in e: continue
+        local, dom = e.split("@", 1)
+        dom = dom.lower()
+        if dom in GENERIC_MAIL_PROVIDERS:
+            continue
+        if SKIP_GENERIC_EMAILS and is_generic_mailbox_local(local):
+            continue
+        cleaned.append(f"{local}@{dom}")
+
+    # If strict mode nuked everything, bail
+    if SKIP_GENERIC_EMAILS and not cleaned:
+        return None
+
+    pool = cleaned or emails  # allow non-strict to fall back
+
     bad = ("noreply","no-reply","donotreply","do-not-reply")
     def score(e):
-        local = e.split("@")[0].lower()
-        if any(b in local for b in bad): return (999,1,len(local))
+        local = e.split("@",1)[0].lower()
         pref = 0
         for i,p in enumerate(EDITORIAL_PREFS):
-            if local.startswith(p): pref = 100 - i; break
-        penalty = 1 if local.startswith("info") else 0
-        return (-(pref), penalty, len(local))
-    return sorted(emails, key=score)[0]
+            if local.startswith(p):
+                pref = 100 - i; break
+        penalty = 10 if local.startswith("info") else 0
+        person_bonus = 1 if (("." in local) or ("-" in local)) else 0
+        if any(b in local for b in bad): return (999,1,0)
+        return (-(pref), penalty, -person_bonus, len(local))
+    return sorted(pool, key=score)[0]
 
 def uses_https(url: str) -> bool:
     return (urlparse(url or "").scheme == "https")
@@ -347,7 +385,7 @@ def overpass_estate_agents(bbox):
                          "email": email})
     dedup = {}
     for r0 in rows:
-        key = (r0["business_name"].lower(), domain_from_url(r0["website"] or ""))
+        key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
         if key not in dedup: dedup[key] = r0
     out = list(dedup.values()); random.shuffle(out)
     return out
@@ -418,13 +456,16 @@ def crawl_contact(site_url):
             if dec and EMAIL_RE.search(dec): emails.add(dec)
 
         if emails:
-            out["email"] = choose_best_email(list(emails))
-            break
+            chosen = choose_best_email(list(emails))
+            if chosen:
+                out["email"] = chosen
+                break
         _sleep()
 
-    if not out["email"]:
-        dom = domain_from_url(site_url)
-        if dom: out["email"] = f"info@{dom}"
+    if not out["email"] and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
+        dom = etld1_from_url(site_url)
+        if dom:
+            out["email"] = f"info@{dom}"
     return out
 
 # ========= Official / registry sources =========
@@ -443,7 +484,6 @@ def uk_companies_house():
     except Exception:
         return []
 
-# --- SIRENE OAuth2 token cache ---
 _SIRENE_TOKEN_CACHE = {"token": None, "expires_at": 0}
 def sirene_get_token():
     if not (SIRENE_KEY and SIRENE_SECRET): return None
@@ -604,7 +644,9 @@ def update_card_header(card_id, company, email, website):
     desc_old = trello_get_card_desc(card_id)
     site_dom = etld1_from_url(website)
     if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
-        email = f"info@{site_dom}"
+        # do not auto-convert in strict mode
+        if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
+            email = f"info@{site_dom}"
     desc_new = normalize_header_block(desc_old, company, email, website)
     if desc_new == desc_old: return False
     r = SESS.put(f"https://api.trello.com/1/cards/{card_id}",
@@ -698,16 +740,33 @@ def main():
         soup_home = BeautifulSoup(home.text, "html.parser")
         contact = crawl_contact(website)
         email = (contact.get("email") or "").strip()
-        if not email or "@" not in email:
-            if site_dom: email = f"info@{site_dom}"
+
+        # If we only found webmail, try to convert (unless strict/explicit)
         if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
+            if SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL:
+                continue
             email = f"info@{site_dom}"
+
+        # If strict, drop generic mailboxes even if present on-page
+        if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
+            continue
+
+        # Require MX; if not, try info@ only if allowed
         if "@" in email and not domain_has_mx(email_domain(email)):
-            if site_dom and domain_has_mx(site_dom): email = f"info@{site_dom}"
-            else: continue
-        if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower(): continue
+            if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
+                email = f"info@{site_dom}"
+            else:
+                continue
+
+        if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
+            continue
+
+        if not email or "@" not in email:
+            continue
+
         q = quality_score(website, home.text, soup_home, email)
         if q < QUALITY_MIN: continue
+
         leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                       "signals": summarize_signals(q, website, email, soup_home)})
         seen.add(site_dom); _sleep()
@@ -731,16 +790,30 @@ def main():
             soup_home = BeautifulSoup(home.text, "html.parser")
             contact = crawl_contact(website)
             email = (contact.get("email") or "").strip()
-            if not email or "@" not in email:
-                if site_dom: email = f"info@{site_dom}"
+
             if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
+                if SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL:
+                    continue
                 email = f"info@{site_dom}"
+
+            if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
+                continue
+
             if "@" in email and not domain_has_mx(email_domain(email)):
-                if site_dom and domain_has_mx(site_dom): email = f"info@{site_dom}"
-                else: continue
-            if REQUIRE_EXPLICIT_EMAIL and 'info@' in email.lower(): continue
+                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
+                    email = f"info@{site_dom}"
+                else:
+                    continue
+
+            if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
+                continue
+
+            if not email or "@" not in email:
+                continue
+
             q = quality_score(website, home.text, soup_home, email)
             if q < QUALITY_MIN: continue
+
             leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                           "signals": summarize_signals(q, website, email, soup_home)})
             seen.add(site_dom); _sleep()
