@@ -1,5 +1,6 @@
 requests
 beautifulsoup4
 tldextract
-# optional for local runs:
+dnspython
+python-whois
 python-dotenv
