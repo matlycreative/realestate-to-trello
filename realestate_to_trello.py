@@ -47,6 +47,9 @@ SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 REQUIRE_EXPLICIT_EMAIL = env_on("REQUIRE_EXPLICIT_EMAIL", False)  # require on-site email (no fallback)
 ADD_SIGNALS_NOTE       = env_on("ADD_SIGNALS_NOTE", False)        # append "Signals: ..." note
 SKIP_GENERIC_EMAILS    = env_on("SKIP_GENERIC_EMAILS", False)     # drop info@/contact@/service@ etc.
+REQUIRE_BUSINESS_DOMAIN= env_on("REQUIRE_BUSINESS_DOMAIN", False) # email must be on the website's domain
+ALLOW_FREEMAIL         = env_on("ALLOW_FREEMAIL", True)           # allow personal webmail if found on-site
+FREEMAIL_EXTRA_Q       = env_float("FREEMAIL_EXTRA_Q", 0.3)       # extra quality needed for freemail
 
 # Country/city control
 COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
@@ -85,6 +88,20 @@ SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+
+# ======== Freemail detection ========
+FREEMAIL_PATTERNS = [
+    r"gmail\.com$", r"googlemail\.com$",
+    r"outlook\.com$", r"hotmail\.com$", r"live\.com$",
+    r"outlook\.[a-z]{2,}$", r"hotmail\.[a-z]{2,}$", r"live\.[a-z]{2,}$",
+    r"yahoo\.com$", r"yahoo\.[a-z]{2,}$",
+    r"icloud\.com$", r"proton\.me$", r"protonmail\.com$",
+    r"aol\.com$", r"gmx\.(?:com|net|de|at|ch)$",
+    r"web\.de$", r"yandex\.(?:ru|com|ua|kz|by)$", r"mail\.ru$"
+]
+def is_freemail(domain: str) -> bool:
+    d = (domain or "").lower()
+    return any(re.search(p, d) for p in FREEMAIL_PATTERNS)
 
 # Countries/cities rotation
 CITY_ROTATION = [
@@ -127,17 +144,11 @@ CITY_ROTATION = [
     ("Toronto","Canada"), ("Vancouver","Canada"), ("Montreal","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
 ]
 
-GENERIC_MAIL_PROVIDERS = {
-    "gmail.com","yahoo.com","outlook.com","hotmail.com","icloud.com",
-    "proton.me","protonmail.com","aol.com","live.com","msn.com"
-}
-
 # Generic local parts we want to avoid in strict mode
 GENERIC_MAILBOX_PREFIXES = {
     "info","contact","hello","support","service","sales","office","admin",
     "enquiries","inquiries","booking","mail","team","general","kundenservice"
 }
-
 def is_generic_mailbox_local(local: str) -> bool:
     if not local: return True
     L = local.lower()
@@ -289,10 +300,15 @@ def choose_best_email(emails):
         if "@" not in e: continue
         local, dom = e.split("@", 1)
         dom = dom.lower()
-        if dom in GENERIC_MAIL_PROVIDERS:
+
+        # ---- freemail handling in selection ----
+        if not ALLOW_FREEMAIL and is_freemail(dom):
             continue
+
+        # ---- generic local-part filter (strict) ----
         if SKIP_GENERIC_EMAILS and is_generic_mailbox_local(local):
             continue
+
         cleaned.append(f"{local}@{dom}")
 
     # If strict mode nuked everything, bail
@@ -740,29 +756,45 @@ def main():
         contact = crawl_contact(website)
         email = (contact.get("email") or "").strip()
 
-        # If we only found webmail, try to convert (unless strict/explicit)
-        if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
-            if SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL:
-                continue
-            email = f"info@{site_dom}"
+        # ---- Freemail handling & business-domain requirement ----
+        if is_freemail(email_domain(email)):
+            if REQUIRE_BUSINESS_DOMAIN:
+                email = ""
+            elif not ALLOW_FREEMAIL:
+                if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
+                    email = f"info@{site_dom}"
+                else:
+                    email = ""
+            # else: allow freemail; quality bump applied after q calc
 
-        # If strict, drop generic mailboxes even if present on-page
+        # If strict, drop generic local-part even if on-page
         if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
-            continue
+            email = ""
+
+        # Enforce business-domain exact match if required
+        if REQUIRE_BUSINESS_DOMAIN and email and email_domain(email) != site_dom:
+            email = ""
 
         # Require MX; if not, try info@ only if allowed
-        if "@" in email and not domain_has_mx(email_domain(email)):
+        if email and "@" in email and not domain_has_mx(email_domain(email)):
             if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
                 email = f"info@{site_dom}"
             else:
-                continue
+                email = ""
 
-        if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
-            continue
+        if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+            email = ""
+
         if not email or "@" not in email:
             continue
 
         q = quality_score(website, home.text, soup_home, email)
+
+        # Extra quality requirement for freemail (when allowed)
+        if ALLOW_FREEMAIL and is_freemail(email_domain(email)):
+            if q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                continue
+
         if q < QUALITY_MIN: continue
 
         leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
@@ -776,7 +808,7 @@ def main():
             website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
             if not website and biz.get("email"):
                 dom = email_domain(biz["email"])
-                if dom and dom not in GENERIC_MAIL_PROVIDERS: website = f"https://{dom}"
+                if dom and not is_freemail(dom): website = f"https://{dom}"
             if not website: continue
             site_dom = etld1_from_url(website)
             if site_dom in seen: continue
@@ -789,26 +821,39 @@ def main():
             contact = crawl_contact(website)
             email = (contact.get("email") or "").strip()
 
-            if email_domain(email) in GENERIC_MAIL_PROVIDERS and site_dom:
-                if SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL:
-                    continue
-                email = f"info@{site_dom}"
+            # ---- Freemail handling & business-domain requirement ----
+            if is_freemail(email_domain(email)):
+                if REQUIRE_BUSINESS_DOMAIN:
+                    email = ""
+                elif not ALLOW_FREEMAIL:
+                    if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
+                        email = f"info@{site_dom}"
+                    else:
+                        email = ""
 
             if SKIP_GENERIC_EMAILS and "@" in email and is_generic_mailbox_local(email.split("@",1)[0]):
-                continue
+                email = ""
 
-            if "@" in email and not domain_has_mx(email_domain(email)):
+            if REQUIRE_BUSINESS_DOMAIN and email and email_domain(email) != site_dom:
+                email = ""
+
+            if email and "@" in email and not domain_has_mx(email_domain(email)):
                 if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and site_dom and domain_has_mx(site_dom):
                     email = f"info@{site_dom}"
                 else:
-                    continue
+                    email = ""
 
-            if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in email.lower()):
-                continue
+            if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+                email = ""
+
             if not email or "@" not in email:
                 continue
 
             q = quality_score(website, home.text, soup_home, email)
+            if ALLOW_FREEMAIL and is_freemail(email_domain(email)):
+                if q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                    continue
+
             if q < QUALITY_MIN: continue
 
             leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
