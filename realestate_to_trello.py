@@ -2,6 +2,8 @@
 # Fills Trello template cards with Company / Email / Website (1/min).
 # Header order is enforced and other fields are preserved:
 # Company, First, Email, Hook, Variant, Website
+#
+# Now also renames the card TITLE to the Company value.
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -753,13 +755,17 @@ def official_sources(city, country, lat, lon):
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 
-def trello_get_card_desc(card_id):
-    r = SESS.get(f"https://api.trello.com/1/cards/{card_id}",
-                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "desc"},
-                 timeout=30)
+def trello_get_card(card_id):
+    r = SESS.get(
+        f"https://api.trello.com/1/cards/{card_id}",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "name,desc"},
+        timeout=30,
+    )
     r.raise_for_status()
-    desc = r.json().get("desc") or ""
-    return desc.replace("\r\n", "\n").replace("\r", "\n")
+    js = r.json()
+    desc = (js.get("desc") or "").replace("\r\n", "\n").replace("\r", "\n")
+    name = js.get("name") or ""
+    return {"name": name, "desc": desc}
 
 def normalize_header_block(desc, company, email, website):
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -799,26 +805,51 @@ def normalize_header_block(desc, company, email, website):
     ]
     return "\n".join(block_lines + ([""] if keep else []) + keep)
 
-def update_card_header(card_id, company, email, website):
-    desc_old = trello_get_card_desc(card_id)
+def update_card_header(card_id, company, email, website, new_name=None):
+    cur = trello_get_card(card_id)
+    desc_old = cur["desc"]
+    name_old = cur["name"]
+
+    # If email domain != site domain, normalize to info@site (when allowed)
     site_dom = etld1_from_url(website)
     if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
         if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
             email = f"info@{site_dom}"
+
+    # Build new header block
     desc_new = normalize_header_block(desc_old, company, email, website)
-    if desc_new == desc_old: return False
-    r = SESS.put(f"https://api.trello.com/1/cards/{card_id}",
-                 params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": desc_new}, timeout=30)
+
+    # Only send fields that changed
+    payload = {}
+    if desc_new != desc_old:
+        payload["desc"] = desc_new
+
+    desired_name = (new_name or "").strip()
+    if desired_name and desired_name != name_old.strip():
+        payload["name"] = desired_name
+
+    if not payload:
+        return False  # nothing to change
+
+    r = SESS.put(
+        f"https://api.trello.com/1/cards/{card_id}",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, **payload},
+        timeout=30,
+    )
     r.raise_for_status()
     return True
 
 def append_note(card_id, note):
     if not note: return
-    desc = trello_get_card_desc(card_id)
+    cur = trello_get_card(card_id)
+    desc = cur["desc"]
     if "signals:" in desc.lower(): return  # case-insensitive
     new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
-    SESS.put(f"https://api.trello.com/1/cards/{card_id}",
-             params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc}, timeout=30).raise_for_status()
+    SESS.put(
+        f"https://api.trello.com/1/cards/{card_id}",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc},
+        timeout=30
+    ).raise_for_status()
 
 def is_template_blank(desc: str) -> bool:
     """
@@ -1107,6 +1138,7 @@ def main():
             company=lead["Company"],
             email=lead["Email"],
             website=lead["Website"],
+            new_name=lead["Company"],   # <- set Trello card title to Company
         )
         if changed:
             pushed += 1
