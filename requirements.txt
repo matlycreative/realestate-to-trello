@@ -4,3 +4,5 @@ tldextract
 dnspython
 python-whois
 python-dotenv
+gspread
+google-auth
