@@ -964,13 +964,12 @@ def domain_from_card_desc(desc: str) -> str:
     return dom
 
 def backfill_seen_from_list(list_id: str, seen: set) -> int:
-    """Scan a list, collect website/email domains, add to 'seen' set."""
     added = 0
     for c in trello_list_cards_full(list_id):
         dom = domain_from_card_desc(c.get("desc") or "")
         if dom and dom not in seen:
-            seen_domains(dom)   # append line-by-line for safety
-            seen.add(dom)
+            seen_domains(dom)   # append to file
+            seen.add(dom)       # update set
             added += 1
     return added
 
@@ -983,7 +982,6 @@ def load_seen():
         return set()
 
 def seen_domains(domain: str):
-    """Append one domain per line into SEEN_FILE, mkdir-safe."""
     if not domain:
         return
     d = domain.strip().lower()
@@ -997,8 +995,16 @@ def seen_domains(domain: str):
 def save_seen(seen):
     try:
         os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+
+        # Merge existing file contents with the in-memory set before writing.
+        existing = set()
+        if os.path.exists(SEEN_FILE):
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
+                existing = {l.strip().lower() for l in f if l.strip()}
+
+        merged = existing | {d.strip().lower() for d in (seen or set()) if d}
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            for d in sorted(seen):
+            for d in sorted(merged):
                 f.write(d + "\n")
     except Exception:
         pass
@@ -1048,10 +1054,11 @@ def main():
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
-            site_dom = etld1_from_url(website)
-            if site_dom in seen:
-                STATS["skip_dupe_domain"] += 1
-                continue
+            # Always persist the domain (from card Website/email fallback)
+            if site_dom:
+                seen_domains(site_dom)     # write to file immediately
+                seen.add(site_dom)         # keep in-memory set in sync
+                dbg(f"Ensured in seen + file: {site_dom}")
             if not allowed_by_robots(website, "/"):
                 STATS["skip_robots"] += 1
                 continue
