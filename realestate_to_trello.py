@@ -1232,10 +1232,13 @@ def main():
             if em_dom and not is_freemail(em_dom):
                 site_dom = em_dom
 
-        if site_dom and site_dom not in seen:
-            append_seen_domain(site_dom)
-            seen.add(site_dom)
-            dbg(f"Appended to seen: {site_dom}")
+        if site_dom:
+    # Always write to the file so we have a durable audit trail,
+    # even if the domain was already added to the in-memory set earlier.
+    append_seen_domain(site_dom)
+    if site_dom not in seen:
+        seen.add(site_dom)
+    dbg(f"Ensured in seen + file: {site_dom}")
 
         if changed:
             pushed += 1
