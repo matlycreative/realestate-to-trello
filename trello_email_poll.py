@@ -54,8 +54,8 @@ SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
 SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 
-# NEW: control the text line above the logo
-SIGNATURE_ADD_NAME  = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+# Signature line controls
+SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 # Poll behavior / gating
@@ -64,7 +64,7 @@ SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))  # 0 = unlimited per run
 
 # HTTP session
-UA = f"TrelloEmailer/1.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer/1.2 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -87,21 +87,31 @@ def require_env():
 
     if not SMTP_USER:
         print("Warning: SMTP_USER/SMTP_USERNAME not set; will use FROM_EMAIL as SMTP login.")
-    # quick visibility without leaking values
     print("ENV check: SMTP_PASS:", "set" if bool(SMTP_PASS) else "missing",
           "| SMTP_USER:", SMTP_USER or "(empty)")
 
+def _trello_call(method, url_path, **params):
+    """GET/POST with simple retry on Trello throttling."""
+    for attempt in range(3):
+        try:
+            params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
+            url = f"https://api.trello.com/1/{url_path.lstrip('/')}"
+            r = (SESS.get if method == "GET" else SESS.post)(url, params=params, timeout=30)
+            if r.status_code in (429, 500, 502, 503, 504):
+                raise RuntimeError(f"Trello {r.status_code}")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError("Unreachable")
+
 def trello_get(url_path, **params):
-    params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
-    r = SESS.get(f"https://api.trello.com/1/{url_path.lstrip('/')}", params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    return _trello_call("GET", url_path, **params)
 
 def trello_post(url_path, **params):
-    params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
-    r = SESS.post(f"https://api.trello.com/1/{url_path.lstrip('/')}", params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    return _trello_call("POST", url_path, **params)
 
 def load_sent_cache():
     try:
@@ -111,7 +121,9 @@ def load_sent_cache():
         return set()
 
 def save_sent_cache(ids):
-    os.makedirs(os.path.dirname(SENT_CACHE_FILE), exist_ok=True)
+    d = os.path.dirname(SENT_CACHE_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
     try:
         with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(sorted(ids), f)
@@ -154,6 +166,10 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str) -> str:
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name)\s*}", repl, tpl, flags=re.I)
 
+def sanitize_subject(s: str) -> str:
+    """Avoid header injection and weird linebreaks in Subject."""
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+
 def text_to_html(text: str) -> str:
     """Convert plain text to simple HTML with a bigger font."""
     esc = html.escape(text or "")
@@ -189,9 +205,9 @@ def send_email(to_email: str, subject: str, body_text: str):
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
-    msg["Subject"] = subject
+    msg["Subject"] = sanitize_subject(subject)
 
-    msg.set_content(body_text)                 # plain text fallback
+    msg.set_content(body_text)                      # plain text fallback
     msg.add_alternative(html_full, subtype="html")  # HTML alternative
 
     # Optional inline logo (CID)
@@ -208,11 +224,19 @@ def send_email(to_email: str, subject: str, body_text: str):
         except Exception as e:
             print(f"Inline logo fetch failed, sending without embed: {e}")
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-        if SMTP_USE_TLS:
-            s.starttls()
-        s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-        s.send_message(msg)
+    # SMTP with small retry on transient failures
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                if SMTP_USE_TLS:
+                    s.starttls()
+                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
+                s.send_message(msg)
+            return
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
 
 def already_marked(card_id: str, marker: str) -> bool:
     try:
@@ -256,7 +280,7 @@ def main():
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
-        email_v = clean_email(fields.get("Email") or "")
+        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)  # fallback: scan whole desc
 
         if not email_v:
             print(f"Skip: no valid Email on card '{c.get('name','(no title)')}'.")
