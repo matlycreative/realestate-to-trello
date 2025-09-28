@@ -49,10 +49,14 @@ SMTP_PASS = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
 # HTML styling + signature logo
-EMAIL_FONT_PX       = int(_get_env("EMAIL_FONT_PX", default="16"))  # tweak font size here
-SIGNATURE_LOGO_URL  = _get_env("SIGNATURE_LOGO_URL")                # public https URL to your logo
-SIGNATURE_INLINE    = _get_env("SIGNATURE_INLINE", default="0").lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX  = int(_get_env("SIGNATURE_MAX_W_PX", default="200"))
+EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
+SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
+SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
+
+# NEW: control the text line above the logo
+SIGNATURE_ADD_NAME  = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 # Poll behavior / gating
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
@@ -162,12 +166,12 @@ def text_to_html(text: str) -> str:
     )
 
 def signature_html(logo_cid: str | None) -> str:
-    parts = [f'<p style="margin:16px 0 0 0;">– {html.escape(FROM_NAME)}</p>']
+    parts = []
+    if SIGNATURE_ADD_NAME:
+        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
+        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
     if SIGNATURE_LOGO_URL:
-        if SIGNATURE_INLINE and logo_cid:
-            img_src = f"cid:{logo_cid}"
-        else:
-            img_src = html.escape(SIGNATURE_LOGO_URL)
+        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
         parts.append(
             f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
             f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
