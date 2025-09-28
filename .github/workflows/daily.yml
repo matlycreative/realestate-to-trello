@@ -1,12 +1,12 @@
-name: Realestate to Trello
+name: RealEstate → Trello
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 9 * * *" # run daily at 09:00 UTC; adjust as needed
+    - cron: "0 9 * * *" # daily at 09:00 UTC — tweak if you like
 
 permissions:
-  contents: write   # required so the auto-commit action can push
+  contents: write
 
 jobs:
   run:
@@ -14,12 +14,9 @@ jobs:
 
     steps:
       - name: Checkout
-      # keep credentials so we can push back to the repo
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -27,29 +24,43 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests urllib3 "beautifulsoup4>=4.9" tldextract python-dotenv dnspython python-whois || true
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests beautifulsoup4 tldextract dnspython python-whois
+          fi
 
       - name: Run script
         env:
-          # Trello (required)
+          # --- Trello secrets ---
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-          # Optional: template cloning if you use PRECLONE=1
-          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-          # Discovery (optional)
+          # Optional extras (set in repo secrets if you use them)
           FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-          # Behavior toggles (optional)
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+          # Script behavior (adjust as you like)
           DAILY_LIMIT: "10"
           PUSH_INTERVAL_S: "60"
-          DEBUG: "0"
-          # If you want a custom location for the file, override; default is seen_domains.txt
-          # SEEN_FILE: "seen_domains.txt"
+          QUALITY_MIN: "3.0"
+
+          # >>> IMPORTANT: write seen domains inside repo folder
+          SEEN_FILE: ".data/seen_domains.txt"
         run: |
+          set -euo pipefail
           python realestate_to_trello.py
 
-      - name: Auto-commit seen_domains.txt
+      # --- one-time safety: move old root file if it exists ---
+      - name: Migrate old seen_domains.txt to .data (one-time)
+        run: |
+          mkdir -p .data
+          if [ -f seen_domains.txt ] && [ ! -f .data/seen_domains.txt ]; then
+            git mv -f seen_domains.txt .data/seen_domains.txt || mv seen_domains.txt .data/seen_domains.txt
+          fi
+
+      - name: Auto-commit .data/seen_domains.txt
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: update seen_domains.txt"
-          file_pattern: seen_domains.txt
+          commit_message: "chore: update .data/seen_domains.txt"
+          file_pattern: .data/seen_domains.txt
