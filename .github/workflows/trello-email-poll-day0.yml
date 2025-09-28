@@ -1,82 +1,72 @@
-name: Trello Day 0 Email (poll)
+name: Trello Day0 Email (polling)
 
 on:
-  # lets you run it manually from the Actions tab for testing
-  workflow_dispatch:
-  # polls every 5 minutes (you can change/remove this later)
+  workflow_dispatch: {}
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/5 * * * *"  # every 5 minutes
 
 permissions:
-  contents: read
-  actions: read
-
-# avoid overlapping runs
-concurrency:
-  group: trello-day0-email
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  send:
-    # uncomment and set if you used Environment-scoped secrets
-    # environment: production
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     env:
-      # Trello auth
-      TRELLO_KEY:          ${{ secrets.TRELLO_KEY }}
-      TRELLO_TOKEN:        ${{ secrets.TRELLO_TOKEN }}
+      PYTHONUNBUFFERED: "1"
 
-      # The Trello LIST ID to watch for Day 0 emails
-      # If you accidentally stored it as a Repository Variable instead of a Secret,
-      # this fallback still picks it up:
-      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 || vars.TRELLO_LIST_ID_DAY0 }}
+      # Trello
+      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
-      # SMTP auth (Option A)
-      SMTP_USER:           ${{ secrets.SMTP_USER }}
-      SMTP_PASS:           ${{ secrets.SMTP_PASS }}
+      # SMTP (Gmail example via app password)
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}          # e.g. smtp.gmail.com
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}          # e.g. 587
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}  # your gmail address
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}  # app password
+      SMTP_USE_TLS: "1"
 
-      # From address; falls back to SMTP_USER if not provided
-      EMAIL_FROM:          ${{ secrets.EMAIL_FROM || secrets.SMTP_USER }}
+      FROM_NAME: ${{ secrets.FROM_NAME }}          # e.g. "Matthieu"
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}        # same as SMTP_USERNAME typically
 
-      # sender behavior
-      DAILY_EMAIL_LIMIT:   10
-      DEBUG:               "1"
+      # Templates (optional — script has defaults if these are not set)
+      SUBJECT_A: ${{ secrets.SUBJECT_A }}
+      BODY_A: ${{ secrets.BODY_A }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B }}
+      BODY_B: ${{ secrets.BODY_B }}
+
+      # Internal cache path
+      SENT_CACHE_FILE: ".data/sent_day0.jsonl"
+      SENT_MARKER_TEXT: "day0 email sent"
 
     steps:
       - uses: actions/checkout@v4
+        # keep default credentials so git-auto-commit can push
         with:
           fetch-depth: 0
-          persist-credentials: false
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Ensure data dir
+        run: mkdir -p .data
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: "requirements.txt"
-
-      # Shows which critical envs are wired (SET/MISSING) without printing values
-      - name: Preflight (show which envs are set)
-        run: |
-          python - <<'PY'
-          import os, sys
-          req = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID_DAY0","SMTP_USER","SMTP_PASS","EMAIL_FROM"]
-          missing = []
-          for k in req:
-              ok = bool(os.getenv(k))
-              print(f"{k}: {'SET' if ok else 'MISSING'}")
-              if not ok: missing.append(k)
-          if missing:
-              print("\nMissing required env(s): " + ", ".join(missing))
-              sys.exit(1)
-          PY
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install requests
 
-      - name: Run sender
+      - name: Run sender (poll)
         run: python trello_email_poll.py
+
+      - name: Commit send cache
+        if: ${{ always() }}
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update sent cache (day0) [skip ci]"
+          file_pattern: .data/sent_day0.jsonl
+          add_options: "-f"
+          branch: ${{ github.ref_name }}
+          create_branch: false
