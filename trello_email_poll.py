@@ -42,11 +42,6 @@ SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
 SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
 SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
 
-# optional defaults
-LINK_URL=""                 # fallback URL if card has no Website:
-LINK_TEXT="My Portfolio"    # what the link shows as
-LINK_COLOR="#1a73e8"        # link color in the HTML email (blue-ish)
-
 # Password accepted under several names
 SMTP_PASS = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 
@@ -168,4 +163,204 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         if key == "company":   return company or ""
         if key == "first":     return first or ""
         if key == "from_name": return from_name or ""
-        if key == "link":      return link or ""      
+        if key == "link":      return link or ""
+        return m.group(0)
+    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
+
+def sanitize_subject(s: str) -> str:
+    """Avoid header injection and weird linebreaks in Subject."""
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+
+def text_to_html(text: str) -> str:
+    """Convert plain text to simple HTML with a bigger font."""
+    esc = html.escape(text or "")
+    esc = esc.replace("\r\n", "\n").replace("\r", "\n")
+    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    return (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;'
+        f'font-size:{EMAIL_FONT_PX}px;line-height:1.6;color:#111;">'
+        f'<p>{esc}</p></div>'
+    )
+
+def signature_html(logo_cid: str | None) -> str:
+    parts = []
+    if SIGNATURE_ADD_NAME:
+        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
+        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
+    if SIGNATURE_LOGO_URL:
+        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
+        parts.append(
+            f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
+            f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
+        )
+    return "".join(parts)
+
+_URL_RE = re.compile(r"https?://[^\s<>\")']+")
+
+def _autolink_html(escaped_html: str) -> str:
+    # Turn visible URLs into <a href="...">...</a>
+    def _wrap(m):
+        url = m.group(0)
+        esc = html.escape(url, quote=True)
+        return f'<a href="{esc}">{esc}</a>'
+    return _URL_RE.sub(_wrap, escaped_html)
+
+def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
+    import smtplib
+    from email.message import EmailMessage
+
+    # Build core HTML from your plain text (this escapes text and adds <p>/<br>)
+    html_core = text_to_html(body_text)
+
+    # Make bare URLs clickable
+    html_core = _autolink_html(html_core)
+
+    # Optionally color all links
+    if link_color:
+        html_core = html_core.replace(
+            '<a href="',
+            f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
+        )
+
+    # Rename this email's link display text to the provided LINK_TEXT (if given)
+    if link_url:
+        esc_u = html.escape(link_url, quote=True)
+        styled_prefix = (
+            f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
+            if link_color else
+            '<a href="'
+        )
+        friendly = html.escape(link_text or link_url)
+        html_core = html_core.replace(
+            f'{styled_prefix}{esc_u}">{esc_u}</a>',
+            f'{styled_prefix}{esc_u}">{friendly}</a>'
+        )
+
+    # Append signature
+    logo_cid = "siglogo@local"
+    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+
+    msg = EmailMessage()
+    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["To"] = to_email
+    msg["Subject"] = sanitize_subject(subject)
+    msg.set_content(body_text)                      # plain text fallback
+    msg.add_alternative(html_full, subtype="html")  # pretty clickable HTML
+
+    # Optional inline logo
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
+        try:
+            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
+            r.raise_for_status()
+            data = r.content
+            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
+        except Exception as e:
+            print(f"Inline logo fetch failed, sending without embed: {e}")
+
+    # SMTP send with small retry
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                if SMTP_USE_TLS:
+                    s.starttls()
+                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
+                s.send_message(msg)
+            return
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
+def already_marked(card_id: str, marker: str) -> bool:
+    try:
+        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
+    except Exception:
+        return False
+    marker_l = (marker or "").lower().strip()
+    for a in acts:
+        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
+        if txt.lower().startswith(marker_l):
+            return True
+    return False
+
+def mark_sent(card_id: str, marker: str, extra: str = ""):
+    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    text = f"{marker} — {ts}"
+    if extra:
+        text += f"\n{extra}"
+    trello_post(f"cards/{card_id}/actions/comments", text=text)
+
+# --------------- Main Flow ----------------
+def main():
+    require_env()
+    sent_cache = load_sent_cache()
+
+    cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
+    if not isinstance(cards, list):
+        print("No cards found or Trello error.")
+        return
+
+    processed = 0
+    for c in cards:
+        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
+            break
+
+        card_id = c.get("id")
+        if not card_id or card_id in sent_cache:
+            continue
+
+        desc = c.get("desc") or ""
+        fields = parse_header(desc)
+        company = (fields.get("Company") or "").strip()
+        first   = (fields.get("First")   or "").strip()
+        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)  # fallback: scan whole desc
+
+        if not email_v:
+            print(f"Skip: no valid Email on card '{c.get('name','(no title)')}'.")
+            continue
+
+        if already_marked(card_id, SENT_MARKER_TEXT):
+            print(f"Skip: already marked '{SENT_MARKER_TEXT}' — {c.get('name','(no title)')}")
+            sent_cache.add(card_id)
+            continue
+
+        use_b = bool(first)
+        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+        body_tpl = BODY_B if use_b else BODY_A
+
+        # --- Link strictly from secrets (no code fallbacks) + normalize
+        link_url   = _get_env("LINK_URL").strip()
+        link_text  = _get_env("LINK_TEXT").strip()
+        link_color = _get_env("LINK_COLOR").strip()
+        if link_url and not re.match(r"^https?://", link_url, flags=re.I):
+            link_url = "https://" + link_url
+
+        # include {link} in both subject and body
+        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
+        body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
+
+        try:
+            # pass link props to HTML generator
+            send_email(email_v, subject, body, link_url=link_url, link_text=link_text, link_color=link_color)
+            processed += 1
+            print(f"Sent to {email_v} — card '{c.get('name','(no title)')}' (type {'B' if use_b else 'A'})")
+        except Exception as e:
+            print(f"Send failed for '{c.get('name','(no title)')}' to {email_v}: {e}")
+            continue
+
+        try:
+            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
+        except Exception:
+            pass
+        sent_cache.add(card_id)
+        save_sent_cache(sent_cache)
+        time.sleep(1.0)
+
+    print(f"Done. Emails sent: {processed}")
+
+if __name__ == "__main__":
+    main()
