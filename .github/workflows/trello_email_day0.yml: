@@ -3,7 +3,7 @@ name: Trello → Email Day 0 (Gmail)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"  # every 5 min: "near real-time" after you move a card
+    - cron: "*/3 * * * *"   # every 3 minutes
 
 permissions:
   contents: read
@@ -13,30 +13,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  send-day0-emails:
+  send-day0:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+
     env:
-      # Trello
+      PYTHONUNBUFFERED: "1"
+
+      # --- Trello auth ---
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+
+      # The list you move cards into to trigger Day 0
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
+
+      # Optional: add a label after sending (leave empty if you don't use it)
       TRELLO_EMAILED_LABEL_ID: ${{ secrets.TRELLO_EMAILED_LABEL_ID }}
 
-      # SMTP (Gmail)
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}
-      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-      FROM_NAME: ${{ secrets.FROM_NAME }}
-      REPLY_TO: ${{ secrets.REPLY_TO }}
+      # --- Gmail SMTP (Option A) ---
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}        # smtp.gmail.com
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}        # 587
+      SMTP_USER: ${{ secrets.SMTP_USER }}        # your@gmail.com
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}        # 16-char App Password
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}      # your@gmail.com
+      FROM_NAME: ${{ secrets.FROM_NAME }}        # e.g., "Alex"
+      REPLY_TO: ${{ secrets.REPLY_TO }}          # usually same as FROM_EMAIL
 
-      # Limits & pacing
-      DAILY_EMAIL_CAP: ${{ secrets.DAILY_EMAIL_CAP }}
-      SEND_INTERVAL_S: ${{ secrets.SEND_INTERVAL_S }}
+      # Safety caps / pacing
+      DAILY_EMAIL_CAP: ${{ secrets.DAILY_EMAIL_CAP }}  # e.g., 10
+      SEND_INTERVAL_S: ${{ secrets.SEND_INTERVAL_S }}  # e.g., 1
 
-      # Optional templates (fallbacks exist in script)
+      # Optional custom templates (fallbacks exist in code)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A: ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -46,30 +53,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install runtime deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install requests python-dateutil
-
-      - name: Preflight
-        run: |
-          python - <<'PY'
-          import os, sys
-          need = [
-            "TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID_DAY0",
-            "SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","FROM_EMAIL"
-          ]
-          missing = [n for n in need if not (os.getenv(n) or "").strip()]
-          if missing:
-              print("Missing required secrets/env:", ", ".join(missing))
-              sys.exit(1)
-          PY
+          python -m pip install requests
 
       - name: Run sender
-        run: python trello_email_day0.py
+        run: |
+          python trello_email_day0.py
