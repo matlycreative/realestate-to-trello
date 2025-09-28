@@ -34,11 +34,26 @@ jobs:
         run: mkdir -p realestate-to-trello/.data
 
       - name: Run lead collector
-        env:
+       env:
+          # --- Trello secrets ---
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+
+          # Optional APIs
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
+
+          # Behavior flags
           DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
+
+          # 🚫 Generic inbox control
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # set to "1"
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }} # set to "1" to ban all info@ fallbacks
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}             # set to "0" if you also want to block gmail/outlook/etc.
+
           # Force both script and commit step to the same location:
           SEEN_FILE: realestate-to-trello/.data/seen_domains.txt
         run: |
