@@ -1,5 +1,4 @@
 name: Daily Real Estate Leads (quality)
-name: Realestate to Trello
 
 on:
 workflow_dispatch:
