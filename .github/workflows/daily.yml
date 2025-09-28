@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true   # keep the token so auto-commit can push
 
       # ensure the data dir exists so the script can write the seen file
       - name: Ensure data dir
@@ -163,4 +163,3 @@ jobs:
           add_options: "-f"           # force-add even if ignored
           branch: ${{ github.ref_name }}
           create_branch: false
-          token: ${{ secrets.GITHUB_TOKEN }}   # <- Option A: pass token explicitly
