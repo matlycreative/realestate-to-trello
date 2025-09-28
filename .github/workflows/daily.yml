@@ -30,6 +30,38 @@ jobs:
             pip install requests beautifulsoup4 tldextract dnspython python-whois
           fi
 
+          name: Ensure seen file folder exists
+        run: mkdir -p realestate-to-trello/.data
+
+      - name: Run lead collector
+        env:
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
+          # Force both script and commit step to the same location:
+          SEEN_FILE: realestate-to-trello/.data/seen_domains.txt
+        run: |
+          python realestate-to-trello/realestate_to_trello.py
+
+      - name: Show seen file (debug)
+        run: |
+          echo "---- SEEN FILE (head) ----"
+          test -f realestate-to-trello/.data/seen_domains.txt && head -n 20 realestate-to-trello/.data/seen_domains.txt || echo "seen file not found"
+
+      - name: Commit seen_domains.txt if changed
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A realestate-to-trello/.data/seen_domains.txt
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update seen_domains.txt [skip ci]"
+            git push
+          fi
+
       - name: Run script
         env:
           # --- Trello secrets ---
