@@ -49,7 +49,7 @@ jobs:
       # Font + signature
       EMAIL_FONT_PX: "16"
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
-      SIGNATURE_INLINE: "1"         # "1" to embed (CID), "0" to link
+      SIGNATURE_INLINE: "0"         # "1" to embed (CID), "0" to link
       SIGNATURE_MAX_W_PX: "200"
 
       # Marker/cache
