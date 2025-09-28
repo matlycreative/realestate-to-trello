@@ -52,6 +52,10 @@ jobs:
       SIGNATURE_INLINE: "0"         # "1" to embed (CID), "0" to link
       SIGNATURE_MAX_W_PX: "200"
 
+      # Signature toggles
+      SIGNATURE_ADD_NAME: "0"                 # turn OFF the “– Name” line
+      # SIGNATURE_CUSTOM_TEXT: ${{ secrets.SIGNATURE_CUSTOM_TEXT }}   # (optional) custom line if you set ADD_NAME to 1
+
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/sent_day0.json"
