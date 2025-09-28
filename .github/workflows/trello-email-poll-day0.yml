@@ -1,13 +1,9 @@
-name: Trello Day0 Email Sender
+name: Trello Day-0 Email (poll every 5 min)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"   # poll every 5 minutes
-
-concurrency:
-  group: trello-day0-emailer
-  cancel-in-progress: true
+    - cron: "*/5 * * * *"   # every 5 minutes
 
 permissions:
   contents: read
@@ -15,23 +11,21 @@ permissions:
 jobs:
   send:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     env:
+      PYTHONUNBUFFERED: "1"
+
       # Trello
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
       # SMTP
-      SMTP_HOST: smtp.gmail.com
-      SMTP_PORT: 587
-      SMTP_USE_TLS: "1"
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}     # App password or SMTP password
-      # Optional: set explicit SMTP_USER; if omitted, script uses FROM_EMAIL
-      # SMTP_USER: ${{ secrets.SMTP_USER }}
-
-      # From identity
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}        # e.g. smtp.gmail.com
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}        # e.g. 587
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}# your email / SMTP user
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}# app password
       FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
@@ -41,38 +35,27 @@ jobs:
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
       BODY_B: ${{ secrets.BODY_B }}
 
-      # Idempotency marker (per-list)
-      SENT_MARKER_TEXT: "Sent: Day0"
+      # Font + signature
+      EMAIL_FONT_PX: "16"                     # bump this to make text larger
+      SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}   # e.g. https://yourcdn.com/logo.png
+      SIGNATURE_INLINE: "0"                   # set "1" to embed the image (CID)
+      SIGNATURE_MAX_W_PX: "200"
 
-      # Optional local cache (only for the current run)
-      SENT_CACHE_FILE: ".data/sent_day0.json"
+      # Safety / gating (optional, keep or tweak as you like)
+      MAX_SEND_PER_RUN: "5"                   # don’t blast too many per run
+      SENT_MARKER: "[day0-sent]"              # marker added to card to avoid resending
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
-      - name: Ensure data dir
-        run: mkdir -p .data
-
-      - name: Preflight env check
-        run: |
-          python - <<'PY'
-          import os, sys
-          need = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID_DAY0","FROM_EMAIL","SMTP_PASS",
-                  "SUBJECT_A","BODY_A","SUBJECT_B","BODY_B"]
-          missing = [n for n in need if not os.getenv(n)]
-          if missing:
-              print("Missing required env:", ", ".join(missing)); sys.exit(1)
-          PY
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
-        run: pip install requests
+      - name: Install deps (if any)
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run sender
         run: python trello_email_poll.py
