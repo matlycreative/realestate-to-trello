@@ -3,7 +3,7 @@ name: RealEstate → Trello
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 9 * * *" # daily at 09:00 UTC — tweak if you like
+    - cron: "0 9 * * *" # daily at 09:00 UTC
 
 permissions:
   contents: write
@@ -36,23 +36,25 @@ jobs:
           TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-          # Optional extras (set in repo secrets if you use them)
+
+          # Optional extras
           FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
           NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
 
-          # Script behavior (adjust as you like)
-          DAILY_LIMIT: "10"
-          PUSH_INTERVAL_S: "60"
-          QUALITY_MIN: "3.0"
+          # Script behavior (from secrets!)
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}   # <-- was hard-coded "10"
+          PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
+          QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
 
-          # >>> IMPORTANT: write seen domains inside repo folder
+          # Ensure seen file lives inside repo folder
           SEEN_FILE: ".data/seen_domains.txt"
         run: |
           set -euo pipefail
+          echo "Using DAILY_LIMIT=${DAILY_LIMIT:-<empty>}"
           python realestate_to_trello.py
 
-      # --- one-time safety: move old root file if it exists ---
-      - name: Migrate old seen_domains.txt to .data (one-time)
+      # One-time: migrate any old root file if present
+      - name: Migrate old seen_domains.txt to .data
         run: |
           mkdir -p .data
           if [ -f seen_domains.txt ] && [ ! -f .data/seen_domains.txt ]; then
