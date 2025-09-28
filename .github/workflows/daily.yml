@@ -30,7 +30,7 @@ jobs:
             pip install requests beautifulsoup4 tldextract dnspython python-whois
           fi
 
-          name: Ensure seen file folder exists
+      - name: Ensure seen file folder exists
         run: mkdir -p realestate-to-trello/.data
 
       - name: Run lead collector
