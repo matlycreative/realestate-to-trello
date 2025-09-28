@@ -1,183 +1,55 @@
-name: Daily Real Estate Leads (quality)
+name: Realestate to Trello
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 7 * * *"   # 07:00 UTC daily
+    - cron: "0 9 * * *" # run daily at 09:00 UTC; adjust as needed
 
 permissions:
-  contents: write
-  actions: write   # needed for actions/cache to save caches
-
-concurrency:
-  group: daily-realestate-${{ github.ref_name }}
-  cancel-in-progress: false
+  contents: write   # required so the auto-commit action can push
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # buffer for DAILY_LIMIT * (PUSH_INTERVAL_S + ~20s grace)
-
-    env:
-      PYTHONUNBUFFERED: "1"
-
-      # --- your app secrets ---
-      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-      TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-      TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-
-      FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
-      NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
-
-      USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
-      CH_API_KEY: ${{ secrets.CH_API_KEY }}
-
-      USE_SIRENE: ${{ secrets.USE_SIRENE }}
-      SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
-      SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
-
-      USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
-      OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
-
-      USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
-
-      QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
-      REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
-      ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-
-      SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}
-      REQUIRE_BUSINESS_DOMAIN: ${{ secrets.REQUIRE_BUSINESS_DOMAIN }}
-      ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
-      FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
-
-      COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
-      CITY_MODE: ${{ secrets.CITY_MODE }}
-      FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
-      FORCE_CITY: ${{ secrets.FORCE_CITY }}
-
-      DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
-      PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
-      REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
-
-      # --- seen file lives in a dedicated data dir ---
-      SEEN_FILE: ".data/seen_domains.txt"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+      # keep credentials so we can push back to the repo
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          persist-credentials: true   # keep the token so we can push
+          persist-credentials: true
 
-      # ensure the data dir exists so the restore step can write the file
-      - name: Ensure data dir
-        run: mkdir -p .data
-
-      # === Option B fix (1/2): Restore seen file from dedicated data branch ===
-      - name: Restore seen file from data branch
-        run: |
-          git fetch origin data/seen || true
-          if git rev-parse --verify origin/data/seen >/dev/null 2>&1; then
-            git show origin/data/seen:.data/seen_domains.txt > .data/seen_domains.txt || true
-            echo "Restored .data/seen_domains.txt from origin/data/seen"
-          else
-            echo "No existing origin/data/seen branch — starting fresh."
-          fi
-
-      - id: setup-python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: "requirements.txt"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          pip install requests urllib3 "beautifulsoup4>=4.9" tldextract python-dotenv dnspython python-whois || true
 
-      # cache the public suffix list used by tldextract to speed runs
-      - name: Prepare tldextract cache dir
-        run: mkdir -p ~/.cache/tldextract
+      - name: Run script
+        env:
+          # Trello (required)
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
+          # Optional: template cloning if you use PRECLONE=1
+          TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
+          # Discovery (optional)
+          FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
+          # Behavior toggles (optional)
+          DAILY_LIMIT: "10"
+          PUSH_INTERVAL_S: "60"
+          DEBUG: "0"
+          # If you want a custom location for the file, override; default is seen_domains.txt
+          # SEEN_FILE: "seen_domains.txt"
+        run: |
+          python realestate_to_trello.py
 
-      - name: Cache tldextract PSL
-        uses: actions/cache@v4
+      - name: Auto-commit seen_domains.txt
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          path: ~/.cache/tldextract
-          key: tldextract-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}
-          restore-keys: |
-            tldextract-${{ runner.os }}-
-
-      # small jitter helps avoid hammering Overpass/Nominatim at the exact same second daily
-      - name: Jitter start (scheduled runs only)
-        if: ${{ github.event_name == 'schedule' }}
-        run: |
-          sleep $((RANDOM % 60 + 5))
-
-      - name: Preflight
-        run: |
-          python - <<'PY'
-          import os, sys, re
-          need = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
-          miss = [k for k in need if not os.getenv(k)]
-          if miss:
-              print("Missing required secrets:", ", ".join(miss)); sys.exit(1)
-          em = os.getenv("NOMINATIM_EMAIL","")
-          if not em or "example.com" in em or not re.search(r".+@.+\..+", em):
-              print("NOMINATIM_EMAIL is missing or not a real email; set it to comply with Nominatim policy.")
-              sys.exit(1)
-          PY
-
-      # optional but moves PSL download up-front so the main step logs stay clean
-      - name: Warm tldextract PSL cache
-        run: |
-          python - <<'PY'
-          import tldextract
-          tldextract.extract("https://example.com")
-          print("tldextract PSL cache warmed.")
-          PY
-
-      - name: Run pipeline (with 1 retry)
-        run: |
-          set -euo pipefail
-          python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
-
-      # show what's in the seen file in logs (helps debugging)
-      - name: Inspect seen file
-        if: ${{ always() }}
-        run: |
-          echo "SEEN_FILE=$SEEN_FILE"
-          if [ -f "$SEEN_FILE" ]; then
-            echo "Lines in seen file:"
-            wc -l "$SEEN_FILE"
-            echo "--- tail ---"
-            tail -n 20 "$SEEN_FILE" || true
-          else
-            echo "No seen file found."
-          fi
-
-      - name: Upload leads CSV
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: leads-${{ github.run_id }}
-          path: leads_*.csv
-          if-no-files-found: ignore
-          retention-days: 14
-
-      # === Option B fix (2/2): Commit seen file to dedicated data branch ===
-      - name: Commit seen_domains.txt to data branch
-        if: ${{ always() }}
-        run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B data/seen
-          git add -f .data/seen_domains.txt
-          if git diff --cached --quiet; then
-            echo "No changes to .data/seen_domains.txt; skipping commit."
-          else
-            git commit -m "Update seen domains [skip ci]"
-          fi
-          git push --force-with-lease origin data/seen
-          git checkout ${{ github.ref_name }}
+          commit_message: "chore: update seen_domains.txt"
+          file_pattern: seen_domains.txt
