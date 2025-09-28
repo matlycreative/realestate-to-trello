@@ -967,7 +967,7 @@ def backfill_seen_from_list(list_id: str, seen: set) -> int:
     for c in trello_list_cards_full(list_id):
         dom = domain_from_card_desc(c.get("desc") or "")
         if dom and dom not in seen:
-            append_seen_domain(dom)   # append line-by-line for safety
+            seen_domain(dom)   # append line-by-line for safety
             seen.add(dom)
             added += 1
     return added
@@ -980,7 +980,7 @@ def load_seen():
     except Exception:
         return set()
 
-def append_seen_domain(domain: str):
+def seen_domain(domain: str):
     if not domain:
         return
     d = domain.strip().lower()
@@ -1235,7 +1235,7 @@ def main():
         if site_dom:
     # Always write to the file so we have a durable audit trail,
     # even if the domain was already added to the in-memory set earlier.
-    append_seen_domain(site_dom)
+    seen_domain(site_dom)
     if site_dom not in seen:
         seen.add(site_dom)
     dbg(f"Ensured in seen + file: {site_dom}")
