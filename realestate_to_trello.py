@@ -3,11 +3,12 @@
 # Header order is enforced and other fields are preserved:
 # Company, First, Email, Hook, Variant, Website
 #
-# Now also renames the card TITLE to the Company value.
-# + Fixes:
+# Also renames the card TITLE to the Company value.
+# Fixes added:
 #   1) mkdir-safe seen file writes
 #   2) extract_label_value() to read Website from the card
-#   3) always persist domain set to file at the end (and optional backfill)
+#   3) always persist domain to seen file (even if card unchanged)
+#   4) immediate append to seen_domains.txt when a lead is discovered and when pushed
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -53,7 +54,7 @@ DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)     # 1/min
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
 QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)
-SEEN_FILE        = os.getenv("SEEN_FILE", ".data/seen_domains.txt")  # unified default path
+SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
 BUTLER_GRACE_S   = 20
@@ -325,7 +326,6 @@ def domain_has_dmarc(domain: str):
         return False
     try:
         for r in _dnsresolver.resolve(f"_dmarc.{d}", "TXT", lifetime=5.0):
-            # normalize TXT output
             txts = getattr(r, "strings", None)
             if txts:
                 txt = b"".join(txts).decode("utf-8", "ignore").lower()
@@ -354,7 +354,7 @@ def domain_age_years(domain: str) -> float:
                     break
                 except Exception:
                     pass
-            if isinstance(cd, str):
+            if isinstance(cd, str):  # still str
                 return 0.0
         from datetime import date as _date
         if isinstance(cd, _date) and not isinstance(cd, datetime):
@@ -688,11 +688,11 @@ def opencorp_search(country_code):
             nm = (c.get("company") or {}).get("name") or ""
             nm = nm.strip()
             if nm: out.append({"business_name": nm, "website": None, "email": None})
-        seen_names, uniq = set(), []
+        seen, uniq = set(), []
         for x in out:
             k = x["business_name"].lower()
-            if k not in seen_names:
-                uniq.append(x); seen_names.add(k)
+            if k not in seen:
+                uniq.append(x); seen.add(k)
         random.shuffle(uniq); return uniq
     return []
 
@@ -721,10 +721,10 @@ def ch_zefix():
             if len(out) >= 50: break
     except Exception:
         return []
-    seen_names, uniq = set(), []
+    seen, uniq = set(), []
     for x in out:
         k = x["business_name"].lower()
-        if k not in seen_names: uniq.append(x); seen_names.add(k)
+        if k not in seen: uniq.append(x); seen.add(k)
     random.shuffle(uniq); return uniq
 
 def official_sources(city, country, lat, lon):
@@ -738,11 +738,11 @@ def official_sources(city, country, lat, lon):
         elif country in ("Switzerland",):  out += ch_zefix()
     except Exception:
         pass
-    seen_names, uniq = set(), []
+    seen = set(); uniq = []
     for x in out:
         k = x["business_name"].lower()
-        if k not in seen_names:
-            uniq.append(x); seen_names.add(k)
+        if k not in seen:
+            uniq.append(x); seen.add(k)
     return uniq
 
 # ---------- Trello helpers ----------
@@ -929,7 +929,6 @@ def any_url_in_text(text: str) -> str:
     return m.group(0) if m else ""
 
 def email_domain_from_text(text: str) -> str:
-    # reuse EMAIL_RE; capture domain part; skip freemail
     m = EMAIL_RE.search(text or "")
     if not m: return ""
     dom = (m.group(0).split("@",1)[1] or "").lower().strip()
@@ -963,12 +962,12 @@ def domain_from_card_desc(desc: str) -> str:
     return dom
 
 def backfill_seen_from_list(list_id: str, seen: set) -> int:
-    """Scan a list, collect website/email domains, add to 'seen' set and file."""
+    """Scan a list, collect website/email domains, add to 'seen' set."""
     added = 0
     for c in trello_list_cards_full(list_id):
         dom = domain_from_card_desc(c.get("desc") or "")
         if dom and dom not in seen:
-            seen_domains(dom)    # append line-by-line
+            seen_domains(dom)   # append line-by-line for safety
             seen.add(dom)
             added += 1
     return added
@@ -982,7 +981,7 @@ def load_seen():
         return set()
 
 def seen_domains(domain: str):
-    """Append one domain to SEEN_FILE (plural name to match seen_domains.txt)."""
+    """Append one domain per line into SEEN_FILE, mkdir-safe."""
     if not domain:
         return
     d = domain.strip().lower()
@@ -994,7 +993,6 @@ def seen_domains(domain: str):
         pass
 
 def save_seen(seen):
-    """Write a canonicalized, deduped list of domains to SEEN_FILE."""
     try:
         os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
@@ -1107,7 +1105,12 @@ def main():
 
             leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                           "signals": summarize_signals(q, website, email, soup_home)})
-            seen.add(site_dom); _sleep()
+
+            # Immediately persist domain to file and memory
+            if site_dom:
+                seen_domains(site_dom)
+                seen.add(site_dom)
+            _sleep()
 
         # 1) OSM fallback
         if len(leads) < DAILY_LIMIT:
@@ -1181,7 +1184,12 @@ def main():
 
                 leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                               "signals": summarize_signals(q, website, email, soup_home)})
-                seen.add(site_dom); _sleep()
+
+                # Immediately persist domain to file and memory
+                if site_dom:
+                    seen_domains(site_dom)
+                    seen.add(site_dom)
+                _sleep()
 
         if len(leads) >= DAILY_LIMIT:
             break
@@ -1223,9 +1231,24 @@ def main():
             new_name=lead["Company"],   # <- set Trello card title to Company
         )
 
-        # If you want immediate, line-by-line persistence too, you can un-comment:
-        # site_dom = etld1_from_url(lead["Website"])
-        # if site_dom: seen_domains(site_dom)
+        # --- Always persist the domain to seen file (source = card Website) ---
+        cur = trello_get_card(card_id)
+        website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
+        website_on_card = normalize_url(website_on_card)
+        site_dom = etld1_from_url(website_on_card)
+
+        # Fallback to email's domain if it looks like a business domain
+        if not site_dom:
+            em_dom = email_domain(lead.get("Email") or "")
+            if em_dom and not is_freemail(em_dom):
+                site_dom = em_dom
+
+        if site_dom:
+            # Always append to file and ensure in-memory set
+            seen_domains(site_dom)
+            if site_dom not in seen:
+                seen.add(site_dom)
+            dbg(f"Ensured in seen + file: {site_dom}")
 
         if changed:
             pushed += 1
@@ -1234,12 +1257,13 @@ def main():
                 append_note(card_id, lead.get("signals",""))
             time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
         else:
-            print("Card unchanged.")
+            print("Card unchanged; domain still added to seen (from card Website).")
 
     if DEBUG:
         print("Skip summary:", json.dumps(STATS, indent=2))
 
     # --- once-a-day backfill from a Trello list (optional) ---
+    # If you have a separate “To Prospects” list, set TRELLO_LIST_ID_SEENSYNC as a secret.
     list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
     try:
         added = backfill_seen_from_list(list_for_backfill, seen)
@@ -1250,6 +1274,8 @@ def main():
     # Canonicalize seen file (dedupe/sort) at the end
     save_seen(seen)
 
+    # Helpful path heads-up
+    print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}")
     print(f"Done. Leads pushed: {pushed}/{len(leads)}")
 
 if __name__ == "__main__":
