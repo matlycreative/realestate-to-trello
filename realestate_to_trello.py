@@ -478,9 +478,17 @@ def _mx_ok(domain: str) -> bool:
 
 # ---------- geo & OSM ----------
 def geocode_city(city, country):
-    r = SESS.get("https://nominatim.openstreetmap.org/search",
-        params={"q": f"{city}, {country}", "format":"json", "limit":1},
-        headers={"Referer":"https://nominatim.org"}, timeout=30)
+    r = SESS.get(
+        "https://nominatim.openstreetmap.org/search",
+        params={
+            "q": f"{city}, {country}",
+            "format": "json",
+            "limit": 1,
+            "email": NOMINATIM_EMAIL,   # add this
+        },
+        headers={"Referer": "https://nominatim.org"},
+        timeout=30,
+    )
     r.raise_for_status()
     data = r.json()
     if not data: raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
@@ -490,21 +498,40 @@ def geocode_city(city, country):
 def overpass_estate_agents(bbox):
     south, west, north, east = bbox
     parts = []
-    for k,v in OSM_FILTERS:
-        for t in ("node","way","relation"):
+    for k, v in OSM_FILTERS:
+        for t in ("node", "way", "relation"):
             parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
     q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
 
+    endpoints = (
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    )
+
     js = None
-    for url in ("https://overpass-api.de/api/interpreter",
-                "https://overpass.kumi.systems/api/interpreter"):
-        try:
-            r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
-            if r.status_code == 200:
-                js = r.json()
+    for url in endpoints:
+        for attempt in range(3):  # simple backoff loop per endpoint
+            try:
+                r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
+                if r.status_code == 200:
+                    js = r.json()
+                    break
+                if r.status_code == 429:
+                    # Too many requests: back off and retry this endpoint
+                    time.sleep(3 * (attempt + 1))
+                    continue
+                if 500 <= r.status_code < 600:
+                    # transient server error
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                # other status codes: give up on this endpoint
                 break
-        except Exception:
-            continue
+            except requests.RequestException:
+                time.sleep(2 * (attempt + 1))
+                continue
+        if js is not None:
+            break
+
     if js is None:
         return []
 
@@ -515,39 +542,73 @@ def overpass_estate_agents(bbox):
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
         email = tags.get("email") or tags.get("contact:email")
         if name:
-            rows.append({"business_name": name.strip(),
-                         "website": normalize_url(website) if website else None,
-                         "email": email})
+            rows.append({
+                "business_name": name.strip(),
+                "website": normalize_url(website) if website else None,
+                "email": email,
+            })
+
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
-        if key not in dedup: dedup[key] = r0
-    out = list(dedup.values()); random.shuffle(out)
+        if key not in dedup:
+            dedup[key] = r0
+    out = list(dedup.values())
+    random.shuffle(out)
     return out
 
 # ---------- Foursquare website finder (v3) ----------
 def fsq_find_website(name, lat, lon):
-    if not FOURSQUARE_API_KEY: return None
-    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
-    try:
-        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
-        r = SESS.get("https://api.foursquare.com/v3/places/search",
-                     headers=headers, params=params, timeout=20)
-        if r.status_code == 200:
-            results = (r.json().get("results") or [])
-            if results:
+    if not FOURSQUARE_API_KEY:
+        return None
+    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept": "application/json"}
+    params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
+
+    # Search call with backoff
+    for attempt in range(3):
+        try:
+            r = SESS.get("https://api.foursquare.com/v3/places/search",
+                         headers=headers, params=params, timeout=20)
+            if r.status_code == 200:
+                results = (r.json().get("results") or [])
+                if not results:
+                    return None
                 first = results[0]
                 website = first.get("website")
-                if website: return normalize_url(website)
+                if website:
+                    return normalize_url(website)
+
                 fsq_id = first.get("fsq_id")
-                if fsq_id:
+                if not fsq_id:
+                    return None
+
+                # Detail call (website only) with backoff
+                for d_attempt in range(3):
                     d = SESS.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
-                                 headers=headers, params={"fields":"website"}, timeout=20)
+                                 headers=headers, params={"fields": "website"}, timeout=20)
                     if d.status_code == 200:
                         w = d.json().get("website")
-                        if w: return normalize_url(w)
-    except Exception:
-        return None
+                        return normalize_url(w) if w else None
+                    if d.status_code == 429:
+                        time.sleep(3 * (d_attempt + 1))
+                        continue
+                    if 500 <= d.status_code < 600:
+                        time.sleep(2 * (d_attempt + 1))
+                        continue
+                    return None  # other status: stop
+                return None
+
+            if r.status_code == 429:
+                time.sleep(3 * (attempt + 1))
+                continue
+            if 500 <= r.status_code < 600:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return None  # other status: stop
+        except requests.RequestException:
+            time.sleep(2 * (attempt + 1))
+            continue
+
     return None
 
 # ---------- contact crawl ----------
@@ -680,7 +741,8 @@ def opencorp_search(country_code):
         try:
             r = SESS.get(url, params=params, timeout=30)
         except Exception:
-            return []
+            time.sleep(2 * (attempt + 1))   # <-- retry instead of returning
+            continue
         if r.status_code == 429:
             time.sleep(3*(attempt+1)); continue
         if r.status_code != 200: return []
@@ -872,19 +934,18 @@ def append_note(card_id, note):
 def is_template_blank(desc: str) -> bool:
     """
     Consider a card 'blank template' if:
-      - it has 'Company:' with nothing after the colon on that visual line, OR
-      - it has 'Email:' line with no '@' on that line, OR
-      - it contains the header labels (Company/Email/Website) but no '@' anywhere.
+      - Company is empty, OR
+      - Email value (considering next-line style) lacks an '@', OR
+      - It contains header labels but no '@' anywhere (strict fallback).
     """
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
+    company = (extract_label_value(d, "Company") or "").strip()
+    email   = (extract_label_value(d, "Email") or "").strip()
 
-    if re.search(r"(?mi)^\s*Company\s*:\s*$", d):
+    if company == "":
         return True
-
-    for m in LABEL_RE["Email"].finditer(d):
-        val = (m.group(1) or "").strip()
-        if "@" not in val:
-            return True
+    if "@" not in email:
+        return True
 
     dl = d.lower()
     if ("company:" in dl and "email:" in dl and "website:" in dl and "@" not in dl):
@@ -1054,11 +1115,18 @@ def main():
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
-            # Always persist the domain (from card Website/email fallback)
+
+            site_dom = etld1_from_url(website)
+            if site_dom in seen:
+                STATS["skip_dupe_domain"] += 1
+                continue
+
+            # Always persist the domain immediately on discovery (non-duplicate)
             if site_dom:
                 seen_domains(site_dom)     # write to file immediately
                 seen.add(site_dom)         # keep in-memory set in sync
                 dbg(f"Ensured in seen + file: {site_dom}")
+
             if not allowed_by_robots(website, "/"):
                 STATS["skip_robots"] += 1
                 continue
@@ -1115,7 +1183,7 @@ def main():
             leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
                           "signals": summarize_signals(q, website, email, soup_home)})
 
-            # Immediately persist domain to file and memory
+            # Immediately persist domain to file and memory (again is fine; dedup at end)
             if site_dom:
                 seen_domains(site_dom)
                 seen.add(site_dom)
@@ -1261,7 +1329,7 @@ def main():
 
         if changed:
             pushed += 1
-            print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
+            print(f"[{pushed}/{len(leads)}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
                 append_note(card_id, lead.get("signals",""))
             time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
