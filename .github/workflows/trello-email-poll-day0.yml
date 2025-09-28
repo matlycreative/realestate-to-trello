@@ -38,7 +38,7 @@ jobs:
       # Font + signature
       EMAIL_FONT_PX: "16"                     # bump this to make text larger
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}   # e.g. https://yourcdn.com/logo.png
-      SIGNATURE_INLINE: "0"                   # set "1" to embed the image (CID)
+      SIGNATURE_INLINE: "1"                   # set "1" to embed the image (CID)
       SIGNATURE_MAX_W_PX: "200"
 
       # Safety / gating (optional, keep or tweak as you like)
