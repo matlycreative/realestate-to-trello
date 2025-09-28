@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Personalized sample</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;max-width:980px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px}
+  </style>
+</head>
+<body>
+  <h1 id="title">Work for you</h1>
+
+  <section>
+    <h2>Portfolio highlights</h2>
+    <div class="grid">
+      <div class="card">Before/After #1</div>
+      <div class="card">Before/After #2</div>
+      <div class="card">Before/After #3</div>
+    </div>
+  </section>
+
+  <section style="margin-top:28px">
+    <h2>Your personalized sample</h2>
+    <div id="sample">Loading…</div>
+  </section>
+
+<script>
+(async () => {
+  const u = new URL(location.href);
+  const slug = u.searchParams.get("slug");
+  if (!slug) { document.getElementById('sample').textContent = "Missing slug."; return; }
+
+  const r = await fetch(`/api/sample?slug=${encodeURIComponent(slug)}`);
+  if (!r.ok) { document.getElementById('sample').textContent = "Sample not ready yet."; return; }
+  const data = await r.json();
+
+  if (data.company) document.getElementById('title').textContent = `Work for ${data.company}`;
+  if (data.signedUrl) {
+    document.getElementById('sample').innerHTML = `<video controls style="width:100%;border-radius:12px" src="${data.signedUrl}"></video>`;
+  } else {
+    document.getElementById('sample').textContent = "No sample yet.";
+  }
+})();
+</script>
+</body>
+</html>
