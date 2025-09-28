@@ -1,0 +1,75 @@
+name: Trello → Email Day 0 (Gmail)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"  # every 5 min: "near real-time" after you move a card
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trello-email-day0
+  cancel-in-progress: true
+
+jobs:
+  send-day0-emails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Trello
+      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
+      TRELLO_EMAILED_LABEL_ID: ${{ secrets.TRELLO_EMAILED_LABEL_ID }}
+
+      # SMTP (Gmail)
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+      FROM_NAME: ${{ secrets.FROM_NAME }}
+      REPLY_TO: ${{ secrets.REPLY_TO }}
+
+      # Limits & pacing
+      DAILY_EMAIL_CAP: ${{ secrets.DAILY_EMAIL_CAP }}
+      SEND_INTERVAL_S: ${{ secrets.SEND_INTERVAL_S }}
+
+      # Optional templates (fallbacks exist in script)
+      SUBJECT_A: ${{ secrets.SUBJECT_A }}
+      BODY_A: ${{ secrets.BODY_A }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B }}
+      BODY_B: ${{ secrets.BODY_B }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests python-dateutil
+
+      - name: Preflight
+        run: |
+          python - <<'PY'
+          import os, sys
+          need = [
+            "TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID_DAY0",
+            "SMTP_HOST","SMTP_PORT","SMTP_USER","SMTP_PASS","FROM_EMAIL"
+          ]
+          missing = [n for n in need if not (os.getenv(n) or "").strip()]
+          if missing:
+              print("Missing required secrets/env:", ", ".join(missing))
+              sys.exit(1)
+          PY
+
+      - name: Run sender
+        run: python trello_email_day0.py
