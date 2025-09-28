@@ -67,8 +67,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       # ensure the data dir exists so the script can write the seen file
       - name: Ensure data dir
@@ -155,13 +154,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # set identity so commits look proper and some repos with protections require it
-      - name: Configure git user
-        if: ${{ always() }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Commit seen_domains.txt
         if: ${{ always() }}
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -171,3 +163,4 @@ jobs:
           add_options: "-f"           # force-add even if ignored
           branch: ${{ github.ref_name }}
           create_branch: false
+          token: ${{ secrets.GITHUB_TOKEN }}   # <- Option A: pass token explicitly
