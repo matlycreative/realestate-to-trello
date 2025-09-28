@@ -924,30 +924,11 @@ def ensure_min_blank_templates(list_id, template_id, need):
 # --- seen_domains backfill helpers ---
 URL_RE = re.compile(r"https?://[^\s)>\]]+", re.I)
 
-def header_value(desc: str, label: str) -> str:
-    """Find 'Label: value' in the header block, with next-line fallback."""
-    d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-    lines = d.splitlines()
-    lab_re = LABEL_RE[label]
-    i = 0
-    while i < len(lines):
-        m = lab_re.match(lines[i])
-        if m:
-            val = (m.group(1) or "").strip()
-            if not val and (i+1) < len(lines):
-                nxt = lines[i+1]
-                if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                    val = nxt.strip()
-            return val
-        i += 1
-    return ""
-
 def any_url_in_text(text: str) -> str:
     m = URL_RE.search(text or "")
     return m.group(0) if m else ""
 
 def email_domain_from_text(text: str) -> str:
-    # reuse global EMAIL_RE; capture domain part
     m = EMAIL_RE.search(text or "")
     if not m: return ""
     dom = (m.group(0).split("@",1)[1] or "").lower().strip()
@@ -965,7 +946,7 @@ def trello_list_cards_full(list_id: str) -> list:
 
 def domain_from_card_desc(desc: str) -> str:
     # 1) Prefer Website: from header
-    website = header_value(desc, "Website")
+    website = extract_label_value(desc, "Website")
     if website:
         if not website.lower().startswith(("http://","https://")):
             website = "https://" + website.strip()
@@ -977,7 +958,7 @@ def domain_from_card_desc(desc: str) -> str:
         d = etld1_from_url(url)
         if d: return d
     # 3) Business email domain (skip freemail)
-    dom = email_domain_from_text(header_value(desc, "Email") or desc)
+    dom = email_domain_from_text(extract_label_value(desc, "Email") or desc)
     return dom
 
 def backfill_seen_from_list(list_id: str, seen: set) -> int:
@@ -1265,10 +1246,10 @@ def main():
         else:
             print("Card unchanged; domain still added to seen (from card Website).")
 
-        if DEBUG:
+    if DEBUG:
         print("Skip summary:", json.dumps(STATS, indent=2))
 
-    # --- NEW: once-a-day backfill from a Trello list ---
+    # --- once-a-day backfill from a Trello list (optional) ---
     # If you have a separate “To Prospects” list, set TRELLO_LIST_ID_SEENSYNC as a secret.
     list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
     try:
