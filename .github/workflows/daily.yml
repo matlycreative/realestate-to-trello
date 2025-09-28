@@ -37,32 +37,32 @@ jobs:
           TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
           TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
 
-          # Optional extras
+          # Optional APIs
           FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
           NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
 
-          # Script behavior (from secrets!)
-          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}   # <-- was hard-coded "10"
+          # Behavior flags
+          DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
           PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
           QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
 
+          # 🚫 Generic inbox control
+          SKIP_GENERIC_EMAILS: ${{ secrets.SKIP_GENERIC_EMAILS }}   # set to "1"
+          REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }} # set to "1" to ban all info@ fallbacks
+          ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}             # set to "0" if you also want to block gmail/outlook/etc.
+
           # Ensure seen file lives inside repo folder
-          SEEN_FILE: ".data/seen_domains.txt"
+          SEEN_FILE: "realestate-to-trello/.data/seen_domains.txt"
         run: |
           set -euo pipefail
-          echo "Using DAILY_LIMIT=${DAILY_LIMIT:-<empty>}"
+          echo "DAILY_LIMIT=${DAILY_LIMIT:-<default>}"
+          echo "SKIP_GENERIC_EMAILS=${SKIP_GENERIC_EMAILS:-0}"
+          echo "REQUIRE_EXPLICIT_EMAIL=${REQUIRE_EXPLICIT_EMAIL:-0}"
+          echo "ALLOW_FREEMAIL=${ALLOW_FREMAIL:-1}"
           python realestate_to_trello.py
 
-      # One-time: migrate any old root file if present
-      - name: Migrate old seen_domains.txt to .data
-        run: |
-          mkdir -p .data
-          if [ -f seen_domains.txt ] && [ ! -f .data/seen_domains.txt ]; then
-            git mv -f seen_domains.txt .data/seen_domains.txt || mv seen_domains.txt .data/seen_domains.txt
-          fi
-
-      - name: Auto-commit .data/seen_domains.txt
+      - name: Auto-commit seen_domains
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: update .data/seen_domains.txt"
-          file_pattern: .data/seen_domains.txt
+          commit_message: "chore: update seen_domains"
+          file_pattern: realestate-to-trello/.data/seen_domains.txt
