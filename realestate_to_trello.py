@@ -928,11 +928,16 @@ def any_url_in_text(text: str) -> str:
     m = URL_RE.search(text or "")
     return m.group(0) if m else ""
 
-def email_domain_from_text(text: str) -> str:
-    m = EMAIL_RE.search(text or "")
-    if not m: return ""
-    dom = (m.group(0).split("@",1)[1] or "").lower().strip()
-    return "" if is_freemail(dom) else dom
+def seen_domains(domain: str):
+    if not domain:
+        return
+    d = domain.strip().lower()
+    try:
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write(d + "\n")
+    except Exception:
+        pass
 
 def trello_list_cards_full(list_id: str) -> list:
     r = SESS.get(
