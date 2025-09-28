@@ -7,7 +7,7 @@
 # + Fixes:
 #   1) mkdir-safe seen file writes
 #   2) extract_label_value() to read Website from the card
-#   3) always persist domain to seen file (even if card unchanged)
+#   3) always persist domain set to file at the end (and optional backfill)
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -292,7 +292,6 @@ except Exception:
 
 def looks_parked(html: str) -> bool:
     hay = (html or "").lower()
-    # dropped plain "parking" to reduce false positives
     red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parked domain"]
     return any(p in hay for p in red_flags)
 
@@ -326,6 +325,7 @@ def domain_has_dmarc(domain: str):
         return False
     try:
         for r in _dnsresolver.resolve(f"_dmarc.{d}", "TXT", lifetime=5.0):
+            # normalize TXT output
             txts = getattr(r, "strings", None)
             if txts:
                 txt = b"".join(txts).decode("utf-8", "ignore").lower()
@@ -354,7 +354,7 @@ def domain_age_years(domain: str) -> float:
                     break
                 except Exception:
                     pass
-            if isinstance(cd, str):  # still str
+            if isinstance(cd, str):
                 return 0.0
         from datetime import date as _date
         if isinstance(cd, _date) and not isinstance(cd, datetime):
@@ -688,11 +688,11 @@ def opencorp_search(country_code):
             nm = (c.get("company") or {}).get("name") or ""
             nm = nm.strip()
             if nm: out.append({"business_name": nm, "website": None, "email": None})
-        seen, uniq = set(), []
+        seen_names, uniq = set(), []
         for x in out:
             k = x["business_name"].lower()
-            if k not in seen:
-                uniq.append(x); seen.add(k)
+            if k not in seen_names:
+                uniq.append(x); seen_names.add(k)
         random.shuffle(uniq); return uniq
     return []
 
@@ -721,10 +721,10 @@ def ch_zefix():
             if len(out) >= 50: break
     except Exception:
         return []
-    seen, uniq = set(), []
+    seen_names, uniq = set(), []
     for x in out:
         k = x["business_name"].lower()
-        if k not in seen: uniq.append(x); seen.add(k)
+        if k not in seen_names: uniq.append(x); seen_names.add(k)
     random.shuffle(uniq); return uniq
 
 def official_sources(city, country, lat, lon):
@@ -738,11 +738,11 @@ def official_sources(city, country, lat, lon):
         elif country in ("Switzerland",):  out += ch_zefix()
     except Exception:
         pass
-    seen = set(); uniq = []
+    seen_names, uniq = set(), []
     for x in out:
         k = x["business_name"].lower()
-        if k not in seen:
-            uniq.append(x); seen.add(k)
+        if k not in seen_names:
+            uniq.append(x); seen_names.add(k)
     return uniq
 
 # ---------- Trello helpers ----------
@@ -928,16 +928,12 @@ def any_url_in_text(text: str) -> str:
     m = URL_RE.search(text or "")
     return m.group(0) if m else ""
 
-def seen_domains(domain: str):
-    if not domain:
-        return
-    d = domain.strip().lower()
-    try:
-        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
-        with open(SEEN_FILE, "a", encoding="utf-8") as f:
-            f.write(d + "\n")
-    except Exception:
-        pass
+def email_domain_from_text(text: str) -> str:
+    # reuse EMAIL_RE; capture domain part; skip freemail
+    m = EMAIL_RE.search(text or "")
+    if not m: return ""
+    dom = (m.group(0).split("@",1)[1] or "").lower().strip()
+    return "" if is_freemail(dom) else dom
 
 def trello_list_cards_full(list_id: str) -> list:
     r = SESS.get(
@@ -967,8 +963,294 @@ def domain_from_card_desc(desc: str) -> str:
     return dom
 
 def backfill_seen_from_list(list_id: str, seen: set) -> int:
-    """Scan a list, collect website/email domains, add to 'seen' set."""
+    """Scan a list, collect website/email domains, add to 'seen' set and file."""
     added = 0
     for c in trello_list_cards_full(list_id):
         dom = domain_from_card_desc(c.get("desc") or "")
-        if dom and dom not in seen
+        if dom and dom not in seen:
+            seen_domains(dom)    # append line-by-line
+            seen.add(dom)
+            added += 1
+    return added
+
+# ---------- dedupe + CSV ----------
+def load_seen():
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            return set(l.strip().lower() for l in f if l.strip())
+    except Exception:
+        return set()
+
+def seen_domains(domain: str):
+    """Append one domain to SEEN_FILE (plural name to match seen_domains.txt)."""
+    if not domain:
+        return
+    d = domain.strip().lower()
+    try:
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write(d + "\n")
+    except Exception:
+        pass
+
+def save_seen(seen):
+    """Write a canonicalized, deduped list of domains to SEEN_FILE."""
+    try:
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            for d in sorted(seen):
+                f.write(d + "\n")
+    except Exception:
+        pass
+
+def append_csv(leads, city, country):
+    if not leads: return
+    fname = os.getenv("LEADS_CSV", f"leads_{date.today().isoformat()}.csv")
+    file_exists = pathlib.Path(fname).exists()
+    with open(fname, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if not file_exists:
+            w.writerow(["timestamp","city","country","company","email","website","q"])
+        ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
+        for L in leads:
+            w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
+
+# ---------- main ----------
+def main():
+    missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
+    if missing: raise SystemExit(f"Missing env: {', '.join(missing)}")
+
+    leads = []
+    seen = load_seen()
+    last_city = ""; last_country = ""
+
+    for (city, country) in iter_cities():
+        last_city, last_country = city, country
+
+        # guard geocode so one failure doesn't abort the run
+        try:
+            south, west, north, east = geocode_city(city, country)
+        except Exception as e:
+            dbg(f"Geocode failed for {city}, {country}: {e}")
+            continue
+
+        lat = (south + north) / 2.0
+        lon = (west + east) / 2.0
+
+        # 0) Official sources
+        off = official_sources(city, country, lat, lon)
+        dbg(f"[{city}, {country}] official candidates: {len(off)}")
+        STATS["off_candidates"] += len(off)
+
+        for biz in off:
+            if len(leads) >= DAILY_LIMIT: break
+            website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+            if not website:
+                STATS["skip_no_website"] += 1
+                continue
+            site_dom = etld1_from_url(website)
+            if site_dom in seen:
+                STATS["skip_dupe_domain"] += 1
+                continue
+            if not allowed_by_robots(website, "/"):
+                STATS["skip_robots"] += 1
+                continue
+            try:
+                home = fetch(website)
+            except Exception:
+                STATS["skip_fetch"] += 1
+                continue
+
+            soup_home = BeautifulSoup(home.text, "html.parser")
+            contact = crawl_contact(website)
+            email = (contact.get("email") or "").strip()
+
+            # freemail / domain rules
+            if is_freemail(email_domain(email)):
+                if REQUIRE_BUSINESS_DOMAIN:
+                    STATS["skip_freemail_reject"] += 1
+                    email = ""
+                elif not ALLOW_FREEMAIL:
+                    if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
+                        email = f"info@{site_dom}"
+                    else:
+                        STATS["skip_freemail_reject"] += 1
+                        email = ""
+            if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
+                STATS["skip_generic_local"] += 1
+                email = ""
+            if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
+                STATS["skip_freemail_reject"] += 1
+                email = ""
+            if email and "@" in email and not _mx_ok(email_domain(email)):
+                # if DNS unavailable, _mx_ok == True; otherwise verify site domain as fallback
+                fallback_ok = (site_dom and _mx_ok(site_dom))
+                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
+                    email = f"info@{site_dom}"
+                else:
+                    STATS["skip_mx"] += 1
+                    email = ""
+            if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+                STATS["skip_explicit_required"] += 1
+                email = ""
+            if not email or "@" not in email:
+                STATS["skip_no_email"] += 1
+                continue
+
+            q = quality_score(website, home.text, soup_home, email)
+            if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                STATS["skip_quality"] += 1
+                continue
+            if q < QUALITY_MIN:
+                STATS["skip_quality"] += 1
+                continue
+
+            leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                          "signals": summarize_signals(q, website, email, soup_home)})
+            seen.add(site_dom); _sleep()
+
+        # 1) OSM fallback
+        if len(leads) < DAILY_LIMIT:
+            cands = overpass_estate_agents((south, west, north, east))
+            dbg(f"[{city}, {country}] OSM candidates: {len(cands)}")
+            STATS["osm_candidates"] += len(cands)
+
+            for biz in cands:
+                if len(leads) >= DAILY_LIMIT: break
+                website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+                if not website and biz.get("email"):
+                    dom0 = email_domain(biz["email"])
+                    if dom0 and not is_freemail(dom0): website = f"https://{dom0}"
+                if not website:
+                    STATS["skip_no_website"] += 1
+                    continue
+                site_dom = etld1_from_url(website)
+                if site_dom in seen:
+                    STATS["skip_dupe_domain"] += 1
+                    continue
+                if not allowed_by_robots(website, "/"):
+                    STATS["skip_robots"] += 1
+                    continue
+                try:
+                    home = fetch(website)
+                except Exception:
+                    STATS["skip_fetch"] += 1
+                    continue
+
+                soup_home = BeautifulSoup(home.text, "html.parser")
+                contact = crawl_contact(website)
+                email = (contact.get("email") or "").strip()
+
+                if is_freemail(email_domain(email)):
+                    if REQUIRE_BUSINESS_DOMAIN:
+                        STATS["skip_freemail_reject"] += 1
+                        email = ""
+                    elif not ALLOW_FREEMAIL:
+                        if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
+                            email = f"info@{site_dom}"
+                        else:
+                            STATS["skip_freemail_reject"] += 1
+                            email = ""
+                if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
+                    STATS["skip_generic_local"] += 1
+                    email = ""
+                if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
+                    STATS["skip_freemail_reject"] += 1
+                    email = ""
+                if email and "@" in email and not _mx_ok(email_domain(email)):
+                    fallback_ok = (site_dom and _mx_ok(site_dom))
+                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
+                        email = f"info@{site_dom}"
+                    else:
+                        STATS["skip_mx"] += 1
+                        email = ""
+                if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+                    STATS["skip_explicit_required"] += 1
+                    email = ""
+                if not email or "@" not in email:
+                    STATS["skip_no_email"] += 1
+                    continue
+
+                q = quality_score(website, home.text, soup_home, email)
+                if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
+                    STATS["skip_quality"] += 1
+                    continue
+                if q < QUALITY_MIN:
+                    STATS["skip_quality"] += 1
+                    continue
+
+                leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                              "signals": summarize_signals(q, website, email, soup_home)})
+                seen.add(site_dom); _sleep()
+
+        if len(leads) >= DAILY_LIMIT:
+            break
+
+    # keep top N
+    if leads:
+        leads.sort(key=lambda x: x.get("q", 0), reverse=True)
+        leads = leads[:DAILY_LIMIT]
+
+    # pre-clone enough blanks (disabled unless PRECLONE=1)
+    need = min(DAILY_LIMIT, len(leads))
+    if PRECLONE and need > 0 and TRELLO_TEMPLATE_CARD_ID:
+        ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
+
+    # optional: CSV for inspection (uses last city/country looked at)
+    if leads and last_city and last_country:
+        append_csv(leads, last_city, last_country)
+
+    # push: one per minute + grace
+    pushed = 0
+    for lead in leads:
+        if SKIP_GENERIC_EMAILS and "@" in lead["Email"]:
+            local = lead["Email"].split("@", 1)[0]
+            if is_generic_mailbox_local(local):
+                print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
+                continue
+
+        empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
+        if not empties:
+            print("No empty template card available; skipping.")
+            continue
+
+        card_id = empties[0]
+        changed = update_card_header(
+            card_id=card_id,
+            company=lead["Company"],
+            email=lead["Email"],
+            website=lead["Website"],
+            new_name=lead["Company"],   # <- set Trello card title to Company
+        )
+
+        # If you want immediate, line-by-line persistence too, you can un-comment:
+        # site_dom = etld1_from_url(lead["Website"])
+        # if site_dom: seen_domains(site_dom)
+
+        if changed:
+            pushed += 1
+            print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
+            if ADD_SIGNALS_NOTE:
+                append_note(card_id, lead.get("signals",""))
+            time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
+        else:
+            print("Card unchanged.")
+
+    if DEBUG:
+        print("Skip summary:", json.dumps(STATS, indent=2))
+
+    # --- once-a-day backfill from a Trello list (optional) ---
+    list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
+    try:
+        added = backfill_seen_from_list(list_for_backfill, seen)
+        print(f"Backfill: added {added} domain(s) from list {list_for_backfill}")
+    except Exception as e:
+        print(f"Backfill skipped due to error: {e}")
+
+    # Canonicalize seen file (dedupe/sort) at the end
+    save_seen(seen)
+
+    print(f"Done. Leads pushed: {pushed}/{len(leads)}")
+
+if __name__ == "__main__":
+    main()
