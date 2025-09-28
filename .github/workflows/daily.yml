@@ -110,3 +110,16 @@ jobs:
         run: |
           set -euo pipefail
           python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
+
+      - name: Commit seen_domains.txt if changed
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A .data/seen_domains.txt
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update .data/seen_domains.txt [skip ci]"
+            git push
+          fi
