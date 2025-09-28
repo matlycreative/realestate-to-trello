@@ -1,9 +1,10 @@
 name: Trello Day-0 Email (poll every 5 min)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # lets you run it manually from Actions
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
+    - cron: "0 13 * * *"    # 13:00 UTC every day
+    - cron: "0 22 * * *"    # 22:00 UTC every day
 
 permissions:
   contents: read
