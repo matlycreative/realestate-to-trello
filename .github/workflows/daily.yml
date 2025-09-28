@@ -42,7 +42,7 @@ jobs:
           # Force both script and commit step to the same location:
           SEEN_FILE: realestate-to-trello/.data/seen_domains.txt
         run: |
-          python realestate-to-trello/realestate_to_trello.py
+          python realestate_to_trello.py
 
       - name: Show seen file (debug)
         run: |
