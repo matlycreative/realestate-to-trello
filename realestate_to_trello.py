@@ -9,14 +9,6 @@
 #   2) extract_label_value() to read Website from the card
 #   3) always persist domain to seen file (even if card unchanged)
 #   4) immediate append to seen_domains.txt when a lead is discovered and when pushed
-#
-# Durability fixes:
-#   A) Writable default data path + warn on write errors (flush+fsync)
-#   B) Atomic save_seen() via temp file + os.replace
-#   C) Only mark domains as seen after quality/email pass or at push (no early-burn)
-#   D) Retry Trello writes (PUT/POST) on 429/5xx
-#   E) Polite sleeps after geocode/overpass
-#   F) Safer robots.txt policy: fail-closed on fetch error
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -62,20 +54,7 @@ DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)     # 1/min
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
 QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)
-
-# FIX: robust BASE_DIR if __file__ missing (interactive)
-try:
-    BASE_DIR = pathlib.Path(__file__).resolve().parent
-except NameError:
-    BASE_DIR = pathlib.Path.cwd()
-
-# FIX: default seen file to user-writable location (XDG or ~/.local/share)
-def _default_seen_path():
-    xdg = os.getenv("XDG_DATA_HOME")
-    root = pathlib.Path(xdg) if xdg else (pathlib.Path.home() / ".local" / "share")
-    return str(root / "realestate_to_trello" / "seen_domains.txt")
-
-SEEN_FILE = os.getenv("SEEN_FILE", _default_seen_path())
+SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
 BUTLER_GRACE_S   = 20
@@ -152,20 +131,6 @@ except TypeError:
     )
 SESS.mount("https://", HTTPAdapter(max_retries=_retries))
 SESS.mount("http://", HTTPAdapter(max_retries=_retries))
-
-# FIX: simple Trello write helper with retries for PUT/POST
-def _trello_write(method: str, path: str, params: dict, tries: int = 3):
-    url = f"https://api.trello.com/1/{path}"
-    for attempt in range(tries):
-        r = SESS.request(method, url, params=params, timeout=30)
-        if r.status_code in (429, 500, 502, 503, 504):
-            time.sleep(min(5, 2 ** attempt))
-            continue
-        r.raise_for_status()
-        return r
-    # last response
-    r.raise_for_status()
-    return r  # unreachable, keeps linters happy
 
 OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -282,12 +247,9 @@ def etld1_from_url(u: str) -> str:
 
 def email_domain(email: str) -> str:
     try:
-        return email.split("@,")[1].lower().strip()
+        return email.split("@", 1)[1].lower().strip()
     except Exception:
-        try:
-            return email.split("@", 1)[1].lower().strip()
-        except Exception:
-            return ""
+        return ""
 
 @lru_cache(maxsize=4096)
 def _allowed_by_robots_cached(base: str, path: str, ua: str) -> bool:
@@ -296,10 +258,9 @@ def _allowed_by_robots_cached(base: str, path: str, ua: str) -> bool:
     try:
         resp = SESS.get(urljoin(base, "/robots.txt"), timeout=10)
         rp.parse(resp.text.splitlines())
-        return rp.can_fetch(ua, urljoin(base, path))
     except Exception:
-        # FIX: fail-closed on robots errors for long-term friendliness
-        return False
+        return True  # default allow on failure
+    return rp.can_fetch(ua, urljoin(base, path))
 
 def allowed_by_robots(base_url, path="/"):
     try:
@@ -307,7 +268,7 @@ def allowed_by_robots(base_url, path="/"):
         base = f"{p.scheme}://{p.netloc}"
         return _allowed_by_robots_cached(base, path or "/", UA)
     except Exception:
-        return False
+        return True
 
 def fetch(url):
     r = SESS.get(url, timeout=30)
@@ -515,60 +476,34 @@ def _mx_ok(domain: str) -> bool:
 
 # ---------- geo & OSM ----------
 def geocode_city(city, country):
-    r = SESS.get(
-        "https://nominatim.openstreetmap.org/search",
-        params={
-            "q": f"{city}, {country}",
-            "format": "json",
-            "limit": 1,
-            "email": NOMINATIM_EMAIL,   # add this
-        },
-        headers={"Referer": "https://nominatim.org"},
-        timeout=30,
-    )
+    r = SESS.get("https://nominatim.openstreetmap.org/search",
+        params={"q": f"{city}, {country}", "format":"json", "limit":1},
+        headers={"Referer":"https://nominatim.org"}, timeout=30)
     r.raise_for_status()
     data = r.json()
     if not data: raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
     south, north, west, east = map(float, data[0]["boundingbox"])
-    _sleep()  # FIX: be polite to Nominatim
     return south, west, north, east
 
 def overpass_estate_agents(bbox):
     south, west, north, east = bbox
     parts = []
-    for k, v in OSM_FILTERS:
-        for t in ("node", "way", "relation"):
+    for k,v in OSM_FILTERS:
+        for t in ("node","way","relation"):
             parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
-    q = f"""[out:json][timeout:40];({ ' '.join(parts) });out tags center;"""  # slight timeout bump
-
-    endpoints = (
-        "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-    )
+    q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
 
     js = None
-    for url in endpoints:
-        for attempt in range(3):  # simple backoff loop per endpoint
-            try:
-                r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
-                if r.status_code == 200:
-                    js = r.json()
-                    break
-                if r.status_code == 429:
-                    time.sleep(3 * (attempt + 1))
-                    continue
-                if 500 <= r.status_code < 600:
-                    time.sleep(2 * (attempt + 1))
-                    continue
+    for url in ("https://overpass-api.de/api/interpreter",
+                "https://overpass.kumi.systems/api/interpreter"):
+        try:
+            r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
+            if r.status_code == 200:
+                js = r.json()
                 break
-            except requests.RequestException:
-                time.sleep(2 * (attempt + 1))
-                continue
-        if js is not None:
-            break
-
+        except Exception:
+            continue
     if js is None:
-        _sleep()
         return []
 
     rows = []
@@ -578,74 +513,39 @@ def overpass_estate_agents(bbox):
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
         email = tags.get("email") or tags.get("contact:email")
         if name:
-            rows.append({
-                "business_name": name.strip(),
-                "website": normalize_url(website) if website else None,
-                "email": email,
-            })
-
+            rows.append({"business_name": name.strip(),
+                         "website": normalize_url(website) if website else None,
+                         "email": email})
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
-        if key not in dedup:
-            dedup[key] = r0
-    out = list(dedup.values())
-    random.shuffle(out)
-    _sleep()  # FIX: be polite to Overpass
+        if key not in dedup: dedup[key] = r0
+    out = list(dedup.values()); random.shuffle(out)
     return out
 
 # ---------- Foursquare website finder (v3) ----------
 def fsq_find_website(name, lat, lon):
-    if not FOURSQUARE_API_KEY:
-        return None
-    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept": "application/json"}
-    params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
-
-    # Search call with backoff
-    for attempt in range(3):
-        try:
-            r = SESS.get("https://api.foursquare.com/v3/places/search",
-                         headers=headers, params=params, timeout=20)
-            if r.status_code == 200:
-                results = (r.json().get("results") or [])
-                if not results:
-                    return None
+    if not FOURSQUARE_API_KEY: return None
+    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
+    try:
+        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
+        r = SESS.get("https://api.foursquare.com/v3/places/search",
+                     headers=headers, params=params, timeout=20)
+        if r.status_code == 200:
+            results = (r.json().get("results") or [])
+            if results:
                 first = results[0]
                 website = first.get("website")
-                if website:
-                    return normalize_url(website)
-
+                if website: return normalize_url(website)
                 fsq_id = first.get("fsq_id")
-                if not fsq_id:
-                    return None
-
-                # Detail call (website only) with backoff
-                for d_attempt in range(3):
+                if fsq_id:
                     d = SESS.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
-                                 headers=headers, params={"fields": "website"}, timeout=20)
+                                 headers=headers, params={"fields":"website"}, timeout=20)
                     if d.status_code == 200:
                         w = d.json().get("website")
-                        return normalize_url(w) if w else None
-                    if d.status_code == 429:
-                        time.sleep(3 * (d_attempt + 1))
-                        continue
-                    if 500 <= d.status_code < 600:
-                        time.sleep(2 * (d_attempt + 1))
-                        continue
-                    return None  # other status: stop
-                return None
-
-            if r.status_code == 429:
-                time.sleep(3 * (attempt + 1))
-                continue
-            if 500 <= r.status_code < 600:
-                time.sleep(2 * (attempt + 1))
-                continue
-            return None  # other status: stop
-        except requests.RequestException:
-            time.sleep(2 * (attempt + 1))
-            continue
-
+                        if w: return normalize_url(w)
+    except Exception:
+        return None
     return None
 
 # ---------- contact crawl ----------
@@ -778,8 +678,7 @@ def opencorp_search(country_code):
         try:
             r = SESS.get(url, params=params, timeout=30)
         except Exception:
-            time.sleep(2 * (attempt + 1))   # retry instead of returning
-            continue
+            return []
         if r.status_code == 429:
             time.sleep(3*(attempt+1)); continue
         if r.status_code != 200: return []
@@ -948,8 +847,12 @@ def update_card_header(card_id, company, email, website, new_name=None):
     if not payload:
         return False  # nothing to change
 
-    # FIX: use write helper with retries
-    _trello_write("PUT", f"cards/{card_id}", {"key": TRELLO_KEY, "token": TRELLO_TOKEN, **payload})
+    r = SESS.put(
+        f"https://api.trello.com/1/cards/{card_id}",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, **payload},
+        timeout=30,
+    )
+    r.raise_for_status()
     return True
 
 def append_note(card_id, note):
@@ -958,24 +861,28 @@ def append_note(card_id, note):
     desc = cur["desc"]
     if "signals:" in desc.lower(): return  # case-insensitive
     new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
-    # FIX: use write helper with retries
-    _trello_write("PUT", f"cards/{card_id}", {"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc})
+    SESS.put(
+        f"https://api.trello.com/1/cards/{card_id}",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc},
+        timeout=30
+    ).raise_for_status()
 
 def is_template_blank(desc: str) -> bool:
     """
     Consider a card 'blank template' if:
-      - Company is empty, OR
-      - Email value (considering next-line style) lacks an '@', OR
-      - It contains header labels but no '@' anywhere (strict fallback).
+      - it has 'Company:' with nothing after the colon on that visual line, OR
+      - it has 'Email:' line with no '@' on that line, OR
+      - it contains the header labels (Company/Email/Website) but no '@' anywhere.
     """
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-    company = (extract_label_value(d, "Company") or "").strip()
-    email   = (extract_label_value(d, "Email") or "").strip()
 
-    if company == "":
+    if re.search(r"(?mi)^\s*Company\s*:\s*$", d):
         return True
-    if "@" not in email:
-        return True
+
+    for m in LABEL_RE["Email"].finditer(d):
+        val = (m.group(1) or "").strip()
+        if "@" not in val:
+            return True
 
     dl = d.lower()
     if ("company:" in dl and "email:" in dl and "website:" in dl and "@" not in dl):
@@ -998,10 +905,11 @@ def find_empty_template_cards(list_id, max_needed=1):
 
 def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     if not template_card_id: return None
-    # FIX: use write helper with retries
-    r = _trello_write("POST", "cards",
-                      {"key": TRELLO_KEY, "token": TRELLO_TOKEN,
-                       "idList": list_id, "idCardSource": template_card_id, "name": name})
+    r = SESS.post("https://api.trello.com/1/cards",
+                  params={"key":TRELLO_KEY,"token":TRELLO_TOKEN,
+                          "idList":list_id,"idCardSource":template_card_id,"name":name},
+                  timeout=30)
+    r.raise_for_status()
     return r.json()["id"]
 
 def ensure_min_blank_templates(list_id, template_id, need):
@@ -1054,12 +962,13 @@ def domain_from_card_desc(desc: str) -> str:
     return dom
 
 def backfill_seen_from_list(list_id: str, seen: set) -> int:
+    """Scan a list, collect website/email domains, add to 'seen' set."""
     added = 0
     for c in trello_list_cards_full(list_id):
         dom = domain_from_card_desc(c.get("desc") or "")
         if dom and dom not in seen:
-            seen_domains(dom)   # append to file
-            seen.add(dom)       # update set
+            seen_domains(dom)   # append line-by-line for safety
+            seen.add(dom)
             added += 1
     return added
 
@@ -1072,57 +981,37 @@ def load_seen():
         return set()
 
 def seen_domains(domain: str):
+    """Append one domain per line into SEEN_FILE, mkdir-safe."""
     if not domain:
         return
     d = domain.strip().lower()
-    target_dir = os.path.dirname(SEEN_FILE) or "."
     try:
-        os.makedirs(target_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
         with open(SEEN_FILE, "a", encoding="utf-8") as f:
             f.write(d + "\n")
-            # FIX: reduce data loss on crash
-            f.flush(); os.fsync(f.fileno())
-    except Exception as e:
-        print(f"[WARN] Could not append to {SEEN_FILE}: {e}")
+    except Exception:
+        pass
 
 def save_seen(seen):
-    # FIX: atomic write via temp file + replace
-    target = SEEN_FILE
-    target_dir = os.path.dirname(target) or "."
     try:
-        os.makedirs(target_dir, exist_ok=True)
-
-        existing = set()
-        if os.path.exists(target):
-            with open(target, "r", encoding="utf-8") as f:
-                existing = {l.strip().lower() for l in f if l.strip()}
-
-        merged = existing | {d.strip().lower() for d in (seen or set()) if d}
-        tmp = target + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            for d in sorted(merged):
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            for d in sorted(seen):
                 f.write(d + "\n")
-            f.flush(); os.fsync(f.fileno())
-        os.replace(tmp, target)
-    except Exception as e:
-        print(f"[WARN] Could not write {target}: {e}")
+    except Exception:
+        pass
 
 def append_csv(leads, city, country):
     if not leads: return
     fname = os.getenv("LEADS_CSV", f"leads_{date.today().isoformat()}.csv")
     file_exists = pathlib.Path(fname).exists()
-    try:
-        with open(fname, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not file_exists:
-                w.writerow(["timestamp","city","country","company","email","website","q"])
-            ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
-            for L in leads:
-                w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
-            # FIX: flush to disk
-            f.flush(); os.fsync(f.fileno())
-    except Exception as e:
-        print(f"[WARN] Could not append to CSV {fname}: {e}")
+    with open(fname, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if not file_exists:
+            w.writerow(["timestamp","city","country","company","email","website","q"])
+        ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
+        for L in leads:
+            w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
 
 # ---------- main ----------
 def main():
@@ -1157,12 +1046,10 @@ def main():
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
-
             site_dom = etld1_from_url(website)
             if site_dom in seen:
                 STATS["skip_dupe_domain"] += 1
                 continue
-
             if not allowed_by_robots(website, "/"):
                 STATS["skip_robots"] += 1
                 continue
@@ -1216,13 +1103,13 @@ def main():
                 STATS["skip_quality"] += 1
                 continue
 
-            # FIX (C): only mark seen AFTER email+quality pass
+            leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                          "signals": summarize_signals(q, website, email, soup_home)})
+
+            # Immediately persist domain to file and memory
             if site_dom:
                 seen_domains(site_dom)
                 seen.add(site_dom)
-
-            leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
-                          "signals": summarize_signals(q, website, email, soup_home)})
             _sleep()
 
         # 1) OSM fallback
@@ -1295,13 +1182,13 @@ def main():
                     STATS["skip_quality"] += 1
                     continue
 
-                # FIX (C): only mark seen AFTER email+quality pass
+                leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
+                              "signals": summarize_signals(q, website, email, soup_home)})
+
+                # Immediately persist domain to file and memory
                 if site_dom:
                     seen_domains(site_dom)
                     seen.add(site_dom)
-
-                leads.append({"Company": biz["business_name"], "Email": email, "Website": website, "q": q,
-                              "signals": summarize_signals(q, website, email, soup_home)})
                 _sleep()
 
         if len(leads) >= DAILY_LIMIT:
@@ -1357,6 +1244,7 @@ def main():
                 site_dom = em_dom
 
         if site_dom:
+            # Always append to file and ensure in-memory set
             seen_domains(site_dom)
             if site_dom not in seen:
                 seen.add(site_dom)
@@ -1364,7 +1252,7 @@ def main():
 
         if changed:
             pushed += 1
-            print(f"[{pushed}/{len(leads)}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
+            print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
                 append_note(card_id, lead.get("signals",""))
             time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
@@ -1375,6 +1263,7 @@ def main():
         print("Skip summary:", json.dumps(STATS, indent=2))
 
     # --- once-a-day backfill from a Trello list (optional) ---
+    # If you have a separate “To Prospects” list, set TRELLO_LIST_ID_SEENSYNC as a secret.
     list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
     try:
         added = backfill_seen_from_list(list_for_backfill, seen)
