@@ -63,17 +63,11 @@ jobs:
       # --- seen file lives in a dedicated data dir ---
       SEEN_FILE: ".data/seen_domains.txt"
 
-      # --- OPTIONAL: Google Sheets logging ---
-      SHEETS_ENABLED: ${{ secrets.SHEETS_ENABLED }}              # "1" or "true" to enable
-      GOOGLE_SHEETS_JSON: ${{ secrets.GOOGLE_SHEETS_JSON }}      # service account JSON (whole JSON)
-      SHEETS_SPREADSHEET_ID: ${{ secrets.SHEETS_SPREADSHEET_ID }}# the Sheet ID
-      SHEETS_WORKSHEET: ${{ secrets.SHEETS_WORKSHEET }}          # e.g. "Leads"
-
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true   # <— IMPORTANT so the auto-commit can push
+          persist-credentials: true   # keep the token so auto-commit can push
 
       # ensure the data dir exists so the script can write the seen file
       - name: Ensure data dir
@@ -90,8 +84,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          # Sheets deps (safe even if not used)
-          python -m pip install gspread google-auth
 
       # cache the public suffix list used by tldextract to speed runs
       - name: Prepare tldextract cache dir
@@ -114,7 +106,7 @@ jobs:
       - name: Preflight
         run: |
           python - <<'PY'
-          import os, sys, re, json
+          import os, sys, re
           need = ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"]
           miss = [k for k in need if not os.getenv(k)]
           if miss:
@@ -123,10 +115,6 @@ jobs:
           if not em or "example.com" in em or not re.search(r".+@.+\..+", em):
               print("NOMINATIM_EMAIL is missing or not a real email; set it to comply with Nominatim policy.")
               sys.exit(1)
-          # Optional Sheets sanity
-          if (os.getenv("SHEETS_ENABLED","").lower() in ("1","true","yes","on")):
-              if not os.getenv("GOOGLE_SHEETS_JSON"): print("WARN: SHEETS_ENABLED but GOOGLE_SHEETS_JSON is empty.")
-              if not os.getenv("SHEETS_SPREADSHEET_ID"): print("WARN: SHEETS_ENABLED but SHEETS_SPREADSHEET_ID is empty.")
           PY
 
       # optional but moves PSL download up-front so the main step logs stay clean
