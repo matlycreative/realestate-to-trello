@@ -61,7 +61,7 @@ jobs:
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
 
       # Force the script + commit step to use the same file path
-      SEEN_FILE: realestate-to-trello/.data/seen_domains.txt
+      SEEN_FILE: .data/seen_domains.txt
 
     steps:
       - name: Checkout
@@ -70,10 +70,10 @@ jobs:
           persist-credentials: true
 
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-        id: setup-python
 
       - name: Install dependencies
         run: |
@@ -82,18 +82,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Prepare data dir
-        run: mkdir -p realestate-to-trello/.data
+        run: mkdir -p .data
 
       - name: Prepare tldextract cache dir
         run: mkdir -p ~/.cache/tldextract
-
-      - name: Cache tldextract PSL
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/tldextract
-          key: tldextract-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}
-          restore-keys: |
-            tldextract-${{ runner.os }}-
 
       - name: Jitter start (scheduled runs only)
         if: ${{ github.event_name == 'schedule' }}
@@ -114,36 +106,7 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Warm tldextract PSL cache
-        run: |
-          python - <<'PY'
-          import tldextract
-          tldextract.extract("https://example.com")
-          print("tldextract PSL cache warmed.")
-          PY
-
-      - name: Run pipeline (with 1 retry)
+      - name: Run pipeline
         run: |
           set -euo pipefail
           python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
-
-      - name: Show seen file (debug)
-        run: |
-          echo "SEEN_FILE=$SEEN_FILE"
-          if [ -f "$SEEN_FILE" ]; then
-            echo "---- HEAD ----"
-            head -n 20 "$SEEN_FILE" || true
-            echo "---- WC ----"
-            wc -l "$SEEN_FILE" || true
-          else
-            echo "seen file not found"
-          fi
-
-      - name: Upload leads CSV (optional)
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: leads-${{ github.run_id }}
-          path: leads_*.csv
-          if-no-files-found: ignore
-          retention-days: 14
