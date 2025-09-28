@@ -67,11 +67,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true   # keep the token so auto-commit can push
+          persist-credentials: true   # keep the token so we can push
 
-      # ensure the data dir exists so the script can write the seen file
+      # ensure the data dir exists so the restore step can write the file
       - name: Ensure data dir
         run: mkdir -p .data
+
+      # === Option B fix (1/2): Restore seen file from dedicated data branch ===
+      - name: Restore seen file from data branch
+        run: |
+          git fetch origin data/seen || true
+          if git rev-parse --verify origin/data/seen >/dev/null 2>&1; then
+            git show origin/data/seen:.data/seen_domains.txt > .data/seen_domains.txt || true
+            echo "Restored .data/seen_domains.txt from origin/data/seen"
+          else
+            echo "No existing origin/data/seen branch — starting fresh."
+          fi
 
       - id: setup-python
         uses: actions/setup-python@v5
@@ -154,12 +165,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Commit seen_domains.txt
+      # === Option B fix (2/2): Commit seen file to dedicated data branch ===
+      - name: Commit seen_domains.txt to data branch
         if: ${{ always() }}
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Update seen domains [skip ci]"
-          file_pattern: .data/seen_domains.txt
-          add_options: "-f"           # force-add even if ignored
-          branch: ${{ github.ref_name }}
-          create_branch: false
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B data/seen
+          git add -f .data/seen_domains.txt
+          if git diff --cached --quiet; then
+            echo "No changes to .data/seen_domains.txt; skipping commit."
+          else
+            git commit -m "Update seen domains [skip ci]"
+          fi
+          git push --force-with-lease origin data/seen
+          git checkout ${{ github.ref_name }}
