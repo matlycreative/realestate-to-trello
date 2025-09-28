@@ -1,66 +1,47 @@
-name: Trello → Email Day 0 (Gmail)
+name: Send Day 0 Email on Trello Move
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "*/3 * * * *"   # every 3 minutes
+  repository_dispatch:
+    types: [trello_card_moved_day0]   # fired by Trello Butler
+  workflow_dispatch:                  # manual test
+    inputs:
+      card_id:
+        description: Trello Card ID
+        required: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: trello-email-day0
-  cancel-in-progress: true
-
 jobs:
-  send-day0:
+  send:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     env:
-      PYTHONUNBUFFERED: "1"
-
-      # --- Trello auth ---
+      # Trello
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-
-      # The list you move cards into to trigger Day 0
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
-      # Optional: add a label after sending (leave empty if you don't use it)
-      TRELLO_EMAILED_LABEL_ID: ${{ secrets.TRELLO_EMAILED_LABEL_ID }}
+      # SMTP
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+      REPLY_TO_EMAIL: ${{ secrets.REPLY_TO_EMAIL }}
 
-      # --- Gmail SMTP (Option A) ---
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}        # smtp.gmail.com
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}        # 587
-      SMTP_USER: ${{ secrets.SMTP_USER }}        # your@gmail.com
-      SMTP_PASS: ${{ secrets.SMTP_PASS }}        # 16-char App Password
-      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}      # your@gmail.com
-      FROM_NAME: ${{ secrets.FROM_NAME }}        # e.g., "Alex"
-      REPLY_TO: ${{ secrets.REPLY_TO }}          # usually same as FROM_EMAIL
-
-      # Safety caps / pacing
-      DAILY_EMAIL_CAP: ${{ secrets.DAILY_EMAIL_CAP }}  # e.g., 10
-      SEND_INTERVAL_S: ${{ secrets.SEND_INTERVAL_S }}  # e.g., 1
-
-      # Optional custom templates (fallbacks exist in code)
-      SUBJECT_A: ${{ secrets.SUBJECT_A }}
-      BODY_A: ${{ secrets.BODY_A }}
-      SUBJECT_B: ${{ secrets.SUBJECT_B }}
-      BODY_B: ${{ secrets.BODY_B }}
+      # pick card id from repository_dispatch payload or manual input
+      CARD_ID: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.card_id || inputs.card_id }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install runtime deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install requests
