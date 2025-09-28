@@ -921,6 +921,76 @@ def ensure_min_blank_templates(list_id, template_id, need):
         clone_template_into_list(template_id, list_id, name=f"Lead (auto) {int(time.time())%100000}-{i+1}")
         time.sleep(1.0)  # avoid Trello rate-limits
 
+# --- seen_domains backfill helpers ---
+URL_RE = re.compile(r"https?://[^\s)>\]]+", re.I)
+
+def header_value(desc: str, label: str) -> str:
+    """Find 'Label: value' in the header block, with next-line fallback."""
+    d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = d.splitlines()
+    lab_re = LABEL_RE[label]
+    i = 0
+    while i < len(lines):
+        m = lab_re.match(lines[i])
+        if m:
+            val = (m.group(1) or "").strip()
+            if not val and (i+1) < len(lines):
+                nxt = lines[i+1]
+                if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
+                    val = nxt.strip()
+            return val
+        i += 1
+    return ""
+
+def any_url_in_text(text: str) -> str:
+    m = URL_RE.search(text or "")
+    return m.group(0) if m else ""
+
+def email_domain_from_text(text: str) -> str:
+    # reuse global EMAIL_RE; capture domain part
+    m = EMAIL_RE.search(text or "")
+    if not m: return ""
+    dom = (m.group(0).split("@",1)[1] or "").lower().strip()
+    return "" if is_freemail(dom) else dom
+
+def trello_list_cards_full(list_id: str) -> list:
+    r = SESS.get(
+        f"https://api.trello.com/1/lists/{list_id}/cards",
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "id,name,desc"},
+        timeout=30
+    )
+    r.raise_for_status()
+    js = r.json()
+    return js if isinstance(js, list) else []
+
+def domain_from_card_desc(desc: str) -> str:
+    # 1) Prefer Website: from header
+    website = header_value(desc, "Website")
+    if website:
+        if not website.lower().startswith(("http://","https://")):
+            website = "https://" + website.strip()
+        d = etld1_from_url(website)
+        if d: return d
+    # 2) Any URL present
+    url = any_url_in_text(desc)
+    if url:
+        d = etld1_from_url(url)
+        if d: return d
+    # 3) Business email domain (skip freemail)
+    dom = email_domain_from_text(header_value(desc, "Email") or desc)
+    return dom
+
+def backfill_seen_from_list(list_id: str, seen: set) -> int:
+    """Scan a list, collect website/email domains, add to 'seen' set."""
+    added = 0
+    for c in trello_list_cards_full(list_id):
+        dom = domain_from_card_desc(c.get("desc") or "")
+        if dom and dom not in seen:
+            append_seen_domain(dom)   # append line-by-line for safety
+            seen.add(dom)
+            added += 1
+    return added
+
 # ---------- dedupe + CSV ----------
 def load_seen():
     try:
@@ -1195,8 +1265,17 @@ def main():
         else:
             print("Card unchanged; domain still added to seen (from card Website).")
 
-    if DEBUG:
+        if DEBUG:
         print("Skip summary:", json.dumps(STATS, indent=2))
+
+    # --- NEW: once-a-day backfill from a Trello list ---
+    # If you have a separate “To Prospects” list, set TRELLO_LIST_ID_SEENSYNC as a secret.
+    list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
+    try:
+        added = backfill_seen_from_list(list_for_backfill, seen)
+        print(f"Backfill: added {added} domain(s) from list {list_for_backfill}")
+    except Exception as e:
+        print(f"Backfill skipped due to error: {e}")
 
     # Canonicalize seen file (dedupe/sort) at the end
     save_seen(seen)
