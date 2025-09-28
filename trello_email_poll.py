@@ -6,55 +6,58 @@ Poll a Trello list (Day 0). For each card found:
 - Fill {company}, {first}, {from_name} placeholders.
 - Send the email via SMTP (plain text + HTML alternative).
 - Append signature (optional logo).
-- Mark the card as "Sent: Day0" (comment) to avoid re-sending.
+- Mark the card as "Sent" (comment) to avoid re-sending.
 """
 
 import os, re, time, json, html, mimetypes
 from datetime import datetime
 import requests
 
+# ----------------- Small helpers -----------------
+def _get_env(*names, default=""):
+    """Return the first non-empty env var among names (case-sensitive), else default."""
+    for n in names:
+        v = os.getenv(n)
+        if v is not None and v.strip():
+            return v.strip()
+    return default
+
 # ----------------- Config / Env -----------------
-TRELLO_KEY   = os.getenv("TRELLO_KEY", "").strip()
-TRELLO_TOKEN = os.getenv("TRELLO_TOKEN", "").strip()
-LIST_ID      = os.getenv("TRELLO_LIST_ID_DAY0", "").strip()
+TRELLO_KEY   = _get_env("TRELLO_KEY")
+TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
+LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")  # prefer DAY0, fallback LIST_ID
 
 # Email templates (from GitHub Secrets; keep them as plain text)
-SUBJECT_A = os.getenv("SUBJECT_A", "Quick idea for {company}")
-BODY_A    = os.getenv("BODY_A", "Hi there,\n\nWe help {company}...\n\n– {from_name}")
-SUBJECT_B = os.getenv("SUBJECT_B", "Quick idea for {company}")
-BODY_B    = os.getenv("BODY_B", "Hi {first},\n\nWe help {company}...\n\n– {from_name}")
+SUBJECT_A = _get_env("SUBJECT_A", default="Quick idea for {company}")
+BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}")
+SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
+BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}")
 
 # From identity
-FROM_NAME  = os.getenv("FROM_NAME", "Outreach")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "").strip()
+FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
+FROM_EMAIL = _get_env("FROM_EMAIL")
 
-# SMTP (names with fallbacks)
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USE_TLS = (os.getenv("SMTP_USE_TLS", "1").strip().lower() in ("1","true","yes","on"))
+# SMTP (tolerant names + sensible defaults)
+SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
+SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
+SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
 
-SMTP_PASS = (
-    os.getenv("SMTP_PASS") or
-    os.getenv("SMTP_PASSWORD") or
-    ""
-)
-SMTP_USER = (
-    os.getenv("SMTP_USER") or
-    os.getenv("SMTP_USERNAME") or
-    os.getenv("FROM_EMAIL") or
-    os.getenv("SMTP_PASS") or
-    ""
-)
+# Password accepted under several names
+SMTP_PASS = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
+
+# Username: prefer explicit, fall back to FROM_EMAIL
+SMTP_USER = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
 # HTML styling + signature logo
-EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))  # tweak font size here
-SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()  # public https URL to your logo
-SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))  # max logo width
+EMAIL_FONT_PX       = int(_get_env("EMAIL_FONT_PX", default="16"))  # tweak font size here
+SIGNATURE_LOGO_URL  = _get_env("SIGNATURE_LOGO_URL")                # public https URL to your logo
+SIGNATURE_INLINE    = _get_env("SIGNATURE_INLINE", default="0").lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX  = int(_get_env("SIGNATURE_MAX_W_PX", default="200"))
 
-# Poll behavior
-SENT_MARKER_TEXT = os.getenv("SENT_MARKER_TEXT", "Sent: Day0")
-SENT_CACHE_FILE  = os.getenv("SENT_CACHE_FILE", ".data/sent_day0.json")
+# Poll behavior / gating
+SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
+SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
+MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))  # 0 = unlimited per run
 
 # HTTP session
 UA = f"TrelloEmailer/1.1 (+{FROM_EMAIL or 'no-email'})"
@@ -69,13 +72,20 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 # --------------- Helpers ----------------
 def require_env():
     missing = []
-    for n in ("TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID_DAY0","FROM_EMAIL","SMTP_PASS"):
-        if not os.getenv(n):
-            missing.append(n)
+    if not TRELLO_KEY:  missing.append("TRELLO_KEY")
+    if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
+    if not LIST_ID:      missing.append("TRELLO_LIST_ID_DAY0")
+    if not FROM_EMAIL:   missing.append("FROM_EMAIL")
+    if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
+
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
+
     if not SMTP_USER:
-        print("Warning: SMTP_USER is empty; using FROM_EMAIL or (last resort) SMTP_PASS as username.")
+        print("Warning: SMTP_USER/SMTP_USERNAME not set; will use FROM_EMAIL as SMTP login.")
+    # quick visibility without leaking values
+    print("ENV check: SMTP_PASS:", "set" if bool(SMTP_PASS) else "missing",
+          "| SMTP_USER:", SMTP_USER or "(empty)")
 
 def trello_get(url_path, **params):
     params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
@@ -111,17 +121,14 @@ def parse_header(desc: str) -> dict:
     i = 0
     while i < len(lines):
         line = lines[i]
-        matched = False
         for lab in TARGET_LABELS:
             m = LABEL_RE[lab].match(line)
             if m:
-                matched = True
                 val = (m.group(1) or "").strip()
                 if not val and (i+1) < len(lines):
                     nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                        val = nxt.strip()
-                        i += 1
+                        val = nxt.strip(); i += 1
                 out[lab] = val
                 break
         i += 1
@@ -146,7 +153,6 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str) -> str:
 def text_to_html(text: str) -> str:
     """Convert plain text to simple HTML with a bigger font."""
     esc = html.escape(text or "")
-    # paragraph-ish formatting
     esc = esc.replace("\r\n", "\n").replace("\r", "\n")
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
     return (
@@ -172,7 +178,6 @@ def send_email(to_email: str, subject: str, body_text: str):
     import smtplib
     from email.message import EmailMessage
 
-    # Prepare HTML version
     html_core = text_to_html(body_text)
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
@@ -182,11 +187,10 @@ def send_email(to_email: str, subject: str, body_text: str):
     msg["To"] = to_email
     msg["Subject"] = subject
 
-    # Plain text (fallback) + HTML alternative
-    msg.set_content(body_text)
-    msg.add_alternative(html_full, subtype="html")
+    msg.set_content(body_text)                 # plain text fallback
+    msg.add_alternative(html_full, subtype="html")  # HTML alternative
 
-    # Optionally embed the logo inline (CID)
+    # Optional inline logo (CID)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -196,17 +200,14 @@ def send_email(to_email: str, subject: str, body_text: str):
             if not ctype.startswith("image/"):
                 ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
-            # The last payload is the HTML part; attach related image to it
             msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
         except Exception as e:
-            # Fall back silently if inline embedding fails
             print(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # Send
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
         if SMTP_USE_TLS:
             s.starttls()
-        s.login(SMTP_USER, SMTP_PASS)
+        s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
         s.send_message(msg)
 
 def already_marked(card_id: str, marker: str) -> bool:
@@ -240,6 +241,9 @@ def main():
 
     processed = 0
     for c in cards:
+        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
+            break
+
         card_id = c.get("id")
         if not card_id or card_id in sent_cache:
             continue
