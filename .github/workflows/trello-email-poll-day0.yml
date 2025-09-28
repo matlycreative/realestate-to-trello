@@ -1,0 +1,60 @@
+name: Trello → Email (Day 0) — Poll
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"     # every 5 minutes
+  workflow_dispatch: {}        # allow manual run
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # --- Trello (secrets) ---
+      TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      # The Trello list we poll (Day 0)
+      TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
+
+      # Unique marker so we only block re-sends for THIS list.
+      # Use a different marker per list (e.g., "day0", "day3").
+      SENT_MARKER: "day0"
+
+      # --- SMTP (Gmail App Password etc.) ---
+      SMTP_HOST:   ${{ secrets.SMTP_HOST }}    # e.g., smtp.gmail.com
+      SMTP_PORT:   ${{ secrets.SMTP_PORT }}    # e.g., 587
+      SMTP_USER:   ${{ secrets.SMTP_USER }}    # your Gmail address
+      SMTP_PASS:   ${{ secrets.SMTP_PASS }}    # Gmail App Password
+
+      FROM_EMAIL:  ${{ secrets.FROM_EMAIL }}   # same as SMTP_USER typically
+      FROM_NAME:   ${{ secrets.FROM_NAME }}    # your display name
+
+      # --- Templates (secrets) ---
+      # TYPE A: when only Company is available
+      SUBJECT_A: ${{ secrets.SUBJECT_A }}
+      BODY_A:    ${{ secrets.BODY_A }}
+      # TYPE B: when Company + First name present
+      SUBJECT_B: ${{ secrets.SUBJECT_B }}
+      BODY_B:    ${{ secrets.BODY_B }}
+
+      # Safety: how many emails max per run (throttling)
+      OUTREACH_MAX_PER_RUN: "5"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Run sender (Day 0)
+        run: python trello_email_poll.py
