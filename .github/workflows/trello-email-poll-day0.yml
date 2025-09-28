@@ -16,34 +16,43 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
 
-      # Trello
+      # --- Trello ---
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
-      # SMTP
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}        # e.g. smtp.gmail.com
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}        # e.g. 587
-      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}# your email / SMTP user
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}# app password
-      FROM_NAME: ${{ secrets.FROM_NAME }}
+      # --- From identity ---
+      FROM_NAME:  ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # Templates
-      SUBJECT_A: ${{ secrets.SUBJECT_A }}
-      BODY_A: ${{ secrets.BODY_A }}
-      SUBJECT_B: ${{ secrets.SUBJECT_B }}
-      BODY_B: ${{ secrets.BODY_B }}
+      # --- SMTP (provide at least user + pass via secrets) ---
+      SMTP_HOST: "smtp.gmail.com"
+      SMTP_PORT: "587"
+      SMTP_USE_TLS: "1"
 
-      # Font + signature
-      EMAIL_FONT_PX: "16"                     # bump this to make text larger
+      # If your secrets are named SMTP_USERNAME / SMTP_PASSWORD:
+      SMTP_USER: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASS: ${{ secrets.SMTP_PASSWORD }}
+
+      # (If you used lowercase names instead, you can also add:)
+      # smtp_pass: ${{ secrets.smtp_pass }}
+      # smtp_user: ${{ secrets.smtp_user }}
+
+      # --- Templates ---
+      SUBJECT_A: ${{ secrets.SUBJECT_A }}
+      BODY_A:    ${{ secrets.BODY_A }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B }}
+      BODY_B:    ${{ secrets.BODY_B }}
+
+      # --- Font + signature ---
+      EMAIL_FONT_PX: "16"                         # bump this to make text larger
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}   # e.g. https://yourcdn.com/logo.png
-      SIGNATURE_INLINE: "1"                   # set "1" to embed the image (CID)
+      SIGNATURE_INLINE: "1"                       # set "1" to embed the image (CID)
       SIGNATURE_MAX_W_PX: "200"
 
-      # Safety / gating (optional, keep or tweak as you like)
-      MAX_SEND_PER_RUN: "5"                   # don’t blast too many per run
-      SENT_MARKER: "[day0-sent]"              # marker added to card to avoid resending
+      # --- Safety / gating ---
+      MAX_SEND_PER_RUN: "5"                       # cap per run; 0 = unlimited
+      SENT_MARKER_TEXT: "[day0-sent]"             # comment marker to avoid re-sending
 
     steps:
       - uses: actions/checkout@v4
@@ -52,10 +61,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps (if any)
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests
 
       - name: Run sender
         run: python trello_email_poll.py
