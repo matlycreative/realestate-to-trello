@@ -4,6 +4,10 @@
 # Company, First, Email, Hook, Variant, Website
 #
 # Now also renames the card TITLE to the Company value.
+# + Fixes:
+#   1) mkdir-safe seen file writes
+#   2) extract_label_value() to read Website from the card
+#   3) always persist domain to seen file (even if card unchanged)
 
 import os, re, json, time, random, csv, pathlib
 from datetime import date, datetime
@@ -43,16 +47,6 @@ def env_on(name, default=False):
     if v in ("1","true","yes","on"): return True
     if v in ("0","false","no","off"): return False
     return bool(default)
-
-def append_seen_domain(domain: str):
-    if not domain:
-        return
-    d = domain.strip().lower()
-    try:
-        with open(SEEN_FILE, "a", encoding="utf-8") as f:
-            f.write(d + "\n")
-    except Exception:
-        pass
 
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 10)
@@ -767,6 +761,28 @@ def trello_get_card(card_id):
     name = js.get("name") or ""
     return {"name": name, "desc": desc}
 
+def extract_label_value(desc: str, label: str) -> str:
+    """
+    Extract the value of a 'Label: value' line from the description.
+    Supports the next-line value style too.
+    """
+    d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = d.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = LABEL_RE[label].match(line)
+        if m:
+            val = (m.group(1) or "").strip()
+            if not val and (i + 1) < len(lines):
+                nxt = lines[i + 1]
+                if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
+                    val = nxt.strip()
+                    i += 1
+            return val
+        i += 1
+    return ""
+
 def normalize_header_block(desc, company, email, website):
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
     lines = desc.splitlines()
@@ -913,8 +929,20 @@ def load_seen():
     except Exception:
         return set()
 
+def append_seen_domain(domain: str):
+    if not domain:
+        return
+    d = domain.strip().lower()
+    try:
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
+        with open(SEEN_FILE, "a", encoding="utf-8") as f:
+            f.write(d + "\n")
+    except Exception:
+        pass
+
 def save_seen(seen):
     try:
+        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
             for d in sorted(seen):
                 f.write(d + "\n")
@@ -1140,21 +1168,32 @@ def main():
             website=lead["Website"],
             new_name=lead["Company"],   # <- set Trello card title to Company
         )
+
+        # --- Always persist the domain to seen file (source = card Website) ---
+        cur = trello_get_card(card_id)
+        website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
+        website_on_card = normalize_url(website_on_card)
+        site_dom = etld1_from_url(website_on_card)
+
+        # Fallback to email's domain if it looks like a business domain
+        if not site_dom:
+            em_dom = email_domain(lead.get("Email") or "")
+            if em_dom and not is_freemail(em_dom):
+                site_dom = em_dom
+
+        if site_dom and site_dom not in seen:
+            append_seen_domain(site_dom)
+            seen.add(site_dom)
+            dbg(f"Appended to seen: {site_dom}")
+
         if changed:
             pushed += 1
-
-            # Persist domain immediately so future runs won’t reuse it
-            site_dom = etld1_from_url(lead["Website"])
-            if site_dom and site_dom not in seen:
-                append_seen_domain(site_dom)
-                seen.add(site_dom)
-
             print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
             if ADD_SIGNALS_NOTE:
                 append_note(card_id, lead.get("signals",""))
             time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
         else:
-            print("Card unchanged; trying next lead.")
+            print("Card unchanged; domain still added to seen (from card Website).")
 
     if DEBUG:
         print("Skip summary:", json.dumps(STATS, indent=2))
