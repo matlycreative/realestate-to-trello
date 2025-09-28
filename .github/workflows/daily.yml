@@ -125,7 +125,7 @@ jobs:
       - name: Run pipeline (with 1 retry)
         run: |
           set -euo pipefail
-          python realestate-to-trello/realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate-to-trello/realestate_to_trello.py)
+          python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
 
       - name: Show seen file (debug)
         run: |
