@@ -48,50 +48,60 @@
   </div>
 
   <script>
-    (function(){
-      const qs = new URLSearchParams(location.search);
-      const id = qs.get('id');
-      const status = document.getElementById('status');
-      const video = document.getElementById('vid');
-      const chip  = document.getElementById('companyChip');
-      const meta  = document.getElementById('meta');
-      document.getElementById('year').textContent = new Date().getFullYear();
+  (function(){
+    const qs = new URLSearchParams(location.search);
+    const id = qs.get('id');
+    const status = document.getElementById('status');
+    const video  = document.getElementById('vid');
+    const chip   = document.getElementById('companyChip');
+    const meta   = document.getElementById('meta');
+    document.getElementById('year').textContent = new Date().getFullYear();
 
-      function show(msg, isErr=false){
-        status.textContent = msg;
-        status.classList.toggle('hide', !msg);
-        status.classList.toggle('error', isErr);
-      }
+    function show(msg, isErr=false){
+      status.textContent = msg;
+      status.classList.toggle('hide', !msg);
+      status.classList.toggle('error', isErr);
+    }
 
-      if(!id){
-        show('Missing link id. Please use the personalized link from your email.', true);
-        return;
-      }
+    if(!id){
+      show('Missing link id. Please use the personalized link from your email.', true);
+      return;
+    }
 
-      fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
-        .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
-        .then(({ signedUrl, company }) => {
-          if (company) {
-            chip.textContent = company;
-            chip.classList.remove('hide');
-          } else {
-            chip.classList.add('hide');
-          }
+    fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
+      .then(r => r.json().catch(() => ({})))
+      .then(({ signedUrl, company, error }) => {
+        if (company) {
+          chip.textContent = company;
+          chip.classList.remove('hide');
+        } else {
+          chip.classList.add('hide');
+        }
 
-          if (!signedUrl) {
+        if (error) {
+          if (error === 'POINTER_NOT_FOUND' || error === 'OBJECT_NOT_FOUND' || error === 'EMPTY_KEY') {
             show('Your sample is not ready yet. Try again in a minute.', true);
-            return;
+          } else {
+            show('Server error. Please refresh this page.', true);
           }
+          return;
+        }
 
-          meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>
-                            ${company ? `<span class="chip">Company: <strong>${company}</strong></span>` : ''}`;
+        if (!signedUrl) {
+          show('Your sample is not ready yet. Try again in a minute.', true);
+          return;
+        }
 
-          video.src = signedUrl;
-          video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.' , true), { once:true });
-          show('');
-        })
-        .catch(() => show('Server error. Please refresh this page.', true));
-    })();
-  </script>
+        meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>` +
+                         (company ? ` <span class="chip">Company: <strong>${company}</strong></span>` : '');
+
+        video.src = signedUrl;
+        video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
+        show('');
+      })
+      .catch(() => show('Server error. Please refresh this page.', true));
+  })();
+</script>
+
 </body>
 </html>
