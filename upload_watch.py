@@ -10,10 +10,14 @@ Env:
   R2_BUCKET       (e.g. 'samples')
   PUBLIC_BASE     (e.g. 'https://matlycreative.pages.dev') only for notices
 """
+#!/usr/bin/env python3
 import os, time, json, subprocess, sys, shutil
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+# --- rclone path resolver (for LaunchAgent envs with minimal PATH) ---
+RCLONE_BIN = os.getenv("RCLONE_BIN") or shutil.which("rclone") or "/opt/homebrew/bin/rclone"
 
 DROP_DIR   = Path(os.getenv("DROP_DIR", str(Path.home() / "Drop Videos Here")))
 R2_BUCKET  = os.getenv("R2_BUCKET", "samples")
@@ -22,6 +26,9 @@ PUBLIC_BASE= os.getenv("PUBLIC_BASE", "https://matlycreative.pages.dev")
 def safe_id(email:str)->str: return email.lower().replace("@","_").replace(".","_")
 
 def run(cmd):
+    # if the command is 'rclone', replace with absolute path
+    if cmd and cmd[0] == "rclone":
+        cmd = [RCLONE_BIN] + cmd[1:]
     print(">", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
