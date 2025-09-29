@@ -1,66 +1,78 @@
-- name: Upload videos in uploads/, write pointers, export email/link vars
-  env:
-    PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
-    R2_BUCKET:   ${{ secrets.R2_BUCKET }}
-  run: |
-    set -e
-    shopt -s nullglob
+// /functions/api/sample.js
+// Reads pointer JSON from R2 at `pointers/<id>.json` and returns:
+// { signedUrl, company, link, foundKey }
+// Works with both flat keys ("videos/a__b.mp4") and
+// accidental nested keys ("videos/a__b.mp4/a__b.mp4").
 
-    make_safe () { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[@.]/_/g'; }
+export const onRequestGet = async ({ request, env }) => {
+  try {
+    const url = new URL(request.url);
+    const id = url.searchParams.get("id"); // safe email: lowercased, @/. -> _
+    if (!id) {
+      return new Response("Missing id", { status: 400 });
+    }
 
-    files=(uploads/*)
-    if [ ${#files[@]} -eq 0 ]; then
-      echo "No files in uploads/ — nothing to do."
-      exit 0
-    fi
+    // Build a public link (for debugging/comfort)
+    const base = (env.PUBLIC_BASE && env.PUBLIC_BASE.trim()) || url.origin;
+    const link = `${base.replace(/\/$/, "")}/p/?id=${encodeURIComponent(id)}`;
 
-    for f in "${files[@]}"; do
-      [ -f "$f" ] || continue
-      base=$(basename "$f")                         # e.g. jane@acme.com__tour.mp4
-      email="${base%%__*}"                          # e.g. jane@acme.com
-      rest="${base#*__}"                            # e.g. tour.mp4
-      safe=$(make_safe "$email")                    # e.g. jane_acme_com
-      SAFE_UPPER=$(echo "$safe" | tr '[:lower:]' '[:upper:]')
+    // ---- Load pointer ----
+    const pointerKey = `pointers/${id}.json`;
+    const pointerObj = await env.R2_BUCKET.get(pointerKey);
+    if (!pointerObj) {
+      return json({ signedUrl: null, company: null, link, error: "POINTER_NOT_FOUND" }, 404);
+    }
 
-      # Skip junk
-      case "$base" in
-        .DS_Store|*.tmp|*.part) echo "Skipping $base"; continue;;
-      esac
+    const pointer = await pointerObj.json();
+    let realKey = (pointer && pointer.key) || "";
+    if (!realKey) {
+      return json({ signedUrl: null, company: pointer.company || null, link, error: "EMPTY_KEY" }, 404);
+    }
 
-      vid_key="videos/${safe}__${rest}"             # videos/jane_acme_com__tour.mp4
-      echo "Uploading VIDEO -> r2:${R2_BUCKET}/${vid_key}"
-      rclone copyto "$f" "r2:${R2_BUCKET}/${vid_key}" -vv
+    // ---- Resolve the actual object path ----
+    // 1) Try the flat key as-is
+    let head = await env.R2_BUCKET.head(realKey);
 
-      # (optional) derive company …
-      company=""
-      if [ -n "${{ secrets.TRELLO_KEY }}" ] && [ -n "${{ secrets.TRELLO_TOKEN }}" ]; then
-        if [ -n "${{ secrets.TRELLO_LIST_ID }}" ]; then
-          curl -s "https://api.trello.com/1/lists/${{ secrets.TRELLO_LIST_ID }}/cards?fields=name,desc&key=${{ secrets.TRELLO_KEY }}&token=${{ secrets.TRELLO_TOKEN }}" > cards.json
-        elif [ -n "${{ secrets.TRELLO_BOARD_ID }}" ]; then
-          curl -s "https://api.trello.com/1/boards/${{ secrets.TRELLO_BOARD_ID }}/cards?fields=name,desc&key=${{ secrets.TRELLO_KEY }}&token=${{ secrets.TRELLO_TOKEN }}" > cards.json
-        fi
-        if [ -s cards.json ]; then
-          card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
-          if [ -n "$card" ]; then
-            desc=$(echo "$card" | jq -r '.desc')
-            company=$(printf "%s\n" "$desc" | grep -i '^company:' | head -n 1 | sed 's/^company:[[:space:]]*//I')
-          fi
-        fi
-      fi
-      if [ -z "$company" ]; then
-        domain=${email#*@}; company=$(echo "${domain%%.*}" | sed -E 's/[-_]/ /g; s/.*/\u&/')
-      fi
+    // 2) If not found, try the "nested" mistake: "<key>/<filename>"
+    if (!head) {
+      const baseKey = realKey.replace(/\/+$/, "");
+      const filename = baseKey.split("/").pop();
+      const nestedKey = `${baseKey}/${filename}`;
+      const headNested = await env.R2_BUCKET.head(nestedKey);
+      if (headNested) {
+        realKey = nestedKey;
+        head = headNested;
+      }
+    }
 
-      # ---- WRITE & UPLOAD POINTER JSON (this is the critical part) ----
-      ptr_key="pointers/${safe}.json"
-      printf '{"key":"%s","company":"%s"}\n' "$vid_key" "$company" > pointer.json
-      echo "Uploading POINTER -> r2:${R2_BUCKET}/${ptr_key}"
-      rclone copyto pointer.json "r2:${R2_BUCKET}/${ptr_key}" -vv
+    // 3) Last resort: list the prefix
+    if (!head) {
+      const list = await env.R2_BUCKET.list({
+        prefix: realKey.endsWith("/") ? realKey : realKey + "/",
+        limit: 1
+      });
+      if (list && list.objects && list.objects.length) {
+        realKey = list.objects[0].key;
+      } else {
+        return json({ signedUrl: null, company: pointer.company || null, link, error: "OBJECT_NOT_FOUND", wantedKey: realKey }, 404);
+      }
+    }
 
-      # Export for reference (optional)
-      echo "RECIPIENT_EMAIL_${SAFE_UPPER}=${email}" >> $GITHUB_ENV
-      echo "COMPANY_${SAFE_UPPER}=${company}"       >> $GITHUB_ENV
-      echo "LANDING_URL_${SAFE_UPPER}=${PUBLIC_BASE}/p/?id=${safe}" >> $GITHUB_ENV
+    // ---- Create a 24h signed URL ----
+    const signedUrl = await env.R2_BUCKET.createSignedUrl(realKey, {
+      method: "GET",
+      expiry: 24 * 60 * 60
+    });
 
-      echo "::notice title=Prepared::Email to ${email} — link ${PUBLIC_BASE}/p/?id=${safe}"
-    done
+    return json({ signedUrl, company: pointer.company || null, link, foundKey: realKey });
+  } catch (err) {
+    return new Response("Server error", { status: 500 });
+  }
+};
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+  });
+}
