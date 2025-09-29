@@ -16,16 +16,22 @@
     .logo{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#4f46e5,#06b6d4)}
     .title{font-weight:700;letter-spacing:.2px}
     .hero{padding:18px;border:1px solid #22262d;background:var(--card);border-radius:14px}
-    .meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 14px}
-    .chip{padding:4px 10px;border:1px solid #2b313a;border-radius:999px;color:var(--muted);font-size:13px}
-    video{
+
+    /* Video wrapper + defaults */
+    .vwrap{display:flex;justify-content:center;align-items:center}
+    .vwrap video{
       width:100%;
-      height:auto;           /* keeps vertical videos tall */
+      height:auto;          /* keeps vertical videos tall */
       background:#0e1013;
       border-radius:10px;
       outline:none;
-      object-fit:contain;    /* letterbox if needed */
+      object-fit:contain;   /* letterbox if needed */
     }
+    /* Portrait-only cap so tall videos don’t look huge */
+    .vwrap.portrait video{
+      max-width:min(480px, 85vh);  /* tweak to taste */
+    }
+
     .actions{margin-top:12px;display:flex;gap:10px}
     .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600}
     .btn:hover{opacity:.9}
@@ -45,7 +51,9 @@
     </header>
 
     <section class="hero">
-      <video id="vid" controls playsinline preload="metadata"></video>
+      <div id="vwrap" class="vwrap">
+        <video id="vid" controls playsinline preload="metadata"></video>
+      </div>
       <div class="actions">
         <a id="dl" class="btn hide" href="#" download>Download</a>
       </div>
@@ -64,6 +72,7 @@
     const status = document.getElementById('status');
     const video  = document.getElementById('vid');
     const dl     = document.getElementById('dl');
+    const vwrap  = document.getElementById('vwrap');
     document.getElementById('year').textContent = new Date().getFullYear();
 
     function show(msg, isErr=false){
@@ -76,8 +85,7 @@
 
     fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
-      // IMPORTANT: include foundKey so the Download button works
-      .then(({ streamUrl, company, foundKey, error }) => {
+      .then(({ streamUrl, foundKey, error }) => {
         if (!streamUrl) {
           show(
             error && /POINTER|OBJECT|EMPTY/.test(error)
@@ -92,7 +100,15 @@
         video.src = streamUrl;
         video.load();
 
-        // Wire the Download button with the actual object key
+        // Portrait detection once metadata is available
+        video.addEventListener('loadedmetadata', () => {
+          const w = video.videoWidth || 0;
+          const h = video.videoHeight || 0;
+          const isPortrait = w > 0 && h > 0 && h > w;
+          vwrap.classList.toggle('portrait', !!isPortrait);
+        }, { once: true });
+
+        // Download button wiring
         if (foundKey) {
           dl.href = `/api/stream?key=${encodeURIComponent(foundKey)}&download=1`;
           dl.setAttribute('download', foundKey.split('/').pop() || 'video.mp4');
@@ -101,7 +117,7 @@
           dl.classList.add('hide');
         }
 
-        // Optional: fail handler for the video element
+        // Handle media load errors gracefully
         video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
 
         show('');
