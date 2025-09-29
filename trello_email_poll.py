@@ -57,6 +57,8 @@ BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n
 SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
 BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
 
+_dbg(f"TPL lens — subjA:{len(SUBJECT_A)} bodyA:{len(BODY_A)} subjB:{len(SUBJECT_B)} bodyB:{len(BODY_B)}")
+
 # HTML styling + signature logo
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
@@ -74,6 +76,10 @@ INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")     # don't add naked
 # Diagnostics / test
 DEBUG   = _env_bool("DEBUG", "0")
 TEST_TO = (_get_env("TEST_TO") or "").strip()
+
+def _dbg(msg: str):
+    if DEBUG:
+        print(f"[DEBUG] {msg}")
 
 # Poll behavior / gating
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
@@ -394,6 +400,11 @@ def main():
 
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
         body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
+
+        which = "B" if use_b else "A"
+            _dbg(f"Card '{title}': using template {which}; first='{first}'")
+            _dbg(f"Subject preview: {subject[:80]!r}")
+            _dbg(f"Body preview: {body[:120]!r}")
 
         # Send the email
         try:
