@@ -90,8 +90,8 @@ jobs:
             printf '{"key":"%s","company":"%s"}\n' "$vid_key" "$company" > pointer.json
             ptr_key="pointers/${safe}.json"
             echo "Writing pointer r2:${R2_BUCKET}/${ptr_key}"
-            rclone copyto pointer.json r2:${R2_BUCKET}/${ptr_key} -vv
-
+            rclone copyto "$f" "r2:${R2_BUCKET}/${vid_key}" -vv
+            
             # Export env vars for your existing email step
             echo "RECIPIENT_EMAIL_${SAFE_UPPER}=${email}" >> $GITHUB_ENV
             echo "COMPANY_${SAFE_UPPER}=${company}"       >> $GITHUB_ENV
