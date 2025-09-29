@@ -6,6 +6,38 @@ on:
       - 'uploads/**'
   workflow_dispatch:
 
+name: R2 diag
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone
+      - name: Configure rclone for R2
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret_access_key = ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          endpoint = ${{ secrets.R2_ENDPOINT }}
+          EOF
+      - name: Write a test file and upload it
+        run: |
+          echo "hello from CI at $(date -u)" > diag.txt
+          rclone copyto diag.txt r2:${{ secrets.R2_BUCKET }}/diag.txt -vv
+      - name: List bucket contents
+        run: |
+          echo "Listing top level:"
+          rclone ls r2:${{ secrets.R2_BUCKET }} || true
+          
 jobs:
   prep-and-send:
     runs-on: ubuntu-latest
