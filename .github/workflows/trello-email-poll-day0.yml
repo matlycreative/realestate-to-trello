@@ -47,6 +47,7 @@ jobs:
       # (LINK_URL is no longer required with Option A)
       LINK_TEXT:  ${{ secrets.LINK_TEXT }}
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
+      LINK_URL:   ${{ secrets.LINK_URL }}
 
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
