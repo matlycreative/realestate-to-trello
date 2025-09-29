@@ -41,12 +41,12 @@ jobs:
       FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      LINK_URL:         ${{ secrets.LINK_URL }}
-      LINK_TEXT:        ${{ secrets.LINK_TEXT }}
-      LINK_COLOR:       ${{ secrets.LINK_COLOR }}
-
-       # 🔑 Base for per-prospect links (Option A)
+      # <<< Option A: base URL for building personalized link >>>
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
+
+      # (LINK_URL is no longer required with Option A)
+      LINK_TEXT:  ${{ secrets.LINK_TEXT }}
+      LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
@@ -59,8 +59,7 @@ jobs:
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
       SIGNATURE_INLINE: "0"         # "1" to embed (CID), "0" to link
       SIGNATURE_MAX_W_PX: "200"
-      SIGNATURE_ADD_NAME: "0"                 # turn OFF the “– Name” line
-      # SIGNATURE_CUSTOM_TEXT: ${{ secrets.SIGNATURE_CUSTOM_TEXT }}   # (optional) custom line if you set ADD_NAME to 1
+      SIGNATURE_ADD_NAME: "0"
 
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
@@ -79,9 +78,7 @@ jobs:
       - name: Install deps (if any)
         run: |
           python -m pip install --upgrade pip
-          # requests is required by this script; install it explicitly
           python -m pip install requests
-          # If you have a requirements.txt, install that too
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run sender
