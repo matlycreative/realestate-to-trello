@@ -70,27 +70,21 @@
 
     fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
       .then(r => r.json().catch(() => ({})))
-      .then(({ signedUrl, company, error }) => {
-        if (company) {
-          chip.textContent = company;
-          chip.classList.remove('hide');
-        } else {
-          chip.classList.add('hide');
-        }
+      .then(({ streamUrl, company, error }) => {
+    if (company) { chip.textContent = company; chip.classList.remove('hide'); }
+    else { chip.classList.add('hide'); }
 
-        if (error) {
-          if (error === 'POINTER_NOT_FOUND' || error === 'OBJECT_NOT_FOUND' || error === 'EMPTY_KEY') {
-            show('Your sample is not ready yet. Try again in a minute.', true);
-          } else {
-            show('Server error. Please refresh this page.', true);
-          }
-          return;
-        }
+    if (error || !streamUrl) {
+    show(error && (error === 'POINTER_NOT_FOUND' || error === 'OBJECT_NOT_FOUND' || error === 'EMPTY_KEY')
+         ? 'Your sample is not ready yet. Try again in a minute.'
+         : 'Server error. Please refresh this page.', true);
+    return;
+  }
 
-        if (!signedUrl) {
-          show('Your sample is not ready yet. Try again in a minute.', true);
-          return;
-        }
+  video.src = streamUrl;
+  video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
+  show('');
+})
 
         meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>` +
                          (company ? ` <span class="chip">Company: <strong>${company}</strong></span>` : '');
