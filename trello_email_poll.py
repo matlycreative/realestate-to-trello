@@ -63,12 +63,13 @@ SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
-# Friendly link toggles
-def _env_bool(name: str, default: str = "0")
-    return (os.getenv(name, default) or "").strip().lower() in ("1","true","yes","on")
-    
-APPEND_FRIENDY_LINK = _env_bool("APPEND_FRIENDLY_LINK", "0")
-INCLUDE_PLAIN_URL   = _env_bool("INCLUDE_PLAIN", "0")
+# --- Link rendering toggles (module-level) ---
+def _env_bool(name: str, default: str = "0") -> bool:
+    val = os.getenv(name, default)
+    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+
+APPEND_FRIENDLY_LINK = _env_bool("APPEND_FRIENDLY_LINK", "0")  # don't append extra link at bottom
+INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")     # don't add naked URL to plain-text
 
 # Poll behavior / gating
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
@@ -77,7 +78,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))  # 0 = unlimit
 
 # Link pieces
 PUBLIC_BASE = _get_env("PUBLIC_BASE")  # e.g., https://matlycreative.pages.dev
-LINK_TEXT   = _get_env("LINK_TEXT", default="View your tailored sample")
+LINK_TEXT   = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR  = _get_env("LINK_COLOR", default="")  # optional CSS color
 
 # HTTP session
@@ -119,7 +120,7 @@ def _trello_call(method, url_path, **params):
                 raise RuntimeError(f"Trello {r.status_code}")
             r.raise_for_status()
             return r.json()
-        except Exception as e:
+        except Exception:
             if attempt == 2:
                 raise
             time.sleep(1.5 * (attempt + 1))
@@ -224,8 +225,8 @@ def _autolink_html(escaped_html: str) -> str:
     return _URL_RE.sub(_wrap, escaped_html)
 
 def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
-    import smtplib
     from email.message import EmailMessage
+    import smtplib
 
     # Build HTML from plain text first
     html_core = text_to_html(body_text)
@@ -337,8 +338,6 @@ def main():
             continue
 
         desc = c.get("desc") or ""
-        # Parse header block
-        TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
