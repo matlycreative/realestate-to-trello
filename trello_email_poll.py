@@ -224,37 +224,39 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     import smtplib
     from email.message import EmailMessage
 
+    # Build HTML from plain text first
     html_core = text_to_html(body_text)
+
+    # Normalize/link pieces
+    if link_url and not re.match(r"^https?://", link_url, flags=re.I):
+        link_url = "https://" + link_url
+    esc_u = html.escape(link_url, quote=True) if link_url else ""
+    friendly = html.escape(link_text or link_url or "")
+    style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
+    anchor_html = f'<a{style_attr} href="{esc_u}">{friendly}</a>' if link_url else ""
+
+    # 1) Autolink any bare URLs first
     html_core = _autolink_html(html_core)
 
-    if link_color:
-        html_core = html_core.replace(
-            '<a href="',
-            f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
-        )
-
+    # 2) Force-convert any visible raw URL to a friendly anchor
     if link_url:
-        if not re.match(r"^https?://", link_url, flags=re.I):
-            link_url = "https://" + link_url
-        esc_u = html.escape(link_url, quote=True)
-        styled_prefix = (
-            f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
-            if link_color else
-            '<a href="'
-        )
-        friendly = html.escape(link_text or link_url)
-        # if already linked, rename its text
-        html_core = html_core.replace(
-            f'{styled_prefix}{esc_u}">{esc_u}</a>',
-            f'{styled_prefix}{esc_u}">{friendly}</a>'
-        )
-        # ensure it appears at least once
-        if f'href="{esc_u}"' not in html_core:
-            style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
-            html_core += f'<p><a{style_attr} href="{esc_u}">{friendly}</a></p>'
-        if link_url not in body_text:
-            body_text = (body_text.rstrip() + "\n\n" + link_url).strip()
+        # If an existing anchor shows the URL as its text, replace its inner text
+        html_core = html_core.replace(f'>{esc_u}<', f'>{friendly}<')
+        # Replace any remaining plain occurrences of the URL with the friendly anchor
+        html_core = html_core.replace(esc_u, anchor_html)
 
+        # Do we already have an anchor with that href?
+        has_anchor = (f'href="{esc_u}"' in html_core)
+
+        # 3) Only append a friendly anchor if explicitly allowed and none exists
+        if APPEND_FRIENDLY_LINK and not has_anchor:
+            html_core += f'<p>{anchor_html}</p>'
+
+    # 4) Plain-text part: include the naked URL only if enabled
+    if INCLUDE_PLAIN_URL and link_url and link_url not in body_text:
+        body_text = (body_text.rstrip() + "\n\n" + link_url).strip()
+
+    # Signature + message assembly
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -262,9 +264,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_text)
-    msg.add_alternative(html_full, subtype="html")
+    msg.set_content(body_text)                      # plain text fallback
+    msg.add_alternative(html_full, subtype="html")  # HTML
 
+    # Optional inline logo
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -278,9 +281,9 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         except Exception as e:
             print(f"Inline logo fetch failed, sending without embed: {e}")
 
+    # SMTP send with retry
     for attempt in range(3):
         try:
-            import smtplib
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
                 if SMTP_USE_TLS:
                     s.starttls()
