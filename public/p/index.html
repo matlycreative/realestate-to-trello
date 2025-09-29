@@ -68,7 +68,6 @@
         return;
       }
 
-      // Hit the API to get a fresh signed URL + company (if available)
       fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
         .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
         .then(({ signedUrl, company }) => {
@@ -84,13 +83,12 @@
             return;
           }
 
-          // Show some meta info
           meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>
                             ${company ? `<span class="chip">Company: <strong>${company}</strong></span>` : ''}`;
 
           video.src = signedUrl;
           video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.' , true), { once:true });
-          show(''); // clear
+          show('');
         })
         .catch(() => show('Server error. Please refresh this page.', true));
     })();
