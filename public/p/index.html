@@ -18,7 +18,14 @@
     .hero{padding:18px;border:1px solid #22262d;background:var(--card);border-radius:14px}
     .meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 14px}
     .chip{padding:4px 10px;border:1px solid #2b313a;border-radius:999px;color:var(--muted);font-size:13px}
-    video{width:100%;aspect-ratio:16/9;background:#0e1013;border-radius:10px;outline:none}
+    video{
+      width:100%;
+      height:auto;            /* use the video’s intrinsic height */
+      background:#0e1013;
+      border-radius:10px;
+      outline:none;
+      object-fit:contain;     /* letterbox if container is wider */
+  }
     .msg{padding:14px;border:1px dashed #333842;background:#111318;border-radius:12px;color:var(--muted);margin-top:14px}
     .error{border-color:#6b1f1f;background:#1a1111;color:#ffdbdb}
     footer{margin-top:26px;color:var(--muted);font-size:13px}
