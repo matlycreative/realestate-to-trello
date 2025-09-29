@@ -1,15 +1,5 @@
+cat > /Users/matthieu/matly-tools/upload_watch.py << 'PY'
 #!/usr/bin/env python3
-"""
-Drag files into DROP_DIR and they are:
-  - uploaded to R2 as videos/<safe>__<rest>
-  - pointer JSON written to pointers/<safe>.json (created in /tmp then uploaded)
-
-Requires: pip install watchdog
-          rclone configured with a remote named 'r2'
-Env:
-  R2_BUCKET       (e.g. 'samples')
-  PUBLIC_BASE     (e.g. 'https://matlycreative.pages.dev') only for notices
-"""
 import os, time, json, subprocess, sys, shutil, tempfile
 from pathlib import Path
 from watchdog.observers import Observer
@@ -26,7 +16,7 @@ def safe_id(email:str)->str:
     return email.lower().replace("@","_").replace(".","_")
 
 def run(cmd):
-    print(">", " ".join(cmd))
+    print(">", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
 
 def done_writing(p:Path)->bool:
@@ -42,20 +32,18 @@ def derive_company(email:str)->str:
 
 def process_file(f:Path):
     if not done_writing(f):
-        print("Waiting for file to finish writing…"); time.sleep(1.2)
-    base = f.name                               # jane@acme.com__tour.mp4
+        print("Waiting for file to finish writing…", flush=True); time.sleep(1.2)
+    base = f.name
     if "__" not in base:
-        print(f"Skip {base}: expected 'email__something.ext'"); return
+        print(f"Skip {base}: expected 'email__something.ext'", flush=True); return
 
     email = base.split("__",1)[0]
     rest  = base.split("__",1)[1]
-    s     = safe_id(email)                       # jane_acme_com
-    vid_key = f"videos/{s}__{rest}"              # videos/jane_acme_com__tour.mp4
+    s     = safe_id(email)
+    vid_key = f"videos/{s}__{rest}"
 
-    # Upload video (flat key; copyto = file, not dir)
     run([RCLONE_BIN, "copyto", str(f), f"r2:{R2_BUCKET}/{vid_key}", "-vv"])
 
-    # Pointer JSON -> write to system temp dir (NOT in watched folder)
     company = derive_company(email)
     pointer = {"key": vid_key, "company": company}
     tmp_path = Path(tempfile.gettempdir()) / f"{s}.pointer.json"
@@ -66,25 +54,25 @@ def process_file(f:Path):
         try: tmp_path.unlink()
         except Exception: pass
 
-    print(f"Uploaded → r2:{R2_BUCKET}/{vid_key}")
-    print(f"Pointer  → r2:{R2_BUCKET}/pointers/{s}.json")
-    print(f"Landing  → {PUBLIC_BASE}/p/?id={s}")
+    print(f"Uploaded → r2:{R2_BUCKET}/{vid_key}", flush=True)
+    print(f"Pointer  → r2:{R2_BUCKET}/pointers/{s}.json", flush=True)
+    print(f"Landing  → {PUBLIC_BASE}/p/?id={s}", flush=True)
 
 class Handler(FileSystemEventHandler):
-    # Only react to NEW files; ignore modifications (prevents loops)
+    # IMPORTANT: only handle brand-new files
     def on_created(self, e): self._maybe(Path(e.src_path))
-
     def _maybe(self, p:Path):
-        # Ignore hidden/temp/json files
-        if p.name.startswith("."): return
-        if p.suffix.lower() in {".json", ".tmp", ".part"}: return
-        if p.suffix.lower() not in VIDEO_EXTS: return
-        if "__" not in p.name: return
+        name = p.name
+        if name.startswith("."): return
+        ext = p.suffix.lower()
+        if ext in {".json", ".tmp", ".part"}: return
+        if ext not in VIDEO_EXTS: return
+        if "__" not in name: return
         process_file(p)
 
 def main():
-    print(f"[watching] {DROP_DIR}")
-    print(f"[rclone]   {RCLONE_BIN}")
+    print(f"[watching] {DROP_DIR}", flush=True)
+    print(f"[rclone]   {RCLONE_BIN}", flush=True)
     DROP_DIR.mkdir(parents=True, exist_ok=True)
     obs = Observer()
     obs.schedule(Handler(), str(DROP_DIR), recursive=False)
@@ -98,6 +86,9 @@ if __name__ == "__main__":
     try:
         import watchdog  # noqa
     except Exception:
-        print("Install watchdog:  pip install watchdog")
+        print("Install watchdog:  pip install watchdog", flush=True)
         sys.exit(1)
     main()
+PY
+
+chmod +x /Users/matthieu/matly-tools/upload_watch.py
