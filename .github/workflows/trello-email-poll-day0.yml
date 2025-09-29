@@ -45,6 +45,9 @@ jobs:
       LINK_TEXT:        ${{ secrets.LINK_TEXT }}
       LINK_COLOR:       ${{ secrets.LINK_COLOR }}
 
+       # 🔑 Base for per-prospect links (Option A)
+      PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
+
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A: ${{ secrets.BODY_A }}
