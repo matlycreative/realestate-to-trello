@@ -63,6 +63,13 @@ SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
+# Friendly link toggles
+def _env_bool(name: str, default: str = "0")
+    return (os.getenv(name, default) or "").strip().lower() in ("1","true","yes","on")
+    
+APPEND_FRIENDY_LINK = _env_bool("APPEND_FRIENDLY_LINK", "0")
+INCLUDE_PLAIN_URL   = _env_bool("INCLUDE_PLAIN", "0")
+
 # Poll behavior / gating
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
@@ -82,10 +89,6 @@ SESS.headers.update({"User-Agent": UA})
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-
-# Friendly link toggles
-APPEND_FRIENDY_LINK = os.getenv("APPEND_FRIENDLY_LINK", "0").strip().lower() in ("1","true","yes","on")
-INCLUDE_PLAIN_URL   = os.getenv("INCLUDE_PLAIN_URL", "0").strip().lower() in ("1","true","yes","on")
 
 # --------------- Helpers ----------------
 def require_env():
