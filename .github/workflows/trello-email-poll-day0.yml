@@ -1,10 +1,13 @@
 name: Trello Day-0 Email (poll every 5 min)
 
 on:
-  workflow_dispatch:        # lets you run it manually from Actions
+  workflow_dispatch:
+  # If you really want every 5 minutes, use the cron below. Otherwise keep your own.
+  # schedule:
+  #   - cron: "*/5 * * * *"
   schedule:
-    - cron: "0 13 * * *"    # 13:00 UTC every day
-    - cron: "0 22 * * *"    # 22:00 UTC every day
+    - cron: "0 13 * * *"
+    - cron: "0 22 * * *"
 
 permissions:
   contents: read
@@ -22,55 +25,53 @@ jobs:
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
-      # SMTP (map any of these secret names; first non-empty wins)
-      # Username
+      # SMTP (first non-empty wins)
       SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
         || secrets.SMTP_USERNAME != '' && secrets.SMTP_USERNAME
         || secrets.smtp_user != '' && secrets.smtp_user
         || secrets.smtp_username != '' && secrets.smtp_username
         || secrets.FROM_EMAIL }}
-      # Password
       SMTP_PASS: ${{ secrets.SMTP_PASS != '' && secrets.SMTP_PASS
         || secrets.smtp_pass != '' && secrets.smtp_pass
         || secrets.SMTP_PASSWORD != '' && secrets.SMTP_PASSWORD
         || secrets.smtp_password }}
 
-      # Optional overrides (your Python has sane defaults)
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # <<< Option A: base URL for building personalized link >>>
+      # Build personalized link from this base + the prospect’s email
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
 
-      # (LINK_URL is no longer required with Option A)
-      LINK_TEXT:  "My portfolio"
-      LINK_COLOR: ${{ secrets.LINK_COLOR }}
-      LINK_URL:   ${{ secrets.LINK_URL }}
+      # Friendly link appearance in the email HTML
+      LINK_TEXT: "My portfolio"
+      # Choose ONE of these (remove the other):
+      # LINK_COLOR: "#3b82f6"                 # hardcode a color
+      LINK_COLOR: ${{ secrets.LINK_COLOR }}    # or manage via secret
+
+      # Do NOT set LINK_URL anymore (Option A builds it automatically)
 
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
-      BODY_A: ${{ secrets.BODY_A }}
+      BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
-      BODY_B: ${{ secrets.BODY_B }}
+      BODY_B:    ${{ secrets.BODY_B }}
 
       # Font + signature
       EMAIL_FONT_PX: "16"
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
-      SIGNATURE_INLINE: "0"         # "1" to embed (CID), "0" to link
+      SIGNATURE_INLINE: "0"
       SIGNATURE_MAX_W_PX: "200"
       SIGNATURE_ADD_NAME: "0"
+
+      # Behavior toggles for link rendering
+      APPEND_FRIENDLY_LINK: "0"   # don't add a second link at the bottom
+      INCLUDE_PLAIN_URL:    "0"   # don't append the naked URL to the text part
 
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/sent_day0.json"
-
-      LINK_TEXT: "My portfolio"
-      APPEND_FRIENDLY_LINK: "0"
-      INCLUDE_PLAIN_URL: "0"
-      # optional:
-      LINK_COLOR: "#3b82f6"
 
     steps:
       - uses: actions/checkout@v4
