@@ -1,18 +1,22 @@
 // /functions/api/sample.js
-// Reads a pointer JSON from R2 at `pointers/<id>.json` and returns a 24h signed URL
+// Reads pointer JSON from R2 at `pointers/<id>.json`, returns 24h signed URL + company + link
 // Example page link: https://<your-project>.pages.dev/p/?id=jane_acme_com
 
 export const onRequestGet = async ({ request, env }) => {
   try {
     const url = new URL(request.url);
-    const id = url.searchParams.get("id"); // was "slug"
+    const id = url.searchParams.get("id"); // safe email: lowercased, @/. -> _
     if (!id) {
       return new Response("Missing id", { status: 400 });
     }
 
+    // Build a public link for convenience (base from env, else current origin)
+    const base = (env.PUBLIC_BASE && env.PUBLIC_BASE.trim()) || `${url.origin}`;
+    const link = `${base.replace(/\/$/, "")}/p/?id=${encodeURIComponent(id)}`;
+
     // Pointer JSON created by your GitHub Action:
     // {
-    //   "key": "samples/videos/jane_acme_com__tour.mp4",
+    //   "key": "videos/jane_acme_com__tour.mp4",
     //   "company": "Acme Homes"
     // }
     const pointerKey = `pointers/${id}.json`;
@@ -20,7 +24,7 @@ export const onRequestGet = async ({ request, env }) => {
 
     if (!pointerObj) {
       return new Response(
-        JSON.stringify({ signedUrl: null, company: null }),
+        JSON.stringify({ signedUrl: null, company: null, link }),
         { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
       );
     }
@@ -29,7 +33,7 @@ export const onRequestGet = async ({ request, env }) => {
     const realKey = pointer.key;
     if (!realKey) {
       return new Response(
-        JSON.stringify({ signedUrl: null, company: pointer.company || null }),
+        JSON.stringify({ signedUrl: null, company: pointer.company || null, link }),
         { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
       );
     }
@@ -41,7 +45,7 @@ export const onRequestGet = async ({ request, env }) => {
     });
 
     return new Response(
-      JSON.stringify({ signedUrl, company: pointer.company || null }),
+      JSON.stringify({ signedUrl, company: pointer.company || null, link }),
       { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
     );
   } catch (err) {
