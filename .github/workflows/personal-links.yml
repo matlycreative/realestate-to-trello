@@ -3,8 +3,8 @@ name: Prep personalized links (Trello, no CSV)
 on:
   push:
     paths:
-      - 'uploads/**'       # run when anything in uploads/ changes
-  workflow_dispatch:        # allows “Run workflow” button for manual test
+      - 'uploads/**'
+  workflow_dispatch:
 
 jobs:
   prep-and-send:
@@ -21,6 +21,8 @@ jobs:
           echo "list<<EOF" >> $GITHUB_OUTPUT
           git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^uploads/' || true >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          echo "Changed files:"
+          cat $GITHUB_OUTPUT || true
 
       - name: Install rclone + jq
         if: steps.files.outputs.list != ''
@@ -41,10 +43,9 @@ jobs:
           endpoint = ${{ secrets.R2_ENDPOINT }}
           EOF
 
-      # Optional: fetch Trello cards so we can grab company from the card desc
-      - name: Fetch Trello cards JSON (board or list)
-        if: steps.files.outputs.list != '' && (secrets.TRELLO_LIST_ID != '' || secrets.TRELLO_BOARD_ID != '')
-        id: trello
+      # NOTE: don't put secrets in the if: condition — let the script decide.
+      - name: Fetch Trello cards JSON (board or list, optional)
+        if: steps.files.outputs.list != ''
         env:
           KEY:   ${{ secrets.TRELLO_KEY }}
           TOKEN: ${{ secrets.TRELLO_TOKEN }}
@@ -57,7 +58,6 @@ jobs:
           elif [ -n "$BOARD" ]; then
             curl -s "https://api.trello.com/1/boards/$BOARD/cards?fields=name,desc&key=$KEY&token=$TOKEN" > cards.json
           else
-            echo "Skipping Trello fetch (no list/board id)."
             echo "[]" > cards.json
           fi
 
@@ -73,7 +73,7 @@ jobs:
 
           while read -r f; do
             [ -z "$f" ] && continue
-            base=$(basename "$f")                        # e.g. jane@acme.com__tour.mp4
+            base=$(basename "$f")                        # jane@acme.com__tour.mp4
             email="${base%%__*}"                         # jane@acme.com
             rest="${base#*__}"                           # tour.mp4
             safe=$(make_safe "$email")                   # jane_acme_com
@@ -83,7 +83,7 @@ jobs:
             echo "Uploading $f -> r2:${R2_BUCKET}/${vid_key}"
             rclone copy "$f" r2:${R2_BUCKET}/${vid_key}
 
-            # Find company in Trello card description (line like: company: Acme Homes)
+            # Optional company from Trello (desc line 'company: ...')
             company=""
             if [ -f cards.json ]; then
               card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
@@ -110,7 +110,7 @@ jobs:
             echo "::notice title=Prepared::Email to ${email} — link ${PUBLIC_BASE}/p/?id=${safe}"
           done <<< "${{ steps.files.outputs.list }}"
 
-      # OPTIONAL: quick list bucket to prove upload worked (keep while testing)
+      # Debug: prove objects exist in R2
       - name: List R2 bucket (debug)
         if: steps.files.outputs.list != ''
         run: |
@@ -118,5 +118,3 @@ jobs:
           rclone ls r2:${{ secrets.R2_BUCKET }}/videos || true
           echo "Listing r2:${{ secrets.R2_BUCKET }}/pointers"
           rclone ls r2:${{ secrets.R2_BUCKET }}/pointers || true
-
-      # Your existing email step should run AFTER this job/step and use the env vars above.
