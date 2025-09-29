@@ -1,11 +1,3 @@
-name: Prep personalized links (Trello, no CSV)
-
-on:
-  push:
-    paths:
-      - 'uploads/**'
-  workflow_dispatch:
-
 name: R2 diag
 on:
   workflow_dispatch:
