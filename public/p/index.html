@@ -26,6 +26,10 @@
       outline:none;
       object-fit:contain;     /* letterbox if container is wider */
   }
+    .actions{margin-top:12px;display:flex;gap:10px}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600}
+    .btn:hover{opacity:.9}
+    .hide{display:none}
     .msg{padding:14px;border:1px dashed #333842;background:#111318;border-radius:12px;color:var(--muted);margin-top:14px}
     .error{border-color:#6b1f1f;background:#1a1111;color:#ffdbdb}
     footer{margin-top:26px;color:var(--muted);font-size:13px}
@@ -47,6 +51,7 @@
       <div class="meta" id="meta"></div>
       <video id="vid" controls playsinline preload="metadata"></video>
       <div id="status" class="msg hide"></div>
+      <div class="actions"><a id="dl" class="btn hide" href="#" download>Download</a></div>
     </section>
 
     <footer>
