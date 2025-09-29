@@ -45,7 +45,7 @@ jobs:
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
 
       # (LINK_URL is no longer required with Option A)
-      LINK_TEXT:  ${{ secrets.LINK_TEXT }}
+      LINK_TEXT:  ${{ My portfolio }}
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
       LINK_URL:   ${{ secrets.LINK_URL }}
 
