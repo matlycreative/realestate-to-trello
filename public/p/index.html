@@ -78,10 +78,6 @@
       .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
       // IMPORTANT: include foundKey so the Download button works
       .then(({ streamUrl, company, foundKey, error }) => {
-        if (company) { chip.textContent = company; chip.classList.remove('hide'); }
-        meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>` +
-                         (company ? ` <span class="chip">Company: <strong>${company}</strong></span>` : '');
-
         if (!streamUrl) {
           show(
             error && /POINTER|OBJECT|EMPTY/.test(error)
