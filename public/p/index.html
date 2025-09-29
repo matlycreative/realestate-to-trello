@@ -47,39 +47,45 @@
     </footer>
   </div>
 
-  <script>
-  (function(){
-    const qs = new URLSearchParams(location.search);
-    const id = qs.get('id');
-    const status = document.getElementById('status');
-    const video  = document.getElementById('vid');
-    const chip   = document.getElementById('companyChip');
-    const meta   = document.getElementById('meta');
-    document.getElementById('year').textContent = new Date().getFullYear();
+<script>
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const id = qs.get('id');
+  const status = document.getElementById('status');
+  const video = document.getElementById('vid');
+  const chip  = document.getElementById('companyChip');
 
-    function show(msg, isErr=false){
-      status.textContent = msg;
-      status.classList.toggle('hide', !msg);
-      status.classList.toggle('error', isErr);
-    }
-
-    if(!id){
-      show('Missing link id. Please use the personalized link from your email.', true);
-      return;
-    }
-
-    fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
-      .then(r => r.json().catch(() => ({})))
-      .then(({ streamUrl, company, error }) => {
-    if (company) { chip.textContent = company; chip.classList.remove('hide'); }
-    else { chip.classList.add('hide'); }
-
-    if (error || !streamUrl) {
-    show(error && (error === 'POINTER_NOT_FOUND' || error === 'OBJECT_NOT_FOUND' || error === 'EMPTY_KEY')
-         ? 'Your sample is not ready yet. Try again in a minute.'
-         : 'Server error. Please refresh this page.', true);
-    return;
+  function show(msg, isErr=false){
+    if (!status) return;
+    status.textContent = msg;
+    status.classList.toggle('hide', !msg);
+    status.classList.toggle('error', isErr);
   }
+
+  if(!id){ show('Missing link id.', true); return; }
+
+  fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
+    .then(r => r.json())
+    .then(({ streamUrl, company, error }) => {
+      console.log('sample:', { streamUrl, company, error });
+      if (company) { chip.textContent = company; chip.classList.remove('hide'); }
+
+      if (!streamUrl) {
+        show(error && /POINTER|OBJECT|EMPTY/.test(error)
+          ? 'Your sample is not ready yet. Try again in a minute.'
+          : 'Server error. Please refresh.', true);
+        return;
+      }
+
+      video.src = streamUrl;
+      video.load();
+      // optional: try to autoplay muted
+      // video.muted = true; video.play().catch(()=>{});
+      show('');
+    })
+    .catch(() => show('Server error. Please refresh.', true));
+})();
+</script>
 
   video.src = streamUrl;
   video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
