@@ -3,35 +3,24 @@ name: Prep personalized links (Trello, no CSV)
 on:
   push:
     paths:
-      - 'uploads/**'
-  workflow_dispatch:
+      - "uploads/**"          # auto-run when you add/rename in uploads/
+  workflow_dispatch:          # also let you click “Run workflow”
 
 jobs:
   prep-and-send:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo (with LFS support just in case)
+      - name: Checkout repo (with LFS just in case)
         uses: actions/checkout@v4
         with:
           lfs: true
 
-      - name: Detect new uploads in this commit
-        id: files
-        run: |
-          echo "list<<EOF" >> $GITHUB_OUTPUT
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^uploads/' || true >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "Changed files:"
-          cat $GITHUB_OUTPUT || true
-
       - name: Install rclone + jq
-        if: steps.files.outputs.list != ''
         run: |
           sudo apt-get update
           sudo apt-get install -y rclone jq
 
       - name: Configure rclone for R2
-        if: steps.files.outputs.list != ''
         run: |
           mkdir -p ~/.config/rclone
           cat > ~/.config/rclone/rclone.conf <<EOF
@@ -43,64 +32,65 @@ jobs:
           endpoint = ${{ secrets.R2_ENDPOINT }}
           EOF
 
-      # NOTE: don't put secrets in the if: condition — let the script decide.
-      - name: Fetch Trello cards JSON (board or list, optional)
-        if: steps.files.outputs.list != ''
-        env:
-          KEY:   ${{ secrets.TRELLO_KEY }}
-          TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          BOARD: ${{ secrets.TRELLO_BOARD_ID }}
-          LIST:  ${{ secrets.TRELLO_LIST_ID }}
-        run: |
-          set -e
-          if [ -n "$LIST" ]; then
-            curl -s "https://api.trello.com/1/lists/$LIST/cards?fields=name,desc&key=$KEY&token=$TOKEN" > cards.json
-          elif [ -n "$BOARD" ]; then
-            curl -s "https://api.trello.com/1/boards/$BOARD/cards?fields=name,desc&key=$KEY&token=$TOKEN" > cards.json
-          else
-            echo "[]" > cards.json
-          fi
-
-      - name: Upload videos to R2, write pointer JSONs, and export email/link vars
-        if: steps.files.outputs.list != ''
+      - name: Upload videos in uploads/, write pointers, export email/link vars
         env:
           PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
           R2_BUCKET:   ${{ secrets.R2_BUCKET }}
         run: |
           set -e
+          shopt -s nullglob
 
           make_safe () { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[@.]/_/g'; }
 
-          while read -r f; do
-            [ -z "$f" ] && continue
-            base=$(basename "$f")                        # jane@acme.com__tour.mp4
-            email="${base%%__*}"                         # jane@acme.com
-            rest="${base#*__}"                           # tour.mp4
-            safe=$(make_safe "$email")                   # jane_acme_com
+          files=(uploads/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No files in uploads/ — nothing to do."
+            exit 0
+          fi
+
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")                         # e.g. jane@acme.com__tour.mp4
+            email="${base%%__*}"                          # e.g. jane@acme.com
+            rest="${base#*__}"                            # e.g. tour.mp4
+            safe=$(make_safe "$email")                    # e.g. jane_acme_com
             SAFE_UPPER=$(echo "$safe" | tr '[:lower:]' '[:upper:]')
 
-            vid_key="videos/${safe}__${rest}"            # videos/jane_acme_com__tour.mp4
-            echo "Uploading $f -> r2:${R2_BUCKET}/${vid_key}"
-            rclone copy "$f" r2:${R2_BUCKET}/${vid_key}
+            # Skip junk files (like .DS_Store)
+            case "$base" in
+              .DS_Store|*.tmp|*.part) echo "Skipping $base"; continue;;
+            esac
 
-            # Optional company from Trello (desc line 'company: ...')
+            vid_key="videos/${safe}__${rest}"             # videos/jane_acme_com__tour.mp4
+            echo "Uploading $f -> r2:${R2_BUCKET}/${vid_key}"
+            rclone copy "$f" r2:${R2_BUCKET}/${vid_key} -vv
+
+            # Optional: pull company from Trello (desc line 'company: ...')
             company=""
-            if [ -f cards.json ]; then
-              card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
-              if [ -n "$card" ]; then
-                desc=$(echo "$card" | jq -r '.desc')
-                company=$(printf "%s\n" "$desc" | grep -i '^company:' | head -n 1 | sed 's/^company:[[:space:]]*//I')
+            if [ -n "${{ secrets.TRELLO_KEY }}" ] && [ -n "${{ secrets.TRELLO_TOKEN }}" ]; then
+              if [ -n "${{ secrets.TRELLO_LIST_ID }}" ]; then
+                curl -s "https://api.trello.com/1/lists/${{ secrets.TRELLO_LIST_ID }}/cards?fields=name,desc&key=${{ secrets.TRELLO_KEY }}&token=${{ secrets.TRELLO_TOKEN }}" > cards.json
+              elif [ -n "${{ secrets.TRELLO_BOARD_ID }}" ]; then
+                curl -s "https://api.trello.com/1/boards/${{ secrets.TRELLO_BOARD_ID }}/cards?fields=name,desc&key=${{ secrets.TRELLO_KEY }}&token=${{ secrets.TRELLO_TOKEN }}" > cards.json
+              fi
+              if [ -s cards.json ]; then
+                card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
+                if [ -n "$card" ]; then
+                  desc=$(echo "$card" | jq -r '.desc')
+                  company=$(printf "%s\n" "$desc" | grep -i '^company:' | head -n 1 | sed 's/^company:[[:space:]]*//I')
+                fi
               fi
             fi
             if [ -z "$company" ]; then
-              domain=${email#*@}; company=$(echo "${domain%%.*}" | sed -E 's/[-_]/ /g; s/.*/\u&/')
+              domain=${email#*@}
+              company=$(echo "${domain%%.*}" | sed -E 's/[-_]/ /g; s/.*/\u&/')
             fi
 
-            # Write pointer JSON and upload
+            # Pointer JSON (NOTE: no extra 'samples/' prefix here)
             printf '{"key":"%s","company":"%s"}\n' "$vid_key" "$company" > pointer.json
             ptr_key="pointers/${safe}.json"
             echo "Writing pointer r2:${R2_BUCKET}/${ptr_key}"
-            rclone copyto pointer.json r2:${R2_BUCKET}/${ptr_key}
+            rclone copyto pointer.json r2:${R2_BUCKET}/${ptr_key} -vv
 
             # Export env vars for your existing email step
             echo "RECIPIENT_EMAIL_${SAFE_UPPER}=${email}" >> $GITHUB_ENV
@@ -108,13 +98,11 @@ jobs:
             echo "LANDING_URL_${SAFE_UPPER}=${PUBLIC_BASE}/p/?id=${safe}" >> $GITHUB_ENV
 
             echo "::notice title=Prepared::Email to ${email} — link ${PUBLIC_BASE}/p/?id=${safe}"
-          done <<< "${{ steps.files.outputs.list }}"
+          done
 
-      # Debug: prove objects exist in R2
-      - name: List R2 bucket (debug)
-        if: steps.files.outputs.list != ''
+      - name: List R2 paths (debug)
         run: |
-          echo "Listing r2:${{ secrets.R2_BUCKET }}/videos"
+          echo "videos/"
           rclone ls r2:${{ secrets.R2_BUCKET }}/videos || true
-          echo "Listing r2:${{ secrets.R2_BUCKET }}/pointers"
+          echo "pointers/"
           rclone ls r2:${{ secrets.R2_BUCKET }}/pointers || true
