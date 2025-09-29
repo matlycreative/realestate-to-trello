@@ -83,6 +83,10 @@ TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*:\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
+# Friendly link toggles
+APPEND_FRIENDY_LINK = os.getenv("APPEND_FRIENDLY_LINK", "0").strip().lower() in ("1","true","yes","on")
+INCLUDE_PLAIN_URL   = os.gentenv("INCLUDE_PLAIN_URL", "0".strip().lower() in ("1","true","yes","on")
+
 # --------------- Helpers ----------------
 def require_env():
     missing = []
