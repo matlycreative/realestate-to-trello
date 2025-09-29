@@ -68,11 +68,11 @@ jobs:
       # Behavior toggles for link rendering
       APPEND_FRIENDLY_LINK: "0"   # don't add a second link at the bottom
       INCLUDE_PLAIN_URL:    "0"   # don't append the naked URL to the text part
-
+      
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/sent_day0.json"
-
+      
     steps:
       - uses: actions/checkout@v4
 
