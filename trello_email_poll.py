@@ -23,6 +23,10 @@ def _get_env(*names, default=""):
             return v.strip()
     return default
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    val = os.getenv(name, default)
+    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+
 def _safe_id_from_email(email: str) -> str:
     """Lowercase and replace @ and . with _ to match how your site expects IDs."""
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -63,11 +67,7 @@ SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
-# --- Link rendering toggles (module-level) ---
-def _env_bool(name: str, default: str = "0") -> bool:
-    val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1", "true", "yes", "on")
-
+# Link behavior toggles
 APPEND_FRIENDLY_LINK = _env_bool("APPEND_FRIENDLY_LINK", "0")  # don't append extra link at bottom
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")     # don't add naked URL to plain-text
 
@@ -82,7 +82,7 @@ LINK_TEXT   = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR  = _get_env("LINK_COLOR", default="")  # optional CSS color
 
 # HTTP session
-UA = f"TrelloEmailer/1.3 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer/1.4 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -255,6 +255,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         # 3) Only append a friendly anchor if explicitly allowed and none exists
         if APPEND_FRIENDLY_LINK and not has_anchor:
             html_core += f'<p>{anchor_html}</p>'
+
+    # 3.5) Plain-text: replace the naked URL with friendly text (if we don't want naked URLs)
+    if link_url and not INCLUDE_PLAIN_URL:
+        body_text = body_text.replace(link_url, (link_text or "My portfolio"))
 
     # 4) Plain-text part: include the naked URL only if enabled
     if INCLUDE_PLAIN_URL and link_url and link_url not in body_text:
