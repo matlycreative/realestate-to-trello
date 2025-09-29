@@ -2,7 +2,6 @@ name: Trello Day-0 Email (poll every 5 min)
 
 on:
   workflow_dispatch:
-  # If you really want every 5 minutes, use the cron below. Otherwise keep your own.
   # schedule:
   #   - cron: "*/5 * * * *"
   schedule:
@@ -50,22 +49,13 @@ jobs:
       # LINK_COLOR: "#3b82f6"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates
-      SUBJECT_A: ${{ secrets.SUBJECT_A }}
-      BODY_A:    ${{ secrets.BODY_A }}
-      SUBJECT_B: ${{ secrets.SUBJECT_B }}
-      BODY_B:    ${{ secrets.BODY_B }}
-
-      # Font + signature
-      EMAIL_FONT_PX: "16"
-      SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
-      SIGNATURE_INLINE: "0"
-      SIGNATURE_MAX_W_PX: "200"
-      SIGNATURE_ADD_NAME: "0"
-
       # Behavior toggles for link rendering
       APPEND_FRIENDLY_LINK: "0"   # don't add a second link at the bottom
       INCLUDE_PLAIN_URL:    "0"   # don't append the naked URL to the text part
+
+      # Diagnostics / test (set TEST_TO to your address to send just one mail and exit)
+      DEBUG: "1"
+      TEST_TO: ""   # e.g., "you@example.com" to test SMTP without Trello
 
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
@@ -76,6 +66,10 @@ jobs:
 
       - name: Ensure data dir
         run: mkdir -p .data
+
+      # One-time helper: clear local cache so it doesn't block sends
+      - name: Reset local sent cache
+        run: rm -f .data/sent_day0.json || true
 
       - uses: actions/setup-python@v5
         with:
