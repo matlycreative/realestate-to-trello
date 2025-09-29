@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-import os, time, json, subprocess, sys, shutil, errno
+"""
+Drag files into DROP_DIR and they are:
+  - uploaded to R2 as videos/<safe>__<rest>
+  - pointer JSON written to pointers/<safe>.json (created in /tmp then uploaded)
+
+Requires: pip install watchdog
+          rclone configured with a remote named 'r2'
+Env:
+  R2_BUCKET       (e.g. 'samples')
+  PUBLIC_BASE     (e.g. 'https://matlycreative.pages.dev') only for notices
+"""
+import os, time, json, subprocess, sys, shutil, tempfile
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# ---- config / env ----
 DROP_DIR    = Path(os.getenv("DROP_DIR", str(Path.home() / "Drop Videos Here")))
 R2_BUCKET   = os.getenv("R2_BUCKET", "samples")
 PUBLIC_BASE = os.getenv("PUBLIC_BASE", "https://matlycreative.pages.dev")
+RCLONE_BIN  = os.getenv("RCLONE_BIN") or shutil.which("rclone") or "/opt/homebrew/bin/rclone"
 
-# absolute rclone for LaunchAgents
-RCLONE_BIN = os.getenv("RCLONE_BIN") or shutil.which("rclone") or "/opt/homebrew/bin/rclone"
-print(f"[watcher] using rclone at: {RCLONE_BIN}")
-
-# where to put files after successful upload (optional but recommended)
-UPLOADED_DIR = DROP_DIR / "Uploaded"
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".webm"}
 
 def safe_id(email:str)->str:
     return email.lower().replace("@","_").replace(".","_")
@@ -23,15 +29,10 @@ def run(cmd):
     print(">", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
-def done_writing(p:Path, wait=1.2)->bool:
-    if not p.exists() or not p.is_file(): 
-        return False
-    s1 = p.stat().st_size
-    time.sleep(wait)
-    if not p.exists() or not p.is_file():
-        return False
-    s2 = p.stat().st_size
-    return s1 == s2 and s1 > 0
+def done_writing(p:Path)->bool:
+    if not p.exists() or not p.is_file(): return False
+    s1 = p.stat().st_size; time.sleep(1.2); s2 = p.stat().st_size
+    return s1 == s2
 
 def derive_company(email:str)->str:
     if "@" not in email: return ""
@@ -39,107 +40,52 @@ def derive_company(email:str)->str:
     base = domain.split(".",1)[0].replace("-"," ").replace("_"," ")
     return base.capitalize()
 
-def r2_exists(key:str) -> bool:
-    try:
-        res = subprocess.run(
-            [RCLONE_BIN, "lsf", f"r2:{R2_BUCKET}/{key}"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        return res.returncode == 0 and res.stdout.strip() != b""
-    except Exception:
-        return False
-
-def take_lock(lock_name:str):
-    lock_path = f"/tmp/matly-watch.lock.{lock_name}"
-    try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.write(fd, str(os.getpid()).encode())
-        return fd, lock_path
-    except OSError as e:
-        if e.errno == errno.EEXIST:
-            return None, lock_path
-        raise
-
-def release_lock(fd, path):
-    try: os.close(fd)
-    except Exception: pass
-    try: os.unlink(path)
-    except Exception: pass
-
 def process_file(f:Path):
-    base = f.name
+    if not done_writing(f):
+        print("Waiting for file to finish writing…"); time.sleep(1.2)
+    base = f.name                               # jane@acme.com__tour.mp4
     if "__" not in base:
-        print(f"Skip {base}: expected 'email__something.ext'")
-        return
+        print(f"Skip {base}: expected 'email__something.ext'"); return
 
     email = base.split("__",1)[0]
     rest  = base.split("__",1)[1]
-    s     = safe_id(email)
+    s     = safe_id(email)                       # jane_acme_com
+    vid_key = f"videos/{s}__{rest}"              # videos/jane_acme_com__tour.mp4
 
-    lock_fd, lock_path = take_lock(s)
-    if not lock_fd:
-        print(f"Already processing {s} (lock {lock_path}), skipping.")
-        return
+    # Upload video (flat key; copyto = file, not dir)
+    run([RCLONE_BIN, "copyto", str(f), f"r2:{R2_BUCKET}/{vid_key}", "-vv"])
 
+    # Pointer JSON -> write to system temp dir (NOT in watched folder)
+    company = derive_company(email)
+    pointer = {"key": vid_key, "company": company}
+    tmp_path = Path(tempfile.gettempdir()) / f"{s}.pointer.json"
+    tmp_path.write_text(json.dumps(pointer), encoding="utf-8")
     try:
-        if not done_writing(f):
-            print("Waiting for file to finish writing…")
-            if not done_writing(f, wait=2.0):
-                print("Still writing; will try again on next event.")
-                return
-
-        vid_key = f"videos/{s}__{rest}"   # flat path
-        ptr_key = f"pointers/{s}.json"
-
-        # Skip if pointer already exists in R2 (prevents repeats)
-        if r2_exists(ptr_key):
-            print(f"Pointer already exists in R2 ({ptr_key}); skipping re-upload.")
-            try:
-                UPLOADED_DIR.mkdir(parents=True, exist_ok=True)
-                f.rename(UPLOADED_DIR / f.name)
-            except Exception as e:
-                print(f"Move to Uploaded/ failed (non-fatal): {e}")
-            return
-
-        # Upload video
-        run([RCLONE_BIN, "copyto", str(f), f"r2:{R2_BUCKET}/{vid_key}", "-vv"])
-
-        # Write pointer JSON to /tmp then upload
-        company = derive_company(email)
-        pointer = {"key": vid_key, "company": company}
-        tmp = Path("/tmp") / f"{s}.pointer.json"
-        tmp.write_text(json.dumps(pointer), encoding="utf-8")
-        run([RCLONE_BIN, "copyto", str(tmp), f"r2:{R2_BUCKET}/{ptr_key}", "-vv"])
-        try: tmp.unlink()
-        except FileNotFoundError: pass
-
-        print(f"Uploaded → r2:{R2_BUCKET}/{vid_key}")
-        print(f"Pointer  → r2:{R2_BUCKET}/{ptr_key}")
-        print(f"Landing  → {PUBLIC_BASE}/p/?id={s}")
-
-        # Move original file to Uploaded/
-        try:
-            UPLOADED_DIR.mkdir(parents=True, exist_ok=True)
-            f.rename(UPLOADED_DIR / f.name)
-        except Exception as e:
-            print(f"Move to Uploaded/ failed (non-fatal): {e}")
-
+        run([RCLONE_BIN, "copyto", str(tmp_path), f"r2:{R2_BUCKET}/pointers/{s}.json", "-vv"])
     finally:
-        release_lock(lock_fd, lock_path)
+        try: tmp_path.unlink()
+        except Exception: pass
 
-# Only react on created/moved (NOT modified)
+    print(f"Uploaded → r2:{R2_BUCKET}/{vid_key}")
+    print(f"Pointer  → r2:{R2_BUCKET}/pointers/{s}.json")
+    print(f"Landing  → {PUBLIC_BASE}/p/?id={s}")
+
 class Handler(FileSystemEventHandler):
+    # Only react to NEW files; ignore modifications (prevents loops)
     def on_created(self, e): self._maybe(Path(e.src_path))
-    def on_moved(self, e):   self._maybe(Path(e.dest_path))
+
     def _maybe(self, p:Path):
-        if p.is_file() and not p.name.startswith(".") and "__" in p.name:
-            if p.suffix.lower() in {".tmp", ".part"}:  # ignore temp
-                return
-            process_file(p)
+        # Ignore hidden/temp/json files
+        if p.name.startswith("."): return
+        if p.suffix.lower() in {".json", ".tmp", ".part"}: return
+        if p.suffix.lower() not in VIDEO_EXTS: return
+        if "__" not in p.name: return
+        process_file(p)
 
 def main():
-    DROP_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[watching] {DROP_DIR}")
+    print(f"[rclone]   {RCLONE_BIN}")
+    DROP_DIR.mkdir(parents=True, exist_ok=True)
     obs = Observer()
     obs.schedule(Handler(), str(DROP_DIR), recursive=False)
     obs.start()
