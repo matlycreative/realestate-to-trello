@@ -1,74 +1,96 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Personalized sample</title>
+  <meta charset="utf-8">
+  <title>Your tailored sample</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <style>
-    :root { color-scheme: light dark; }
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px;max-width:980px}
-    h1,h2{margin:0 0 12px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:8px}
-    .card{border:1px solid #ddd;border-radius:12px;padding:12px}
-    .muted{color:#666;font-size:14px}
-    .cta{display:inline-block;margin-top:12px;padding:10px 14px;border:1px solid #333;border-radius:10px;text-decoration:none}
-    video{width:100%;height:auto;border-radius:12px}
+    :root { --bg:#0b0b0c; --fg:#f5f7fb; --muted:#a7adbb; --card:#14161a; --accent:#3b82f6; }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+    a{color:var(--accent)}
+    .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 60px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#4f46e5,#06b6d4)}
+    .title{font-weight:700;letter-spacing:.2px}
+    .hero{padding:18px;border:1px solid #22262d;background:var(--card);border-radius:14px}
+    .meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 14px}
+    .chip{padding:4px 10px;border:1px solid #2b313a;border-radius:999px;color:var(--muted);font-size:13px}
+    video{width:100%;aspect-ratio:16/9;background:#0e1013;border-radius:10px;outline:none}
+    .msg{padding:14px;border:1px dashed #333842;background:#111318;border-radius:12px;color:var(--muted);margin-top:14px}
+    .error{border-color:#6b1f1f;background:#1a1111;color:#ffdbdb}
+    footer{margin-top:26px;color:var(--muted);font-size:13px}
+    .hide{display:none}
+    .cta{display:inline-block;margin-top:8px;padding:10px 14px;border-radius:10px;background:var(--accent);color:white;text-decoration:none;font-weight:600}
   </style>
 </head>
 <body>
-  <header>
-    <h1 id="title">Work for you</h1>
-    <p class="muted">Preview a tailored sample + a few highlights of what I can do for your listings.</p>
-  </header>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div class="title">Matly Creative</div>
+      </div>
+      <div id="companyChip" class="chip hide"></div>
+    </header>
 
-  <section>
-    <h2>Portfolio highlights</h2>
-    <div class="grid">
-      <!-- Replace these placeholders with real thumbnails/links -->
-      <div class="card">Before/After #1</div>
-      <div class="card">Before/After #2</div>
-      <div class="card">Before/After #3</div>
-    </div>
-  </section>
+    <section class="hero">
+      <div class="meta" id="meta"></div>
+      <video id="vid" controls playsinline preload="metadata"></video>
+      <div id="status" class="msg hide"></div>
+    </section>
 
-  <section style="margin-top:28px">
-    <h2>Your personalized sample</h2>
-    <div id="sample">Loading…</div>
-    <a id="cta" class="cta" href="mailto:hello@yourdomain.com?subject=Let%E2%80%99s%20start">Reply to start</a>
-    <p class="muted">If the video doesn’t load, this link may expire after 24h—reply and I’ll resend.</p>
-  </section>
+    <footer>
+      © <span id="year"></span> Matly Creative &mdash; high-converting real-estate video samples.
+    </footer>
+  </div>
 
   <script>
-    (async () => {
-      const u = new URL(location.href);
-      const id = u.searchParams.get("id"); // e.g. jane_acme_com
-      if (!id) {
-        document.getElementById('sample').textContent = "Missing id.";
-        document.getElementById('cta').style.display = 'none';
+    (function(){
+      const qs = new URLSearchParams(location.search);
+      const id = qs.get('id');
+      const status = document.getElementById('status');
+      const video = document.getElementById('vid');
+      const chip  = document.getElementById('companyChip');
+      const meta  = document.getElementById('meta');
+      document.getElementById('year').textContent = new Date().getFullYear();
+
+      function show(msg, isErr=false){
+        status.textContent = msg;
+        status.classList.toggle('hide', !msg);
+        status.classList.toggle('error', isErr);
+      }
+
+      if(!id){
+        show('Missing link id. Please use the personalized link from your email.', true);
         return;
       }
 
-      try {
-        const r = await fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: "no-store" });
-        if (!r.ok) throw new Error("not ok");
-        const data = await r.json();
+      fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
+        .then(({ signedUrl, company }) => {
+          if (company) {
+            chip.textContent = company;
+            chip.classList.remove('hide');
+          } else {
+            chip.classList.add('hide');
+          }
 
-        if (data.company) {
-          document.getElementById('title').textContent = `Work for ${data.company}`;
-          const cta = document.getElementById('cta');
-          const subject = `Let's start – edits for ${encodeURIComponent(data.company)}`;
-          cta.href = `mailto:hello@yourdomain.com?subject=${subject}`;
-        }
+          if (!signedUrl) {
+            show('Your sample is not ready yet. Try again in a minute.', true);
+            return;
+          }
 
-        const el = document.getElementById('sample');
-        if (data.signedUrl) {
-          el.innerHTML = `<video controls playsinline src="${data.signedUrl}"></video>`;
-        } else {
-          el.textContent = "Your sample isn’t ready yet. Reply and I’ll resend a fresh link.";
-        }
-      } catch (e) {
-        document.getElementById('sample').textContent = "Error loading sample. Please refresh or reply to the email.";
-      }
+          meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>
+                            ${company ? `<span class="chip">Company: <strong>${company}</strong></span>` : ''}`;
+
+          video.src = signedUrl;
+          video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.' , true), { once:true });
+          show('');
+        })
+        .catch(() => show('Server error. Please refresh this page.', true));
     })();
   </script>
 </body>
