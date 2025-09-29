@@ -29,7 +29,7 @@
 
       vid_key="videos/${safe}__${rest}"             # videos/jane_acme_com__tour.mp4
       echo "Uploading VIDEO -> r2:${R2_BUCKET}/${vid_key}"
-      rclone copy "$f" "r2:${R2_BUCKET}/${vid_key}" -vv
+      rclone copyto "$f" "r2:${R2_BUCKET}/${vid_key}" -vv
 
       # (optional) derive company …
       company=""
