@@ -3,7 +3,8 @@
 Poll a Trello list (Day 0). For each card found:
 - Read Company / First / Email from the card description (header block).
 - Choose template A (no "First") or B (has "First").
-- Fill {company}, {first}, {from_name} placeholders.
+- Fill {company}, {first}, {from_name}, {link} placeholders.
+- Build a personalized link from PUBLIC_BASE + the prospect's email.
 - Send the email via SMTP (plain text + HTML alternative).
 - Append signature (optional logo).
 - Mark the card as "Sent" (comment) to avoid re-sending.
@@ -22,6 +23,10 @@ def _get_env(*names, default=""):
             return v.strip()
     return default
 
+def _safe_id_from_email(email: str) -> str:
+    """Lowercase and replace @ and . with _ to match how your site expects IDs."""
+    return (email or "").strip().lower().replace("@", "_").replace(".", "_")
+
 # ----------------- Config / Env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
@@ -29,9 +34,9 @@ LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")  # prefer DAY0,
 
 # Email templates (from GitHub Secrets; keep them as plain text)
 SUBJECT_A = _get_env("SUBJECT_A", default="Quick idea for {company}")
-BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}")
+BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
 SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
-BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}")
+BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
 
 # From identity
 FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
@@ -63,8 +68,13 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Da
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))  # 0 = unlimited per run
 
+# Link pieces
+PUBLIC_BASE = _get_env("PUBLIC_BASE")  # e.g., https://matlycreative.pages.dev
+LINK_TEXT   = _get_env("LINK_TEXT", default="View your tailored sample")
+LINK_COLOR  = _get_env("LINK_COLOR", default="")  # optional CSS color
+
 # HTTP session
-UA = f"TrelloEmailer/1.2 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer/1.3 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -81,6 +91,7 @@ def require_env():
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
+    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
 
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
@@ -209,47 +220,37 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     import smtplib
     from email.message import EmailMessage
 
-    # Build core HTML from your plain text (this escapes text and adds <p>/<br>)
     html_core = text_to_html(body_text)
-
-    # Make bare URLs clickable
     html_core = _autolink_html(html_core)
 
-    # Optionally color all links
     if link_color:
         html_core = html_core.replace(
             '<a href="',
             f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
         )
 
-    # Rename THIS card's link display text to "My Portfolio" (or your LINK_TEXT)
     if link_url:
         if not re.match(r"^https?://", link_url, flags=re.I):
             link_url = "https://" + link_url
         esc_u = html.escape(link_url, quote=True)
-        # What the anchor looks like after coloring (if any)
         styled_prefix = (
             f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
             if link_color else
             '<a href="'
         )
-        # Replace the visible URL text with your friendly name
         friendly = html.escape(link_text or link_url)
+        # if already linked, rename its text
         html_core = html_core.replace(
             f'{styled_prefix}{esc_u}">{esc_u}</a>',
             f'{styled_prefix}{esc_u}">{friendly}</a>'
         )
-
-        # --- NEW: fallback — if the anchor for this URL isn't present, append it
+        # ensure it appears at least once
         if f'href="{esc_u}"' not in html_core:
             style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
             html_core += f'<p><a{style_attr} href="{esc_u}">{friendly}</a></p>'
-
-        # Plain-text part: ensure the URL appears at least once for clients that only show text
         if link_url not in body_text:
             body_text = (body_text.rstrip() + "\n\n" + link_url).strip()
 
-    # Append your signature (unchanged)
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -257,10 +258,9 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_text)                      # plain text fallback (shows raw URL)
-    msg.add_alternative(html_full, subtype="html")  # pretty clickable HTML
+    msg.set_content(body_text)
+    msg.add_alternative(html_full, subtype="html")
 
-    # Optional inline logo (unchanged)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -274,9 +274,9 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         except Exception as e:
             print(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # SMTP with small retry
     for attempt in range(3):
         try:
+            import smtplib
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
                 if SMTP_USE_TLS:
                     s.starttls()
@@ -327,6 +327,8 @@ def main():
             continue
 
         desc = c.get("desc") or ""
+        # Parse header block
+        TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
@@ -341,32 +343,37 @@ def main():
             sent_cache.add(card_id)
             continue
 
+        # Build personalized link from the email
+        safe = _safe_id_from_email(email_v)
+        link_url = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe}"
+
+        # Choose template A/B and inject placeholders (including {link})
         use_b = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B if use_b else BODY_A
 
-        # --- Link strictly from secrets (no code fallbacks) + normalize
-        link_url   = _get_env("LINK_URL").strip()
-        link_text  = _get_env("LINK_TEXT").strip()
-        link_color = _get_env("LINK_COLOR").strip()
-        if link_url and not re.match(r"^https?://", link_url, flags=re.I):
-            link_url = "https://" + link_url
-
-        # include {link} in both subject and body
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
         body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
 
+        # Send the email
         try:
-            # pass link props to HTML generator
-            send_email(email_v, subject, body, link_url=link_url, link_text=link_text, link_color=link_color)
+            send_email(
+                email_v,
+                subject,
+                body,
+                link_url=link_url,
+                link_text=LINK_TEXT,
+                link_color=LINK_COLOR
+            )
             processed += 1
-            print(f"Sent to {email_v} — card '{c.get('name','(no title)')}' (type {'B' if use_b else 'A'})")
+            print(f"Sent to {email_v} — card '{c.get('name','(no title)')}' (type {'B' if use_b else 'A'}) | {link_url}")
         except Exception as e:
             print(f"Send failed for '{c.get('name','(no title)')}' to {email_v}: {e}")
             continue
 
+        # Mark sent + cache
         try:
-            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
+            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}\nLink: {link_url}")
         except Exception:
             pass
         sent_cache.add(card_id)
