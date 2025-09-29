@@ -2,8 +2,6 @@ name: Trello Day-0 Email (poll every 5 min)
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "*/5 * * * *"
   schedule:
     - cron: "0 13 * * *"
     - cron: "0 22 * * *"
@@ -43,33 +41,36 @@ jobs:
       # Build personalized link from this base + the prospect’s email
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
 
-      # Friendly link appearance in the email HTML
+      # Friendly link appearance
       LINK_TEXT: "My portfolio"
-      # Choose ONE of these (remove the other):
-      # LINK_COLOR: "#3b82f6"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Behavior toggles for link rendering
-      APPEND_FRIENDLY_LINK: "0"   # don't add a second link at the bottom
-      INCLUDE_PLAIN_URL:    "0"   # don't append the naked URL to the text part
+      # Templates (must exist in repo secrets)
+      SUBJECT_A: ${{ secrets.SUBJECT_A }}
+      BODY_A:    ${{ secrets.BODY_A }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B }}
+      BODY_B:    ${{ secrets.BODY_B }}
 
-      # Diagnostics / test (set TEST_TO to your address to send just one mail and exit)
-      DEBUG: "1"
-      TEST_TO: ""   # e.g., "you@example.com" to test SMTP without Trello
+      # Font + signature
+      EMAIL_FONT_PX: "16"
+      SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
+      SIGNATURE_INLINE: "0"
+      SIGNATURE_MAX_W_PX: "200"
+      SIGNATURE_ADD_NAME: "0"
+
+      # Link rendering
+      APPEND_FRIENDLY_LINK: "0"
+      INCLUDE_PLAIN_URL:    "0"
 
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
-      SENT_CACHE_FILE: ".data/sent_day0.json"
+      SENT_CACHE_FILE: ".data/.sent_day0.json"   # (optional) different path to avoid stale cache
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Ensure data dir
         run: mkdir -p .data
-
-      # One-time helper: clear local cache so it doesn't block sends
-      - name: Reset local sent cache
-        run: rm -f .data/sent_day0.json || true
 
       - uses: actions/setup-python@v5
         with:
