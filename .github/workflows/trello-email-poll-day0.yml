@@ -66,6 +66,12 @@ jobs:
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/sent_day0.json"
 
+      LINK_TEXT: "My portfolio"
+      APPEND_FRIENDLY_LINK: "0"
+      INCLUDE_PLAIN_URL: "0"
+      # optional:
+      LINK_COLOR: "#3b82f6"
+
     steps:
       - uses: actions/checkout@v4
 
