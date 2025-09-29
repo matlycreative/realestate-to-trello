@@ -192,15 +192,26 @@ def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 def text_to_html(text: str) -> str:
-    """Convert plain text to simple HTML with a bigger font."""
+    """Convert plain text to simple HTML with consistent color, even in dark mode."""
     esc = html.escape(text or "")
     esc = esc.replace("\r\n", "\n").replace("\r", "\n")
+    # Paragraphize
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    return (
-        f'<div style="font-family:Arial,Helvetica,sans-serif;'
-        f'font-size:{EMAIL_FONT_PX}px;line-height:1.6;color:#111;">'
-        f'<p>{esc}</p></div>'
+
+    p_style = f"margin:0 0 12px 0;color:#111111 !important;"
+    wrap_style = (
+        f"font-family:Arial,Helvetica,sans-serif;"
+        f"font-size:{EMAIL_FONT_PX}px;line-height:1.6;"
+        f"color:#111111 !important;"
+        f"-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
+
+    # Ensure every <p> we emit gets the same inline style
+    # (start and any inserted <p> from the replacement above)
+    esc = f'<p style="{p_style}">{esc}</p>'
+    esc = esc.replace("<p>", f'<p style="{p_style}">')  # catch any remaining <p> without style
+
+    return f'<div style="{wrap_style}">{esc}</div>'
 
 def signature_html(logo_cid: str | None) -> str:
     parts = []
