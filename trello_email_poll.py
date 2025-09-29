@@ -36,12 +36,6 @@ TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")  # prefer DAY0, fallback LIST_ID
 
-# Email templates (from GitHub Secrets; keep them as plain text)
-SUBJECT_A = _get_env("SUBJECT_A", default="Quick idea for {company}")
-BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
-SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
-BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
-
 # From identity
 FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
 FROM_EMAIL = _get_env("FROM_EMAIL")
@@ -56,6 +50,12 @@ SMTP_PASS = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 
 # Username: prefer explicit, fall back to FROM_EMAIL
 SMTP_USER = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
+
+# Email templates (from GitHub Secrets; keep them as plain text)
+SUBJECT_A = _get_env("SUBJECT_A", default="Quick idea for {company}")
+BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
+SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
+BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
 
 # HTML styling + signature logo
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
