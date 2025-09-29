@@ -1,23 +1,30 @@
-name: Prep personalized links (Trello, no CSV, no slug)
+name: Prep personalized links (Trello, no CSV)
+
 on:
   push:
     paths:
-      - "uploads/**"
+      - 'uploads/**'
+  workflow_dispatch:
 
 jobs:
   prep-and-send:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo (with LFS support just in case)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Detect new uploads
+      - name: Detect new uploads in this commit
         id: files
         run: |
           echo "list<<EOF" >> $GITHUB_OUTPUT
           git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^uploads/' || true >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          echo "Changed files:"
+          cat $GITHUB_OUTPUT || true
 
-      - name: Install deps (rclone + jq)
+      - name: Install rclone + jq
         if: steps.files.outputs.list != ''
         run: |
           sudo apt-get update
@@ -31,82 +38,83 @@ jobs:
           [r2]
           type = s3
           provider = Cloudflare
-          access_TRELLO_KEY_id = ${{ secrets.R2_ACCESS_TRELLO_KEY_ID }}
-          secret_access_TRELLO_KEY = ${{ secrets.R2_SECRET_ACCESS_TRELLO_KEY }}
+          access_key_id = ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret_access_key = ${{ secrets.R2_SECRET_ACCESS_KEY }}
           endpoint = ${{ secrets.R2_ENDPOINT }}
           EOF
 
-      - name: Fetch Trello cards JSON (TRELLO_BOARD_ID or list)
+      # NOTE: don't put secrets in the if: condition — let the script decide.
+      - name: Fetch Trello cards JSON (board or list, optional)
         if: steps.files.outputs.list != ''
-        id: trello
         env:
-          TRELLO_KEY: ${{ secrets.TRELLO_TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TRELLO_TOKEN }}
-          TRELLO_BOARD_ID: ${{ secrets.TRELLO_TRELLO_BOARD_ID_ID }}
-          TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
+          KEY:   ${{ secrets.TRELLO_KEY }}
+          TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          BOARD: ${{ secrets.TRELLO_BOARD_ID }}
+          LIST:  ${{ secrets.TRELLO_LIST_ID }}
         run: |
           set -e
           if [ -n "$LIST" ]; then
-            curl -s "https://api.trello.com/1/lists/$LIST/cards?fields=name,desc&TRELLO_KEY=$TRELLO_KEY&TRELLO_TOKEN=$TRELLO_TOKEN" > cards.json
-          elif [ -n "$TRELLO_BOARD_ID" ]; then
-            curl -s "https://api.trello.com/1/TRELLO_BOARD_IDs/$TRELLO_BOARD_ID/cards?fields=name,desc&TRELLO_KEY=$TRELLO_KEY&TRELLO_TOKEN=$TRELLO_TOKEN" > cards.json
+            curl -s "https://api.trello.com/1/lists/$LIST/cards?fields=name,desc&key=$KEY&token=$TOKEN" > cards.json
+          elif [ -n "$BOARD" ]; then
+            curl -s "https://api.trello.com/1/boards/$BOARD/cards?fields=name,desc&key=$KEY&token=$TOKEN" > cards.json
           else
-            echo "Missing TRELLO_LIST_ID or TRELLO_TRELLO_BOARD_ID_ID secret." >&2
-            exit 1
+            echo "[]" > cards.json
           fi
-          echo "Saved Trello cards to cards.json"
 
-      - name: Upload videos, write pointers, export email/link vars (from Trello)
+      - name: Upload videos to R2, write pointer JSONs, and export email/link vars
         if: steps.files.outputs.list != ''
         env:
           PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_BUCKET:   ${{ secrets.R2_BUCKET }}
         run: |
           set -e
 
-          # Helper: make a safe ID for filenames & env vars from an email
-          make_safe_id () {
-            # lower-case, replace @ and . with _
-            echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[@.]/_/g'
-          }
+          make_safe () { echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[@.]/_/g'; }
 
           while read -r f; do
             [ -z "$f" ] && continue
-            base=$(basename "$f")                       # e.g. jane@acme.com__tour.mp4
-            email="${base%%__*}"                        # e.g. jane@acme.com
-            safe=$(make_safe_id "$email")               # e.g. jane_acme_com
+            base=$(basename "$f")                        # jane@acme.com__tour.mp4
+            email="${base%%__*}"                         # jane@acme.com
+            rest="${base#*__}"                           # tour.mp4
+            safe=$(make_safe "$email")                   # jane_acme_com
             SAFE_UPPER=$(echo "$safe" | tr '[:lower:]' '[:upper:]')
 
-            # 1) Upload the video to R2 at: samples/videos/<safe>__<rest-of-name>
-            vid_TRELLO_KEY="videos/${safe}__${base#*__}"      # e.g. videos/jane_acme_com__tour.mp4
-            rclone copy "$f" r2:${R2_BUCKET}/${vid_TRELLO_KEY}
+            vid_key="videos/${safe}__${rest}"            # videos/jane_acme_com__tour.mp4
+            echo "Uploading $f -> r2:${R2_BUCKET}/${vid_key}"
+            rclone copy "$f" r2:${R2_BUCKET}/${vid_key}
 
-            # 2) Look up the Trello card whose description contains this email (case-insensitive)
-            #    Your script already writes the prospect into the card description.
-            card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
-
-            # 3) Extract company from desc if present as a line like: "company: Acme Homes"
-            if [ -n "$card" ]; then
-              desc=$(echo "$card" | jq -r '.desc')
-              company=$(printf "%s\n" "$desc" | grep -i '^company:' | head -n 1 | sed 's/^company:[[:space:]]*//I')
+            # Optional company from Trello (desc line 'company: ...')
+            company=""
+            if [ -f cards.json ]; then
+              card=$(jq -r --arg em "$email" '.[] | select(.desc|test($em;"i"))' cards.json | head -n 1)
+              if [ -n "$card" ]; then
+                desc=$(echo "$card" | jq -r '.desc')
+                company=$(printf "%s\n" "$desc" | grep -i '^company:' | head -n 1 | sed 's/^company:[[:space:]]*//I')
+              fi
             fi
-
-            # 4) Fallback if company not specified in the card:
             if [ -z "$company" ]; then
-              domain=${email#*@}                        # acme.com
-              company=$(echo "${domain%%.*}" | sed -E 's/[-_]/ /g; s/.*/\u&/')  # "Acme"
+              domain=${email#*@}; company=$(echo "${domain%%.*}" | sed -E 's/[-_]/ /g; s/.*/\u&/')
             fi
 
-            # 5) Write pointer JSON and upload to R2 at: samples/pointers/<safe>.json
-            #    Pointer tells the site which video object to sign/embed.
-            printf '{"TRELLO_KEY":"samples/%s","company":"%s"}\n' "$vid_TRELLO_KEY" "$company" > pointer.json
-            ptr_TRELLO_KEY="pointers/${safe}.json"
-            rclone copyto pointer.json r2:${R2_BUCKET}/${ptr_TRELLO_KEY}
+            # Write pointer JSON and upload
+            printf '{"key":"%s","company":"%s"}\n' "$vid_key" "$company" > pointer.json
+            ptr_key="pointers/${safe}.json"
+            echo "Writing pointer r2:${R2_BUCKET}/${ptr_key}"
+            rclone copyto pointer.json r2:${R2_BUCKET}/${ptr_key}
 
-            # 6) Export env vars for your existing email step
+            # Export env vars for your existing email step
             echo "RECIPIENT_EMAIL_${SAFE_UPPER}=${email}" >> $GITHUB_ENV
-            echo "COMPANY_${SAFE_UPPER}=${company}" >> $GITHUB_ENV
+            echo "COMPANY_${SAFE_UPPER}=${company}"       >> $GITHUB_ENV
             echo "LANDING_URL_${SAFE_UPPER}=${PUBLIC_BASE}/p/?id=${safe}" >> $GITHUB_ENV
 
             echo "::notice title=Prepared::Email to ${email} — link ${PUBLIC_BASE}/p/?id=${safe}"
           done <<< "${{ steps.files.outputs.list }}"
+
+      # Debug: prove objects exist in R2
+      - name: List R2 bucket (debug)
+        if: steps.files.outputs.list != ''
+        run: |
+          echo "Listing r2:${{ secrets.R2_BUCKET }}/videos"
+          rclone ls r2:${{ secrets.R2_BUCKET }}/videos || true
+          echo "Listing r2:${{ secrets.R2_BUCKET }}/pointers"
+          rclone ls r2:${{ secrets.R2_BUCKET }}/pointers || true
