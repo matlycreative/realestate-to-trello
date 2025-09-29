@@ -57,8 +57,6 @@ BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n
 SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
 BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
 
-_dbg(f"TPL lens — subjA:{len(SUBJECT_A)} bodyA:{len(BODY_A)} subjB:{len(SUBJECT_B)} bodyB:{len(BODY_B)}")
-
 # HTML styling + signature logo
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
@@ -73,14 +71,6 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 APPEND_FRIENDLY_LINK = _env_bool("APPEND_FRIENDLY_LINK", "0")  # don't append extra link at bottom
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")     # don't add naked URL to plain-text
 
-# Diagnostics / test
-DEBUG   = _env_bool("DEBUG", "0")
-TEST_TO = (_get_env("TEST_TO") or "").strip()
-
-def _dbg(msg: str):
-    if DEBUG:
-        print(f"[DEBUG] {msg}")
-
 # Poll behavior / gating
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
@@ -92,7 +82,7 @@ LINK_TEXT   = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR  = _get_env("LINK_COLOR", default="")  # optional CSS color
 
 # HTTP session
-UA = f"TrelloEmailer/1.5 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer/1.6 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -292,16 +282,11 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     # SMTP send with retry
     for attempt in range(3):
         try:
-            if DEBUG: print(f"[DEBUG] Connecting SMTP {SMTP_HOST}:{SMTP_PORT} (TLS={SMTP_USE_TLS})…")
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
                 if SMTP_USE_TLS:
-                    if DEBUG: print("[DEBUG] STARTTLS…")
                     s.starttls()
-                if DEBUG: print(f"[DEBUG] Logging in as {SMTP_USER or FROM_EMAIL}…")
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-                if DEBUG: print(f"[DEBUG] Sending to {to_email}…")
                 s.send_message(msg)
-            if DEBUG: print("[DEBUG] Sent OK.")
             return
         except Exception as e:
             print(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
@@ -331,31 +316,12 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
 # --------------- Main Flow ----------------
 def main():
     require_env()
-
-    # --- TEST MODE: send one email and exit (no Trello) ---
-    if TEST_TO:
-        safe = _safe_id_from_email(TEST_TO)
-        link_url = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe}"
-        subject = "Test: your tailored sample link"
-        body    = f"Hi,\n\nPreview your tailored sample here:\n{link_url}\n"
-        if DEBUG:
-            print(f"[DEBUG] TEST_TO mode — sending to {TEST_TO} with link {link_url}")
-        send_email(TEST_TO, subject, body, link_url=link_url, link_text=LINK_TEXT, link_color=LINK_COLOR)
-        print("Test email sent to", TEST_TO)
-        return
-
     sent_cache = load_sent_cache()
 
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
         print("No cards found or Trello error.")
         return
-    print(f"[DEBUG] Cards returned: {len(cards)}")
-    for c in cards:
-        if DEBUG:
-            nm = c.get('name', '(no title)')
-            ds = (c.get('desc') or '').strip().replace('\r','\n')
-            print(f"[DEBUG] Card: {nm} | Desc (first 120): {ds[:120]!r}")
 
     processed = 0
     for c in cards:
@@ -365,20 +331,15 @@ def main():
         card_id = c.get("id")
         title   = c.get("name","(no title)")
         if not card_id:
-            if DEBUG: print(f"[DEBUG] Skip '{title}': no card_id")
             continue
         if card_id in sent_cache:
-            if DEBUG: print(f"[DEBUG] Skip '{title}': in local sent cache")
             continue
 
         desc = c.get("desc") or ""
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
-        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)  # tolerant fallback
-
-        if DEBUG:
-            print(f"[DEBUG] Parsed → email='{email_v or '(none)'}', company='{company}', first='{first}'")
+        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
 
         if not email_v:
             print(f"Skip: no valid Email on card '{title}'.")
@@ -394,18 +355,12 @@ def main():
         link_url = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe}"
 
         # Choose template A/B and inject placeholders (including {link})
-        use_b = bool(first)
+        use_b   = bool(first)  # B if First is non-empty
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
-        body_tpl = BODY_B if use_b else BODY_A
+        body_tpl = BODY_B    if use_b else BODY_A
 
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
         body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
-
-          # DEBUG: which template + short previews
-        which = "B" if use_b else "A"
-        _dbg(f"Card '{title}': using template {which}; first='{first}'")
-        _dbg(f"Subject preview: {subject[:80]!r}")
-        _dbg(f"Body preview: {body[:120]!r}")
 
         # Send the email
         try:
@@ -418,14 +373,14 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            print(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) | {link_url}")
+            print(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'})")
         except Exception as e:
             print(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
         # Mark sent + cache
         try:
-            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}\nLink: {link_url}")
+            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         except Exception:
             pass
         sent_cache.add(card_id)
