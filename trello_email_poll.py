@@ -222,21 +222,34 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
         )
 
-    # Rename this email's link display text to the provided LINK_TEXT (if given)
+    # Rename THIS card's link display text to "My Portfolio" (or your LINK_TEXT)
     if link_url:
+        if not re.match(r"^https?://", link_url, flags=re.I):
+            link_url = "https://" + link_url
         esc_u = html.escape(link_url, quote=True)
+        # What the anchor looks like after coloring (if any)
         styled_prefix = (
             f'<a style="color:{html.escape(link_color)};text-decoration:underline;" href="'
             if link_color else
             '<a href="'
         )
+        # Replace the visible URL text with your friendly name
         friendly = html.escape(link_text or link_url)
         html_core = html_core.replace(
             f'{styled_prefix}{esc_u}">{esc_u}</a>',
             f'{styled_prefix}{esc_u}">{friendly}</a>'
         )
 
-    # Append signature
+        # --- NEW: fallback — if the anchor for this URL isn't present, append it
+        if f'href="{esc_u}"' not in html_core:
+            style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
+            html_core += f'<p><a{style_attr} href="{esc_u}">{friendly}</a></p>'
+
+        # Plain-text part: ensure the URL appears at least once for clients that only show text
+        if link_url not in body_text:
+            body_text = (body_text.rstrip() + "\n\n" + link_url).strip()
+
+    # Append your signature (unchanged)
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -244,10 +257,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_text)                      # plain text fallback
+    msg.set_content(body_text)                      # plain text fallback (shows raw URL)
     msg.add_alternative(html_full, subtype="html")  # pretty clickable HTML
 
-    # Optional inline logo
+    # Optional inline logo (unchanged)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -261,7 +274,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         except Exception as e:
             print(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # SMTP send with small retry
+    # SMTP with small retry
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
