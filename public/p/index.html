@@ -42,11 +42,9 @@
         <div class="logo" aria-hidden="true"></div>
         <div class="title">Matly Creative</div>
       </div>
-      <div id="companyChip" class="chip hide"></div>
     </header>
 
     <section class="hero">
-      <div class="meta" id="meta"></div>
       <video id="vid" controls playsinline preload="metadata"></video>
       <div class="actions">
         <a id="dl" class="btn hide" href="#" download>Download</a>
@@ -65,8 +63,6 @@
     const id = qs.get('id');
     const status = document.getElementById('status');
     const video  = document.getElementById('vid');
-    const chip   = document.getElementById('companyChip');
-    const meta   = document.getElementById('meta');
     const dl     = document.getElementById('dl');
     document.getElementById('year').textContent = new Date().getFullYear();
 
