@@ -50,8 +50,8 @@
     <section class="hero">
       <div class="meta" id="meta"></div>
       <video id="vid" controls playsinline preload="metadata"></video>
-      <div id="status" class="msg hide"></div>
       <div class="actions"><a id="dl" class="btn hide" href="#" download>Download</a></div>
+      <div id="status" class="msg hide"></div>
     </section>
 
     <footer>
@@ -90,6 +90,16 @@
       }
 
       video.src = streamUrl;
+      const dl = document.getElementById('dl');
+      if (dl) {
+      if (foundKey) {
+    dl.href = `/api/stream?key=${encodeURIComponent(foundKey)}&download=1`;
+    dl.setAttribute('download', foundKey.split('/').pop() || 'video.mp4');
+    dl.classList.remove('hide');
+  } else {
+    dl.classList.add('hide');
+  }
+}
       video.load();
       // optional: try to autoplay muted
       // video.muted = true; video.play().catch(()=>{});
