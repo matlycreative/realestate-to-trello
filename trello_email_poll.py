@@ -229,6 +229,96 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     from email.message import EmailMessage
     import smtplib
 
+    # Normalize pieces
+    if link_url and not re.match(r"^https?://", link_url, flags=re.I):
+        link_url = "https://" + link_url
+    label = (link_text or "My portfolio").strip() or "My portfolio"
+
+    # Build variants we want to replace everywhere
+    full = link_url
+    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
+    esc_full = html.escape(full, quote=True) if full else ""
+    esc_bare = html.escape(bare, quote=True) if bare else ""
+
+    # ---- Plain-text part
+    body_pt = body_text
+    if full:
+        if not INCLUDE_PLAIN_URL:
+            # Replace *all* variants with the friendly label
+            for pat in (full, bare):
+                if pat:
+                    body_pt = body_pt.replace(pat, label)
+        else:
+            # Ensure the URL appears at least once
+            if full not in body_pt and bare not in body_pt:
+                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+
+    # ---- HTML part
+    # 1) Replace any URL variants with a unique marker before HTMLifying
+    MARK = "__LINK_MARKER__"
+    body_marked = body_text
+    for pat in (full, bare):
+        if pat:
+            body_marked = body_marked.replace(pat, MARK)
+
+    # 2) Convert to HTML and auto-link any other URLs
+    html_core = text_to_html(body_marked)
+    html_core = _autolink_html(html_core)
+
+    # 3) Also catch HTML-escaped variants (in case the template had them)
+    for pat in (esc_full, esc_bare):
+        if pat:
+            html_core = html_core.replace(pat, MARK)
+
+    # 4) Replace marker with our friendly anchor, or append if not present
+    if full:
+        style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
+        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
+        if MARK in html_core:
+            html_core = html_core.replace(MARK, anchor)
+        else:
+            # no marker found — append once at the bottom
+            html_core += f"<p>{anchor}</p>"
+
+    # Signature + assemble
+    logo_cid = "siglogo@local"
+    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+
+    msg = EmailMessage()
+    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["To"] = to_email
+    msg["Subject"] = sanitize_subject(subject)
+    msg.set_content(body_pt)
+    msg.add_alternative(html_full, subtype="html")
+
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
+        try:
+            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
+            r.raise_for_status()
+            data = r.content
+            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
+        except Exception as e:
+            print(f"Inline logo fetch failed, sending without embed: {e}")
+
+    # SMTP with retry
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                if SMTP_USE_TLS:
+                    s.starttls()
+                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
+                s.send_message(msg)
+            return
+        except Exception as e:
+            print(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
     # Normalize link pieces
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
