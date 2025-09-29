@@ -401,10 +401,11 @@ def main():
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
         body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=link_url)
 
+          # DEBUG: which template + short previews
         which = "B" if use_b else "A"
-            _dbg(f"Card '{title}': using template {which}; first='{first}'")
-            _dbg(f"Subject preview: {subject[:80]!r}")
-            _dbg(f"Body preview: {body[:120]!r}")
+        _dbg(f"Card '{title}': using template {which}; first='{first}'")
+        _dbg(f"Subject preview: {subject[:80]!r}")
+        _dbg(f"Body preview: {body[:120]!r}")
 
         # Send the email
         try:
