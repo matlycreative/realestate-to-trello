@@ -41,6 +41,10 @@ jobs:
       FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
+      LINK_URL:         ${{ secrets.LINK_URL }}
+      LINK_TEXT:        ${{ secrets.LINK_TEXT }}
+      LINK_COLOR:       ${{ secrets.LINK_COLOR }}
+
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A: ${{ secrets.BODY_A }}
