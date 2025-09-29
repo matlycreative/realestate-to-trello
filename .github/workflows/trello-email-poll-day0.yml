@@ -47,10 +47,8 @@ jobs:
       # Friendly link appearance in the email HTML
       LINK_TEXT: "My portfolio"
       # Choose ONE of these (remove the other):
-      # LINK_COLOR: "#3b82f6"                 # hardcode a color
-      LINK_COLOR: ${{ secrets.LINK_COLOR }}    # or manage via secret
-
-      # Do NOT set LINK_URL anymore (Option A builds it automatically)
+      # LINK_COLOR: "#3b82f6"
+      LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
       # Templates
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
@@ -68,11 +66,11 @@ jobs:
       # Behavior toggles for link rendering
       APPEND_FRIENDLY_LINK: "0"   # don't add a second link at the bottom
       INCLUDE_PLAIN_URL:    "0"   # don't append the naked URL to the text part
-      
+
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/sent_day0.json"
-      
+
     steps:
       - uses: actions/checkout@v4
 
