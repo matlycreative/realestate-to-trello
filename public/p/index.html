@@ -84,22 +84,6 @@
       show('');
     })
     .catch(() => show('Server error. Please refresh.', true));
-})();
-</script>
-
-  video.src = streamUrl;
-  video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
-  show('');
-})
-
-        meta.innerHTML = `<span class="chip">Personalized for: <strong>${id}</strong></span>` +
-                         (company ? ` <span class="chip">Company: <strong>${company}</strong></span>` : '');
-
-        video.src = signedUrl;
-        video.addEventListener('error', () => show('Hmm, failed to load video. Please refresh.', true), { once:true });
-        show('');
-      })
-      .catch(() => show('Server error. Please refresh this page.', true));
   })();
 </script>
 
