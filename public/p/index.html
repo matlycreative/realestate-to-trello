@@ -1,113 +1,54 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Your tailored sample</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <style>
-    :root { --bg:#0b0b0c; --fg:#f5f7fb; --muted:#a7adbb; --card:#14161a; --accent:#3b82f6; }
-    *{box-sizing:border-box} html,body{height:100%}
-    body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
-    a{color:var(--accent)}
-    .wrap{max-width:1000px;margin:0 auto;padding:28px 20px 60px}
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:16px}
-    .brand{display:flex;align-items:center;gap:12px}
-    .logo{width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#4f46e5,#06b6d4)}
-    .title{font-weight:700;letter-spacing:.2px}
-    .hero{padding:18px;border:1px solid #22262d;background:var(--card);border-radius:14px}
-    .meta{display:flex;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 14px}
-    .chip{padding:4px 10px;border:1px solid #2b313a;border-radius:999px;color:var(--muted);font-size:13px}
-    video{
-      width:100%;
-      height:auto;            /* use the video’s intrinsic height */
-      background:#0e1013;
-      border-radius:10px;
-      outline:none;
-      object-fit:contain;     /* letterbox if container is wider */
-  }
-    .actions{margin-top:12px;display:flex;gap:10px}
-    .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:600}
-    .btn:hover{opacity:.9}
-    .hide{display:none}
-    .msg{padding:14px;border:1px dashed #333842;background:#111318;border-radius:12px;color:var(--muted);margin-top:14px}
-    .error{border-color:#6b1f1f;background:#1a1111;color:#ffdbdb}
-    footer{margin-top:26px;color:var(--muted);font-size:13px}
-    .hide{display:none}
-    .cta{display:inline-block;margin-top:8px;padding:10px 14px;border-radius:10px;background:var(--accent);color:white;text-decoration:none;font-weight:600}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <div class="brand">
-        <div class="logo" aria-hidden="true"></div>
-        <div class="title">Matly Creative</div>
-      </div>
-      <div id="companyChip" class="chip hide"></div>
-    </header>
-
-    <section class="hero">
-      <div class="meta" id="meta"></div>
-      <video id="vid" controls playsinline preload="metadata"></video>
-      <div class="actions"><a id="dl" class="btn hide" href="#" download>Download</a></div>
-      <div id="status" class="msg hide"></div>
-    </section>
-
-    <footer>
-      © <span id="year"></span> Matly Creative &mdash; high-converting real-estate video samples.
-    </footer>
-  </div>
-
 <script>
 (function(){
   const qs = new URLSearchParams(location.search);
   const id = qs.get('id');
   const status = document.getElementById('status');
-  const video = document.getElementById('vid');
-  const chip  = document.getElementById('companyChip');
+  const video  = document.getElementById('vid');
+  const chip   = document.getElementById('companyChip');
+  const dl     = document.getElementById('dl');
 
   function show(msg, isErr=false){
     if (!status) return;
-    status.textContent = msg;
+    status.textContent = msg || "";
     status.classList.toggle('hide', !msg);
-    status.classList.toggle('error', isErr);
+    status.classList.toggle('error', !!isErr);
   }
 
-  if(!id){ show('Missing link id.', true); return; }
+  if (!id) { show('Missing link id.', true); return; }
 
   fetch(`/api/sample?id=${encodeURIComponent(id)}`, { cache: 'no-store' })
-    .then(r => r.json())
-    .then(({ streamUrl, company, error }) => {
-      console.log('sample:', { streamUrl, company, error });
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('API error')))
+    // ✅ include foundKey here
+    .then(({ streamUrl, company, foundKey, error }) => {
       if (company) { chip.textContent = company; chip.classList.remove('hide'); }
 
       if (!streamUrl) {
-        show(error && /POINTER|OBJECT|EMPTY/.test(error)
-          ? 'Your sample is not ready yet. Try again in a minute.'
-          : 'Server error. Please refresh.', true);
+        show(
+          error && /POINTER|OBJECT|EMPTY/.test(error)
+            ? 'Your sample is not ready yet. Try again in a minute.'
+            : 'Server error. Please refresh.',
+          true
+        );
         return;
       }
 
+      // Set video source and load
       video.src = streamUrl;
-      const dl = document.getElementById('dl');
-      if (dl) {
-      if (foundKey) {
-    dl.href = `/api/stream?key=${encodeURIComponent(foundKey)}&download=1`;
-    dl.setAttribute('download', foundKey.split('/').pop() || 'video.mp4');
-    dl.classList.remove('hide');
-  } else {
-    dl.classList.add('hide');
-  }
-}
       video.load();
-      // optional: try to autoplay muted
-      // video.muted = true; video.play().catch(()=>{});
+
+      // ✅ Wire the Download button when we know the actual key
+      if (dl) {
+        if (foundKey) {
+          dl.href = `/api/stream?key=${encodeURIComponent(foundKey)}&download=1`;
+          dl.setAttribute('download', foundKey.split('/').pop() || 'video.mp4');
+          dl.classList.remove('hide');
+        } else {
+          dl.classList.add('hide');
+        }
+      }
+
       show('');
     })
     .catch(() => show('Server error. Please refresh.', true));
-  })();
+})();
 </script>
-
-</body>
-</html>
