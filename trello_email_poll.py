@@ -437,6 +437,7 @@ def _sample_info(safe_id: str) -> tuple[bool, str]:
     Query /api/sample?id=<safe_id>.
     Returns (is_ready, best_link_to_use).
     If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
+    Handles relative links from the API.
     """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
@@ -471,7 +472,13 @@ def _sample_info(safe_id: str) -> tuple[bool, str]:
                 log(f"[ready?] API error: {err} (link tried: {link})")
             return (False, PORTFOLIO_URL)
 
-        # Ready: prefer the API's link; otherwise fall back to the canonical /p/?id=...
+        # Normalize API link if it's relative or missing scheme
+        if api_link:
+            if api_link.startswith("/"):
+                api_link = f"{PUBLIC_BASE}{api_link}"
+            elif not re.match(r"^https?://", api_link, flags=re.I):
+                api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
+
         best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
         return (True, best)
 
@@ -532,23 +539,22 @@ def main():
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
+                  n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
+        log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
         )
 
         # --- Two different extra lines depending on readiness ---
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
-        # --- Build the body with two-{extra} logic ---
-        body = fill_with_two_extras(
-            body_tpl,
-            company=company,
-            first=first,
-            from_name=FROM_NAME,
-            link=chosen_link,
-            is_ready=is_ready,
-            extra_ready=extra_ready,
-            extra_wait=extra_wait
-        )
+        # 3) Remove any further {extra} occurrences, just in case
+        final = EXTRA_TOKEN.sub("", step2)
+
+    # 4) Tidy spacing + remove a stray " : " if the first {extra} was removed
+    #    (e.g., template "... {extra} : {link}" becomes "... : {link}" when not ready)
+    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
+    final = re.sub(r"\n{3,}", "\n\n", final).strip()
+    return final
 
         # --- Link label for the anchor/button ---
         link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
