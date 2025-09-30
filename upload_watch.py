@@ -3,7 +3,17 @@
 Watch DROP_DIR for new videos named like:  email@example.com__anything.mp4
 Then:
   - upload to R2 as videos/<safe_email>__<rest>
-  - write pointer JSON to pointers/<safe_email>.json (via system temp)
+  - write pointer JSON to pointers/<safe_email>.json (written via system temp)
+
+Env:
+  DROP_DIR     (default: ~/Drop Videos Here)
+  R2_BUCKET    (default: samples)
+  PUBLIC_BASE  (default: https://matlycreative.pages.dev)
+  RCLONE_BIN   (optional; absolute path to rclone; default: auto-detect or /opt/homebrew/bin/rclone)
+
+Requires:
+  pip install watchdog
+  rclone configured with a remote named "r2"
 """
 
 import os, time, json, subprocess, sys, shutil, tempfile
@@ -25,21 +35,35 @@ VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 # Keep track of files already being/been processed in this run
 PROCESSING = set()
 
+
 def safe_id(email: str) -> str:
     return (email or "").lower().replace("@", "_").replace(".", "_")
+
 
 def run(cmd):
     print(">", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
 
-def done_writing(p: Path, wait_sec: float = 1.2) -> bool:
-    """Heuristic: size stable for ~1.2s."""
+
+def done_writing(p: Path, wait_sec: float = 1.0, tries: int = 5) -> bool:
+    """
+    Return True when file size stops changing (robust against slow writers).
+    Checks size 'tries' times with wait_sec between checks.
+    """
     if not p.exists() or not p.is_file():
         return False
-    s1 = p.stat().st_size
-    time.sleep(wait_sec)
-    s2 = p.stat().st_size
-    return s1 == s2 and s1 > 0
+    last = -1
+    for _ in range(tries):
+        try:
+            size = p.stat().st_size
+        except FileNotFoundError:
+            return False
+        if size > 0 and size == last:
+            return True
+        last = size
+        time.sleep(wait_sec)
+    return False
+
 
 def derive_company(email: str) -> str:
     if "@" not in (email or ""):
@@ -47,6 +71,7 @@ def derive_company(email: str) -> str:
     domain = email.split("@", 1)[1]
     base = domain.split(".", 1)[0].replace("-", " ").replace("_", " ")
     return base.capitalize()
+
 
 def process_file(f: Path):
     # Debounce: avoid double-processing same path
@@ -57,11 +82,8 @@ def process_file(f: Path):
 
     try:
         if not done_writing(f):
-            print(f"[wait] {f.name} still writing…")
-            time.sleep(1.0)
-            if not done_writing(f):
-                print(f"[skip] {f.name} not stable yet.")
-                return
+            print(f"[skip] {f.name} not stable yet.")
+            return
 
         base = f.name  # e.g. jane@acme.com__tour.mp4
         if "__" not in base:
@@ -70,7 +92,9 @@ def process_file(f: Path):
 
         email = base.split("__", 1)[0]
         rest  = base.split("__", 1)[1]
-        if not any(base.lower().endswith(ext) for ext in VIDEO_EXTS):
+
+        low = base.lower()
+        if not any(low.endswith(ext) for ext in VIDEO_EXTS):
             print(f"[skip] {base}: not a supported video extension")
             return
 
@@ -87,11 +111,14 @@ def process_file(f: Path):
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as t:
             tmp_path = Path(t.name)
             json.dump(pointer, t)
+
         try:
             run([RCLONE_BIN, "copyto", str(tmp_path), f"r2:{R2_BUCKET}/pointers/{s}.json", "-vv"])
         finally:
-            try: tmp_path.unlink()
-            except Exception: pass
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
         print(f"[ok] Uploaded → r2:{R2_BUCKET}/{vid_key}")
         print(f"[ok] Pointer  → r2:{R2_BUCKET}/pointers/{s}.json")
@@ -101,13 +128,19 @@ def process_file(f: Path):
         # allow future runs for same path if needed
         PROCESSING.discard(key)
 
+
 class Handler(FileSystemEventHandler):
     def on_created(self, e):
-        p = Path(e.src_path)
-        self._maybe(p)
+        self._maybe(Path(e.src_path))
 
-    # We do NOT react to on_modified to prevent loops/flapping
-    # def on_modified(self, e): pass
+    def on_moved(self, e):
+        # Handle files that are moved/renamed into the folder
+        try:
+            self._maybe(Path(e.dest_path))
+        except Exception:
+            pass
+
+    # We intentionally do NOT react to on_modified to prevent loops/flapping.
 
     def _maybe(self, p: Path):
         name = p.name
@@ -116,11 +149,13 @@ class Handler(FileSystemEventHandler):
         if name.startswith("."):
             return
         low = name.lower()
+        # Ignore JSON/temp fragments in the watched folder
         if low.endswith(".json") or low.endswith(".pointer.json") or low.endswith(".tmp") or low.endswith(".part"):
             return
         if "__" not in name:
             return
         process_file(p)
+
 
 def main():
     print(f"[watcher] rclone: {RCLONE_BIN}")
@@ -140,6 +175,7 @@ def main():
     except KeyboardInterrupt:
         obs.stop()
     obs.join()
+
 
 if __name__ == "__main__":
     try:
