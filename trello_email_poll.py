@@ -431,8 +431,13 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
                 raise
             time.sleep(1.5 * (attempt + 1))
 
-# --------------- Sample readiness helper ----------------
-def _sample_ready(safe_id: str) -> bool:
+# --------------- Sample info helper ----------------
+def _sample_info(safe_id: str) -> tuple[bool, str]:
+    """
+    Query /api/sample?id=<safe_id>.
+    Returns (is_ready, best_link_to_use).
+    If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
+    """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
 
@@ -447,27 +452,33 @@ def _sample_ready(safe_id: str) -> bool:
         preview = (r.text or "")[:300]
         log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
         if not r.ok:
-            return False
+            return (False, PORTFOLIO_URL)
+
         try:
             data = r.json()
         except Exception:
             log("[ready?] non-JSON response")
-            return False
+            return (False, PORTFOLIO_URL)
 
         streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
-        log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)}")
+        api_link  = (data.get("link") or "").strip()
+        log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
+
         if not streamish:
             err  = data.get("error")
             link = data.get("link")
             if err:
                 log(f"[ready?] API error: {err} (link tried: {link})")
-            return False
-        return True
+            return (False, PORTFOLIO_URL)
+
+        # Ready: prefer the API's link; otherwise fall back to the canonical /p/?id=...
+        best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+        return (True, best)
 
     except Exception as e:
         log(f"[ready?] error: {e}")
-        return False
-
+        return (False, PORTFOLIO_URL)
+      
 # --------------- Main Flow ----------------
 def main():
     require_env()
@@ -506,17 +517,16 @@ def main():
             continue
 
                 # -------- Build links + decide which to send now --------
-        safe_id    = _safe_id_from_email(email_v)
-        link_video = f"{PUBLIC_BASE}/p/?id={safe_id}"
-        portfolio  = PORTFOLIO_URL
-
-        is_ready    = _sample_ready(safe_id)
-        chosen_link = link_video if is_ready else portfolio
+        safe_id = _safe_id_from_email(email_v)
+        is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready
 
         # Choose template A/B *before* composing extra
         use_b    = bool(first)  # B if First is present
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
+
+      n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
+      log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
         # --- Subject (no special extra logic needed) ---
         subject = fill_template(
