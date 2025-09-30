@@ -1,3 +1,5 @@
+Email day o py 
+
 #!/usr/bin/env python3
 """
 Poll a Trello list (Day 0). For each card found:
@@ -263,6 +265,32 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             # Ensure the URL appears at least once
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+
+    # Build links
+safe_id    = _safe_id_from_email(email_v)
+link_video = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe_id}"
+portfolio  = (PORTFOLIO_URL or PUBLIC_BASE or "").rstrip("/")
+
+# Choose link by Variant
+variant = (fields.get("Variant") or "").strip().lower()
+use_portfolio = variant in ("portfolio", "no video", "novideo", "no-video", "plain", "site")
+chosen_link = portfolio if use_portfolio else link_video
+
+# (Optional but recommended) Gate sending for "video" until sample is ready
+is_ready = True
+if not use_portfolio:
+    try:
+        chk = SESS.get(f"{PUBLIC_BASE.rstrip('/')}/api/sample?id={safe_id}", timeout=10)
+        data = chk.json() if chk.ok else {}
+        # our /api/sample returns { streamUrl, ... } when ready
+        is_ready = bool(data.get("streamUrl"))
+    except Exception:
+        is_ready = False
+
+if not is_ready:
+    print(f"Skip: sample not ready yet for '{title}' ({email_v})")
+    continue
+                
 
     # ---- HTML part
     # 1) Replace any URL variants with a unique marker before HTMLifying
