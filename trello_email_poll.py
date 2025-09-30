@@ -202,6 +202,42 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
+# --- Two-{extra} logic: fill only the correct slot ---
+EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
+
+def fill_with_two_extras(
+    tpl: str, *, company: str, first: str, from_name: str,
+    link: str, is_ready: bool, extra_ready: str, extra_wait: str
+) -> str:
+    """
+    Replace standard placeholders first (company, first, from_name, link),
+    leaving {extra} untouched. Then:
+      - if is_ready  : first {extra} -> extra_ready, second -> removed
+      - if not ready : first {extra} -> removed,      second -> extra_wait
+    Any additional {extra} are removed. Cleans up triple blank lines.
+    """
+    # 1) Fill normal placeholders, but not {extra}
+    base = fill_template(
+        tpl,
+        company=company, first=first, from_name=from_name,
+        link=link, extra=""   # IMPORTANT: don't inject extra here
+    )
+
+    # 2) Positional handling for the two extras
+    if is_ready:
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # 1st -> ready text
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # 2nd -> removed
+    else:
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # 1st -> removed
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # 2nd -> wait text
+
+    # 3) Remove any additional {extra}
+    final = EXTRA_TOKEN.sub("", step2)
+
+    # 4) Tidy spacing
+    final = re.sub(r"\n{3,}", "\n\n", final).strip()
+    return final
+
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
@@ -394,7 +430,7 @@ def main():
             sent_cache.add(card_id)
             continue
 
-        # -------- Build links + decide which to send now --------
+                # -------- Build links + decide which to send now --------
         safe_id    = _safe_id_from_email(email_v)
         link_video = f"{PUBLIC_BASE}/p/?id={safe_id}"
         portfolio  = PORTFOLIO_URL
@@ -407,40 +443,30 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        # Adaptive copy (different for A vs B)
-        if is_ready:
-            extra_for_a = ""   # A: {extra} is a full line – we keep it blank when sample exists
-            extra_for_b = ""   # B: inline extra – also blank when sample exists
-            link_label  = "Portfolio + Sample (free)"
-        else:
-            extra_for_a = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-            extra_for_b = " — If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-            link_label  = LINK_TEXT or "My portfolio"
-            try:
-                trello_post(
-                    f"cards/{card_id}/actions/comments",
-                    text="Pending follow-up: sample not ready at send time"
-                )
-            except Exception:
-                pass
-
-        extra_line = extra_for_b if use_b else extra_for_a
-
-        # Fill
+        # --- Subject (no special extra logic needed) ---
         subject = fill_template(
             subj_tpl,
-            company=company, first=first, from_name=FROM_NAME,
-            link=chosen_link, extra=extra_line
-        )
-        body = fill_template(
-            body_tpl,
-            company=company, first=first, from_name=FROM_NAME,
-            link=chosen_link, extra=extra_line
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # If the template doesn't contain {extra}, append it neatly
-        if extra_line and ("{extra" not in body_tpl.lower()):
-            body = (body.rstrip() + "\n\n" + extra_line).strip()
+        # --- Two different extra lines depending on readiness ---
+        extra_ready = "I included a quick sample for you below."
+        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+
+        # --- Build the body with two-{extra} logic ---
+        body = fill_with_two_extras(
+            body_tpl,
+            company=company,
+            first=first,
+            from_name=FROM_NAME,
+            link=chosen_link,
+            is_ready=is_ready,
+            extra_ready=extra_ready,
+            extra_wait=extra_wait
+        )
+
+        # --- Link label for the anchor/button ---
+        link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
 
         # Send
         try:
@@ -458,6 +484,7 @@ def main():
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
+        # Mark sent (Trello + cache)
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
