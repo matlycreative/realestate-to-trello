@@ -83,6 +83,8 @@ PUBLIC_BASE = _get_env("PUBLIC_BASE")  # e.g., https://matlycreative.pages.dev
 LINK_TEXT   = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR  = _get_env("LINK_COLOR", default="")  # optional CSS color
 
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
+
 # HTTP session
 UA = f"TrelloEmailer/1.6 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
@@ -266,30 +268,44 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # Build links
+    # Build personalized links
 safe_id    = _safe_id_from_email(email_v)
 link_video = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe_id}"
 portfolio  = (PORTFOLIO_URL or PUBLIC_BASE or "").rstrip("/")
 
-# Choose link by Variant
-variant = (fields.get("Variant") or "").strip().lower()
-use_portfolio = variant in ("portfolio", "no video", "novideo", "no-video", "plain", "site")
-chosen_link = portfolio if use_portfolio else link_video
+# Check if sample is ready (your /api/sample returns { streamUrl: ... } when ready)
+is_ready = False
+try:
+    chk = SESS.get(f"{PUBLIC_BASE.rstrip('/')}/api/sample?id={safe_id}", timeout=10)
+    data = chk.json() if chk.ok else {}
+    is_ready = bool(data.get("streamUrl"))
+except Exception:
+    is_ready = False
 
-# (Optional but recommended) Gate sending for "video" until sample is ready
-is_ready = True
-if not use_portfolio:
-    try:
-        chk = SESS.get(f"{PUBLIC_BASE.rstrip('/')}/api/sample?id={safe_id}", timeout=10)
-        data = chk.json() if chk.ok else {}
-        # our /api/sample returns { streamUrl, ... } when ready
-        is_ready = bool(data.get("streamUrl"))
-    except Exception:
-        is_ready = False
+# Choose exactly one link for this one-time email
+chosen_link = link_video if is_ready else portfolio
 
-if not is_ready:
-    print(f"Skip: sample not ready yet for '{title}' ({email_v})")
-    continue
+# Choose template A/B (B if First present)
+use_b    = bool(first)
+subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+body_tpl = BODY_B    if use_b else BODY_A
+
+# Fill templates with the chosen link
+subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
+body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
+
+# Send once
+send_email(
+    email_v,
+    subject,
+    body,
+    link_url=chosen_link,   # drives the HTML <a>…>My portfolio</a>
+    link_text=LINK_TEXT,    # e.g., "My portfolio"
+    link_color=LINK_COLOR
+)
+
+processed += 1
+print(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'}")
                 
 
     # ---- HTML part
