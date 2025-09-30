@@ -7,19 +7,10 @@ For each card:
 - Choose template A (no First) or B (has First).
 - Build a personalized link from PUBLIC_BASE + the prospect's email.
 - If /api/sample?id=... returns a stream URL, use the video link.
-  Otherwise, use PORTFOLIO_URL (or PUBLIC_BASE) and leave a Trello comment
+  Otherwise, use PORTFOLIO_URL (or PUBLIC_BASE) and add a Trello comment
   ("Pending follow-up: sample not ready at send time").
 - Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
-
-Required env:
-  TRELLO_KEY, TRELLO_TOKEN, TRELLO_LIST_ID_DAY0, FROM_EMAIL, SMTP_PASS, PUBLIC_BASE
-Optional env:
-  SMTP_HOST, SMTP_PORT, SMTP_USER, FROM_NAME, LINK_TEXT, LINK_COLOR,
-  SUBJECT_A, BODY_A, SUBJECT_B, BODY_B,
-  PORTFOLIO_URL,
-  SIGNATURE_* flags, INCLUDE_PLAIN_URL,
-  SENT_MARKER_TEXT, SENT_CACHE_FILE, MAX_SEND_PER_RUN
 """
 
 import os, re, time, json, html, mimetypes
@@ -84,19 +75,19 @@ LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
 
 # --- normalize bases (add https:// if missing, strip trailing /) ---
-PUBLIC_BASE_RAW = PUBLIC_BASE
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
     if not u: return ""
     if not re.match(r"^https?://", u, flags=re.I):
         u = "https://" + u
     return u.rstrip("/")
+
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}")
 
 # HTTP session
-UA = f"TrelloEmailer/1.8 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer/1.9 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -207,7 +198,7 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
 
-def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "") -> str:
+def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
         if key == "company":   return company or ""
@@ -331,7 +322,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     # SMTP send with retry
     for attempt in range(3):
         try:
-            import smtplib
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
                 if SMTP_USE_TLS:
                     s.starttls()
@@ -432,16 +422,15 @@ def main():
         is_ready    = _sample_ready(safe_id)
         chosen_link = link_video if is_ready else portfolio
 
-      # Adaptive copy bits
-    if is_ready:
-        extra_line = "as well as a free sample i made with your content"  # or something short like: "Here’s a quick sample I cut for you:"
-        link_label = "Watch your sample"
-    else:
-        extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-        link_label = LINK_TEXT or "My portfolio"
-
-        # Leave breadcrumb if we fell back to portfolio
-        if not is_ready:
+        # Adaptive copy bits
+        if is_ready:
+            # keep it optional/short; or "" if you don’t want any extra line
+            extra_line = ""
+            link_label = "Watch your sample"
+        else:
+            extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+            link_label = LINK_TEXT or "My portfolio"
+            # Leave breadcrumb if we fell back to portfolio
             try:
                 trello_post(
                     f"cards/{card_id}/actions/comments",
@@ -455,12 +444,18 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link, extra=extra_line)
-        body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link, extra=extra_line)
+        subject = fill_template(
+            subj_tpl,
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link, extra=extra_line
+        )
+        body = fill_template(
+            body_tpl,
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link, extra=extra_line
+        )
 
-      # If templates don’t have {extra}, append it neatly
-      if extra_line and ("{extra" not in body_tpl.lower()):
-          body = (body.rstrip() + "\n\n" + extra_line).strip()
+        # If templates don’t have {extra}, append it neatly
+        if extra_line and ("{extra" not in body_tpl.lower()):
+            body = (body.rstrip() + "\n\n" + extra_line).strip()
 
         try:
             send_email(
