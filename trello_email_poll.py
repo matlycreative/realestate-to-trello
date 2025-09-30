@@ -69,6 +69,21 @@ LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
 
+# --- after your existing env reads ---
+PUBLIC_BASE_RAW = PUBLIC_BASE  # keep original for debug if you want
+
+def _norm_base(u: str) -> str:
+    u = (u or "").strip()
+    if not u:
+        return ""
+    # add scheme if missing
+    if not re.match(r"^https?://", u, flags=re.I):
+        u = "https://" + u
+    return u.rstrip("/")
+
+PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
+PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
+
 # HTTP session
 UA = f"TrelloEmailer/1.7 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
