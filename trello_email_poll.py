@@ -434,7 +434,7 @@ def main():
 
       # Adaptive copy bits
     if is_ready:
-        extra_line = ""  # or something short like: "Here’s a quick sample I cut for you:"
+        extra_line = "as well as a free sample i made with your content"  # or something short like: "Here’s a quick sample I cut for you:"
         link_label = "Watch your sample"
     else:
         extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
