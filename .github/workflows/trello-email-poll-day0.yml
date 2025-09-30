@@ -3,8 +3,10 @@ name: Trello Day-0 Email
 on:
   workflow_dispatch:
   schedule:
-    - cron: "45 6 * * *"   # 08:45 GMT+2
-    - cron: "45 14 * * *"  # 16:45 GMT+2
+    # 08:45 GMT+2 → 06:45 UTC
+    - cron: "45 6 * * *"
+    # 16:45 GMT+2 → 14:45 UTC
+    - cron: "45 14 * * *"
 
 permissions:
   contents: read
