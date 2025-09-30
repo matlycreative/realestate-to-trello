@@ -5,14 +5,15 @@ Day-0: Poll a Trello list and send one email per card.
 - Parse Company / First / Email from the card description.
 - Choose template A (no First) or B (has First).
 - Build a personalized link from PUBLIC_BASE + the prospect's email.
-- If /api/sample?id=... returns a stream URL, use the video link.
-  Otherwise, use PORTFOLIO_URL (or PUBLIC_BASE) and add a Trello comment.
+- If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
+  otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
 - Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
 
 import os, re, time, json, html, mimetypes
 from datetime import datetime
+from typing import Tuple
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -54,10 +55,7 @@ if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
     SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
 
-  # ----------------- BODY A -----------------
-  
-    BODY_A    = _get_env("BODY_A", default=
-                         
+    BODY_A = _get_env("BODY_A", default=
 """Hi there, hope you're doing well,
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -70,11 +68,8 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 
 Best,
 Matthieu from Matly""")
-  
-# ----------------- BODY B -----------------
-  
-    BODY_B    = _get_env("BODY_B", default=
-                         
+
+    BODY_B = _get_env("BODY_B", default=
 """hi {first}
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -87,14 +82,11 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 
 Best,
 Matthieu from Matly""")
-  
 else:
     # Hardcoded subjects/bodies you can edit directly:
     SUBJECT_A = "Polished videos for {company}'s listings"
     SUBJECT_B = "Polished videos for {company}'s listings"
 
-  # ----------------- BODY A -----------------
-  
     BODY_A = """Hi there, hope you're doing well,
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -108,8 +100,6 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 Best,
 Matthieu from Matly"""
 
-  # ----------------- BODY B -----------------
-
     BODY_B = """hi {first}
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -122,6 +112,7 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 
 Best,
 Matthieu from Matly"""
+
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
@@ -273,7 +264,6 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
-# --- add this helper next to fill_template ---
 def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: str, link: str) -> str:
     def repl(m):
         key = m.group(1).strip().lower()
@@ -282,7 +272,6 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: s
         if key == "from_name": return from_name or ""
         if key == "link":      return link or ""
         return m.group(0)
-    # NOTE: deliberately NO "extra" in the regex keys
     return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
 # --- Two-{extra} logic: fill only the correct slot ---
@@ -309,7 +298,9 @@ def fill_with_two_extras(
     # 3) Remove any further {extra} occurrences, just in case
     final = EXTRA_TOKEN.sub("", step2)
 
-    # 4) Tidy spacing
+    # 4) Tidy spacing + remove a stray " : " that can remain when the first {extra} was removed
+    #    (e.g., template "... {extra} : {link}" would otherwise leave " : {link}" in not-ready case)
+    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
 
@@ -432,7 +423,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             time.sleep(1.5 * (attempt + 1))
 
 # --------------- Sample info helper ----------------
-def _sample_info(safe_id: str) -> tuple[bool, str]:
+def _sample_info(safe_id: str) -> Tuple[bool, str]:
     """
     Query /api/sample?id=<safe_id>.
     Returns (is_ready, best_link_to_use).
@@ -485,7 +476,7 @@ def _sample_info(safe_id: str) -> tuple[bool, str]:
     except Exception as e:
         log(f"[ready?] error: {e}")
         return (False, PORTFOLIO_URL)
-      
+
 # --------------- Main Flow ----------------
 def main():
     require_env()
@@ -523,7 +514,7 @@ def main():
             sent_cache.add(card_id)
             continue
 
-                # -------- Build links + decide which to send now --------
+        # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
         is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready
 
@@ -532,29 +523,30 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-      n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
-      log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
+        n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
+        log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
-        # --- Subject (no special extra logic needed) ---
+        # --- Subject ---
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
-                  n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
-        log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
         )
 
         # --- Two different extra lines depending on readiness ---
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
-        # 3) Remove any further {extra} occurrences, just in case
-        final = EXTRA_TOKEN.sub("", step2)
-
-    # 4) Tidy spacing + remove a stray " : " if the first {extra} was removed
-    #    (e.g., template "... {extra} : {link}" becomes "... : {link}" when not ready)
-    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
-    final = re.sub(r"\n{3,}", "\n\n", final).strip()
-    return final
+        # --- Build the body with two-{extra} logic ---
+        body = fill_with_two_extras(
+            body_tpl,
+            company=company,
+            first=first,
+            from_name=FROM_NAME,
+            link=chosen_link,
+            is_ready=is_ready,
+            extra_ready=extra_ready,
+            extra_wait=extra_wait
+        )
 
         # --- Link label for the anchor/button ---
         link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
