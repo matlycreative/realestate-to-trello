@@ -2,13 +2,11 @@
 """
 Day-0: Poll a Trello list and send one email per card.
 
-For each card:
 - Parse Company / First / Email from the card description.
 - Choose template A (no First) or B (has First).
 - Build a personalized link from PUBLIC_BASE + the prospect's email.
 - If /api/sample?id=... returns a stream URL, use the video link.
-  Otherwise, use PORTFOLIO_URL (or PUBLIC_BASE) and add a Trello comment
-  ("Pending follow-up: sample not ready at send time").
+  Otherwise, use PORTFOLIO_URL (or PUBLIC_BASE) and add a Trello comment.
 - Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
@@ -17,12 +15,10 @@ import os, re, time, json, html, mimetypes
 from datetime import datetime
 import requests
 
-# ----------------- tiny logger -----------------
 def log(*a): print(*a, flush=True)
 
 # ----------------- Small helpers -----------------
 def _get_env(*names, default=""):
-    """Return the first non-empty env var among names (case-sensitive), else default."""
     for n in names:
         v = os.getenv(n)
         if v is not None and v.strip():
@@ -34,7 +30,6 @@ def _env_bool(name: str, default: str = "0") -> bool:
     return (val or "").strip().lower() in ("1", "true", "yes", "on")
 
 def _safe_id_from_email(email: str) -> str:
-    """Lowercase and replace @ and . with _ to match site-safe IDs."""
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
 
 # ----------------- Config / Env -----------------
@@ -67,14 +62,13 @@ INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
-MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))  # 0 = unlimited per run
+MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
 
-# --- normalize bases (add https:// if missing, strip trailing /) ---
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
     if not u: return ""
@@ -114,7 +108,6 @@ def require_env():
 
 # --------------- Trello helpers ----------------
 def _trello_call(method, url_path, **params):
-    """GET/POST with simple retry on Trello throttling."""
     for attempt in range(3):
         try:
             params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
@@ -250,18 +243,15 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     from email.message import EmailMessage
     import smtplib
 
-    # Normalize link target + label
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
     label = (link_text or "My portfolio").strip() or "My portfolio"
 
-    # Build variants for replacement
     full = link_url
     bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if bare else ""
 
-    # Plain-text body
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -272,7 +262,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML body via marker trick (avoid raw URL)
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
@@ -294,7 +283,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             html_core += f"<p>{anchor}</p>"
 
-    # Signature + assemble
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -305,7 +293,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
 
-    # Optional inline logo
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -319,7 +306,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         except Exception as e:
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # SMTP send with retry
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -336,10 +322,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
 
 # --------------- Sample readiness helper ----------------
 def _sample_ready(safe_id: str) -> bool:
-    """
-    Ask your Pages function if the sample is ready.
-    Prints exactly what we’re looking for.
-    """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
 
@@ -361,7 +343,6 @@ def _sample_ready(safe_id: str) -> bool:
             log("[ready?] non-JSON response")
             return False
 
-        # Accept any of these keys from your API:
         streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
         log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)}")
         if not streamish:
@@ -370,7 +351,6 @@ def _sample_ready(safe_id: str) -> bool:
             if err:
                 log(f"[ready?] API error: {err} (link tried: {link})")
             return False
-
         return True
 
     except Exception as e:
@@ -428,72 +408,41 @@ def main():
         body_tpl = BODY_B    if use_b else BODY_A
 
         # Adaptive copy (different for A vs B)
-          if is_ready:
-        # When a sample exists, no extra sentence needed
-        extra_for_a = ""
-        extra_for_b = ""
-        link_label  = "Portfolio + Sample (free)"
-  else:
-    # A has {extra} on its own line → plain sentence
-    extra_for_a = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-    # B puts {extra} inline after “clients” → add leading punctuation/space
-    extra_for_b = " — If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-    link_label  = LINK_TEXT or "My portfolio"
-    # Leave breadcrumb for follow-up
-    try:
-        trello_post(
-            f"cards/{card_id}/actions/comments",
-            text="Pending follow-up: sample not ready at send time"
-        )
-    except Exception:
-        pass
+        if is_ready:
+            extra_for_a = ""   # A: {extra} is a full line – we keep it blank when sample exists
+            extra_for_b = ""   # B: inline extra – also blank when sample exists
+            link_label  = "Portfolio + Sample (free)"
+        else:
+            extra_for_a = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+            extra_for_b = " — If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+            link_label  = LINK_TEXT or "My portfolio"
+            try:
+                trello_post(
+                    f"cards/{card_id}/actions/comments",
+                    text="Pending follow-up: sample not ready at send time"
+                )
+            except Exception:
+                pass
 
-extra_line = extra_for_b if use_b else extra_for_a
+        extra_line = extra_for_b if use_b else extra_for_a
 
-# Fill
-subject = fill_template(
-    subj_tpl,
-    company=company, first=first, from_name=FROM_NAME,
-    link=chosen_link, extra=extra_line
-)
-body = fill_template(
-    body_tpl,
-    company=company, first=first, from_name=FROM_NAME,
-    link=chosen_link, extra=extra_line
-)
-
-# If the template doesn't contain {extra}, append it neatly
-if extra_line and ("{extra" not in body_tpl.lower()):
-    body = (body.rstrip() + "\n\n" + extra_line).strip()
-
-# Send
-send_email(
-    email_v,
-    subject,
-    body,
-    link_url=chosen_link,
-    link_text=link_label,
-    link_color=LINK_COLOR
-)
-
-        # -------- Fill templates (A/B) and send --------
-        use_b    = bool(first)  # B if First is present
-        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
-        body_tpl = BODY_B    if use_b else BODY_A
-
+        # Fill
         subject = fill_template(
             subj_tpl,
-            company=company, first=first, from_name=FROM_NAME, link=chosen_link, extra=extra_line
+            company=company, first=first, from_name=FROM_NAME,
+            link=chosen_link, extra=extra_line
         )
         body = fill_template(
             body_tpl,
-            company=company, first=first, from_name=FROM_NAME, link=chosen_link, extra=extra_line
+            company=company, first=first, from_name=FROM_NAME,
+            link=chosen_link, extra=extra_line
         )
 
-        # If templates don’t have {extra}, append it neatly
+        # If the template doesn't contain {extra}, append it neatly
         if extra_line and ("{extra" not in body_tpl.lower()):
             body = (body.rstrip() + "\n\n" + extra_line).strip()
 
+        # Send
         try:
             send_email(
                 email_v,
@@ -509,7 +458,6 @@ send_email(
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
-        # Mark sent (Trello + local cache)
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
