@@ -422,22 +422,59 @@ def main():
         is_ready    = _sample_ready(safe_id)
         chosen_link = link_video if is_ready else portfolio
 
-        # Adaptive copy bits
-        if is_ready:
-            # keep it optional/short; or "" if you don’t want any extra line
-            extra_line = ""
-            link_label = "Portfolio + Sample (free)"
-        else:
-            extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
-            link_label = LINK_TEXT or "My portfolio"
-            # Leave breadcrumb if we fell back to portfolio
-            try:
-                trello_post(
-                    f"cards/{card_id}/actions/comments",
-                    text="Pending follow-up: sample not ready at send time"
-                )
-            except Exception:
-                pass
+        # Choose template A/B *before* composing extra
+        use_b    = bool(first)  # B if First is present
+        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+        body_tpl = BODY_B    if use_b else BODY_A
+
+        # Adaptive copy (different for A vs B)
+          if is_ready:
+        # When a sample exists, no extra sentence needed
+        extra_for_a = ""
+        extra_for_b = ""
+        link_label  = "Portfolio + Sample (free)"
+  else:
+    # A has {extra} on its own line → plain sentence
+    extra_for_a = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+    # B puts {extra} inline after “clients” → add leading punctuation/space
+    extra_for_b = " — If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+    link_label  = LINK_TEXT or "My portfolio"
+    # Leave breadcrumb for follow-up
+    try:
+        trello_post(
+            f"cards/{card_id}/actions/comments",
+            text="Pending follow-up: sample not ready at send time"
+        )
+    except Exception:
+        pass
+
+extra_line = extra_for_b if use_b else extra_for_a
+
+# Fill
+subject = fill_template(
+    subj_tpl,
+    company=company, first=first, from_name=FROM_NAME,
+    link=chosen_link, extra=extra_line
+)
+body = fill_template(
+    body_tpl,
+    company=company, first=first, from_name=FROM_NAME,
+    link=chosen_link, extra=extra_line
+)
+
+# If the template doesn't contain {extra}, append it neatly
+if extra_line and ("{extra" not in body_tpl.lower()):
+    body = (body.rstrip() + "\n\n" + extra_line).strip()
+
+# Send
+send_email(
+    email_v,
+    subject,
+    body,
+    link_url=chosen_link,
+    link_text=link_label,
+    link_color=LINK_COLOR
+)
 
         # -------- Fill templates (A/B) and send --------
         use_b    = bool(first)  # B if First is present
