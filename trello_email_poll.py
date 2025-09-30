@@ -214,8 +214,9 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         if key == "first":     return first or ""
         if key == "from_name": return from_name or ""
         if key == "link":      return link or ""
+        if key == "extra":     return extra or ""
         return m.group(0)
-    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
+    return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
@@ -431,6 +432,14 @@ def main():
         is_ready    = _sample_ready(safe_id)
         chosen_link = link_video if is_ready else portfolio
 
+      # Adaptive copy bits
+    if is_ready:
+        extra_line = ""  # or something short like: "Here’s a quick sample I cut for you:"
+        link_label = "Watch your sample"
+    else:
+        extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+        link_label = LINK_TEXT or "My portfolio"
+
         # Leave breadcrumb if we fell back to portfolio
         if not is_ready:
             try:
@@ -446,8 +455,12 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link)
-        body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link)
+        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link, extra=extra_line)
+        body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_EMAIL or FROM_NAME, link=chosen_link, extra=extra_line)
+
+      # If templates don’t have {extra}, append it neatly
+      if extra_line and ("{extra" not in body_tpl.lower()):
+          body = (body.rstrip() + "\n\n" + extra_line).strip()
 
         try:
             send_email(
@@ -455,7 +468,7 @@ def main():
                 subject,
                 body,
                 link_url=chosen_link,
-                link_text=LINK_TEXT,
+                link_text=link_label,
                 link_color=LINK_COLOR
             )
             processed += 1
