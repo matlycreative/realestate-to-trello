@@ -46,11 +46,78 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
-SUBJECT_A = _get_env("SUBJECT_A", default="Quick idea for {company}")
-BODY_A    = _get_env("BODY_A",    default="Hi there,\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
-SUBJECT_B = _get_env("SUBJECT_B", default="Quick idea for {company}")
-BODY_B    = _get_env("BODY_B",    default="Hi {first},\n\nWe help {company}...\n\n– {from_name}\n\n{link}")
+# ----------------- Templates (edit here) -----------------
+# Set USE_ENV_TEMPLATES=False to ignore env and use the hardcoded templates below.
+USE_ENV_TEMPLATES = False
 
+if USE_ENV_TEMPLATES:
+    SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
+
+  # ----------------- BODY A -----------------
+  
+    BODY_A    = _get_env("BODY_A", default=
+                         
+"""Hi there, hope you're doing well,
+
+I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
+
+Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+
+{extra}
+
+If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
+
+Best,
+Matthieu from Matly""")
+  
+# ----------------- BODY B -----------------
+  
+    BODY_B    = _get_env("BODY_B", default=
+                         
+"""hi {first}
+
+I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
+
+Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+
+{extra}
+
+If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
+
+Best,
+Matthieu from Matly""")
+  
+else:
+    # Hardcoded subjects/bodies you can edit directly:
+    SUBJECT_A = "Polished videos for {company}'s listings"
+    SUBJECT_B = "Polished videos for {company}'s listings"
+
+    BODY_A = """Hi there, hope you're doing well,
+
+I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
+
+Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+
+{extra}
+
+If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
+
+Best,
+{from_name}"""
+
+    BODY_B = """hi {first}
+
+I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
+
+Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+
+{extra}
+
+If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
+
+Best,
+{from_name}"""
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
