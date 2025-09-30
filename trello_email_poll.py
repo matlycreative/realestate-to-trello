@@ -450,7 +450,7 @@ def main():
         )
 
         # --- Two different extra lines depending on readiness ---
-        extra_ready = "I included a quick sample for you below."
+        extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
         # --- Build the body with two-{extra} logic ---
