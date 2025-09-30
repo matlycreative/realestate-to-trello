@@ -294,6 +294,17 @@ body_tpl = BODY_B    if use_b else BODY_A
 subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
+# --- Decide which link to use now
+chosen_link = link_video if is_ready else portfolio
+
+# If we had to fall back to portfolio, leave a breadcrumb for later follow-up
+if not is_ready:
+    try:
+        trello_post(f"cards/{card_id}/actions/comments",
+                    text="Pending follow-up: sample not ready at send time")
+    except Exception:
+        pass
+
 # Send once
 send_email(
     email_v,
