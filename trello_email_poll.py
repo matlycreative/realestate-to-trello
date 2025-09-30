@@ -426,7 +426,7 @@ def main():
         if is_ready:
             # keep it optional/short; or "" if you don’t want any extra line
             extra_line = ""
-            link_label = "Watch your sample"
+            link_label = "Portfolio + Sample (free)"
         else:
             extra_line = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
             link_label = LINK_TEXT or "My portfolio"
