@@ -41,6 +41,8 @@ jobs:
       # Build personalized link from this base + the prospect’s email
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
 
+      PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}   # if empty, we’ll fall back to PUBLIC_BASE
+
       # Friendly link appearance
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
