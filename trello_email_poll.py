@@ -93,6 +93,8 @@ else:
     SUBJECT_A = "Polished videos for {company}'s listings"
     SUBJECT_B = "Polished videos for {company}'s listings"
 
+  # ----------------- BODY A -----------------
+  
     BODY_A = """Hi there, hope you're doing well,
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -104,7 +106,9 @@ Here’s my portfolio with examples of how polished video can make properties mo
 If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
 
 Best,
-{from_name}"""
+Matthieu from Matly"""
+
+  # ----------------- BODY B -----------------
 
     BODY_B = """hi {first}
 
@@ -117,7 +121,7 @@ Here’s my portfolio with examples of how polished video can make properties mo
 If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
 
 Best,
-{from_name}"""
+Matthieu from Matly"""
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
