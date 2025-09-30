@@ -380,18 +380,33 @@ def main():
         link_video = f"{PUBLIC_BASE.rstrip('/')}/p/?id={safe_id}"
         portfolio  = (PORTFOLIO_URL or PUBLIC_BASE or "").rstrip("/")
 
-        # Is the sample ready?
-        is_ready = False
-        try:
-            chk = SESS.get(f"{PUBLIC_BASE.rstrip('/')}/api/sample?id={safe_id}", timeout=10)
-            data = chk.json() if chk.ok else {}
-            is_ready = bool(data.get("streamUrl"))
-        except Exception:
-            is_ready = False
-
+        is_ready = _sample_ready(safe_id)   # <— use the helper above
         chosen_link = link_video if is_ready else portfolio
 
-        if not is_ready:
+        # Is the sample ready?
+        def _sample_ready(safe_id: str) -> bool:
+          url = f"{PUBLIC_BASE.rstrip('/')}/api/sample?id={safe_id}"
+    try:
+        r = SESS.get(url, timeout=15)
+        preview = (r.text or "")[:300]
+        if not r.ok:
+            print(f"[ready?] GET {url} -> HTTP {r.status_code} :: {preview!r}")
+            return False
+        try:
+            data = r.json()
+        except Exception:
+            print(f"[ready?] GET {url} -> non-JSON :: {preview!r}")
+            return False
+          
+        # Accept either your newer {streamUrl: "..."} or older {signedUrl: "..."}
+        streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
+        if streamish:
+            return True
+        print(f"[ready?] GET {url} -> no stream key :: {data}")
+        return False
+    except Exception as e:
+        print(f"[ready?] GET {url} -> error: {e}")
+        return False
             # Leave breadcrumb for a future follow-up workflow
             try:
                 trello_post(
