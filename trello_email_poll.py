@@ -202,6 +202,18 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
+# --- add this helper next to fill_template ---
+def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: str, link: str) -> str:
+    def repl(m):
+        key = m.group(1).strip().lower()
+        if key == "company":   return company or ""
+        if key == "first":     return first or ""
+        if key == "from_name": return from_name or ""
+        if key == "link":      return link or ""
+        return m.group(0)
+    # NOTE: deliberately NO "extra" in the regex keys
+    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
+
 # --- Two-{extra} logic: fill only the correct slot ---
 EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
@@ -209,29 +221,21 @@ def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
     link: str, is_ready: bool, extra_ready: str, extra_wait: str
 ) -> str:
-    """
-    Replace standard placeholders first (company, first, from_name, link),
-    leaving {extra} untouched. Then:
-      - if is_ready  : first {extra} -> extra_ready, second -> removed
-      - if not ready : first {extra} -> removed,      second -> extra_wait
-    Any additional {extra} are removed. Cleans up triple blank lines.
-    """
-    # 1) Fill normal placeholders, but not {extra}
-    base = fill_template(
+    # 1) Fill normal placeholders, but DO NOT touch {extra}
+    base = fill_template_skip_extra(
         tpl,
-        company=company, first=first, from_name=from_name,
-        link=link, extra=""   # IMPORTANT: don't inject extra here
+        company=company, first=first, from_name=from_name, link=link
     )
 
-    # 2) Positional handling for the two extras
+    # 2) Positional handling for the two {extra}s
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # 1st -> ready text
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # 2nd -> removed
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # 1st -> removed
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # 2nd -> wait text
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
 
-    # 3) Remove any additional {extra}
+    # 3) Remove any further {extra} occurrences, just in case
     final = EXTRA_TOKEN.sub("", step2)
 
     # 4) Tidy spacing
