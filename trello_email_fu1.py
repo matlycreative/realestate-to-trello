@@ -151,7 +151,7 @@ def require_env():
     missing = []
     if not TRELLO_KEY:   missing.append("TRELLO_KEY")
     if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
-    if not LIST_ID:      missing.append("TRELLO_LIST_ID_DAY0")
+    if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU1")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
     if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
