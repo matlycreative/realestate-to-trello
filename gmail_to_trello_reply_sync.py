@@ -264,10 +264,6 @@ def main():
             M.store(eid, '+FLAGS', '\\Seen')
             continue
 
-        # Build the appended block with a centered label
-        center_label = "**RESPONSE**"  # Trello Markdown (no real centering)
-        block = f"{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
-
         for c in email_to_cards[sender]:
             cid    = c["id"]
             old    = c.get("desc") or ""
