@@ -81,18 +81,15 @@ else:
     SUBJECT_A = "Quick follow-up on listing videos for {company}"
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
 
-    BODY_A = """Hi there, hope you're doing well,
+     BODY_A = """Hi there,
 
-I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
-
-Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
 
-If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
-
 Best,
 Matthieu from Matly"""
+
 
     BODY_B = """hi {first}
 
@@ -102,6 +99,7 @@ Just following up on the portfolio I shared {extra}: {link}
 
 Best,
 Matthieu from Matly"""
+
 
 
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
