@@ -1,0 +1,49 @@
+name: Gmail ➜ Trello Reply Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # every 10 minutes, Monday–Friday (UTC)
+    - cron: "*/10 * * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+      # Gmail IMAP (use a Gmail App Password; IMAP must be enabled in Gmail)
+      IMAP_USER: ${{ secrets.IMAP_USER }}
+      IMAP_PASS: ${{ secrets.IMAP_PASS }}
+      IMAP_HOST: imap.gmail.com
+      IMAP_PORT: "993"
+
+      # Trello
+      TRELLO_KEY:        ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN:      ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_BOARD_ID:   ${{ secrets.TRELLO_BOARD_ID }}
+      TRELLO_DEST_LIST_ID: ${{ secrets.TRELLO_DEST_LIST_ID }}  # the list to move into
+
+      # Safety knobs (optional)
+      MAX_EMAILS_PER_RUN: "20"
+      BODY_MAX_CHARS: "4000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Run sync
+        run: python gmail_to_trello_reply_sync.py
