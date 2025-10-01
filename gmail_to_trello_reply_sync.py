@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Gmail → Trello reply sync (append at bottom + 'RESPONSE' label)
+Gmail → Trello reply sync (append at bottom + 'RESPONSE' label + R2 delete marker)
 
 - Polls Gmail IMAP for UNSEEN messages (INBOX).
 - For each email, finds Trello card(s) whose description has "Email: <sender>".
-- Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description,
-  placing a "RESPONSE" label just above the captured text.
+- Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description.
+- ALSO enqueues a Cloudflare R2 delete-marker so the sample for that email can be auto-deleted after N days.
 
 Env (required):
   IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
@@ -13,17 +13,25 @@ Env (required):
   IMAP_PORT (default: 993)
 
   TRELLO_KEY, TRELLO_TOKEN
-  TRELLO_BOARD_ID                          # Board to scan (all lists)
-  TRELLO_DEST_LIST_ID                      # List to move the card into (when a match is found)
+  TRELLO_BOARD_ID
+  TRELLO_DEST_LIST_ID
 
-Optional:
+Optional (reply capture):
   MAX_EMAILS_PER_RUN (default: 20)
-  BODY_MAX_CHARS (default: 4000)
+  BODY_MAX_CHARS     (default: 4000)
+
+Optional (R2 delete marker; if missing, marker is skipped):
+  R2_ACCOUNT_ID                  # Cloudflare account ID for R2
+  R2_ACCESS_KEY_ID
+  R2_SECRET_ACCESS_KEY
+  R2_BUCKET_NAME                 # e.g. samples
+  R2_MARKER_PREFIX (default: delete_markers)
+  R2_DELETE_AFTER_DAYS (default: 30)
 """
 
 import os, re, time, json, html, email, imaplib
 from email.header import decode_header, make_header
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -48,6 +56,16 @@ DEST_LIST_ID      = _get_env("TRELLO_DEST_LIST_ID")
 
 MAX_EMAILS_PER_RUN = int(_get_env("MAX_EMAILS_PER_RUN", default="20"))
 BODY_MAX_CHARS     = int(_get_env("BODY_MAX_CHARS", default="4000"))
+
+# R2 (optional)
+R2_ACCOUNT_ID         = _get_env("R2_ACCOUNT_ID", "CF_R2_ACCOUNT_ID")
+R2_ACCESS_KEY_ID      = _get_env("R2_ACCESS_KEY_ID", "CF_R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY  = _get_env("R2_SECRET_ACCESS_KEY", "CF_R2_SECRET_ACCESS_KEY")
+R2_BUCKET_NAME        = _get_env("R2_BUCKET_NAME", "R2_BUCKET")
+R2_MARKER_PREFIX      = _get_env("R2_MARKER_PREFIX", default="delete_markers")
+R2_DELETE_AFTER_DAYS  = int(_get_env("R2_DELETE_AFTER_DAYS", default="30"))
+
+R2_ENABLED = all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
 
 # ---------- Trello helpers ----------
 SESS = requests.Session()
@@ -106,7 +124,12 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(raw)
     return m.group(0).strip().lower() if m else ""
 
+def _safe_id_from_email(email_addr: str) -> str:
+    return (email_addr or "").strip().lower().replace("@","_").replace(".","_")
+
 # ---------- Gmail helpers ----------
+from email.message import Message
+
 def decode_mime_words(s: str | None) -> str:
     if not s: return ""
     try:
@@ -114,7 +137,7 @@ def decode_mime_words(s: str | None) -> str:
     except Exception:
         return s or ""
 
-def extract_plain_text(msg: email.message.Message) -> str:
+def extract_plain_text(msg: Message) -> str:
     """Prefer text/plain; fallback to stripped HTML; then remove quoted history + signatures."""
     parts = []
     if msg.is_multipart():
@@ -147,76 +170,87 @@ def extract_plain_text(msg: email.message.Message) -> str:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
 
-# ---------- Quote/history stripper ----------
 RE_REPLY_HEADER = re.compile(
     r"""(?imx)
     ^\s*
-    (?:On|Le)               # English "On", French "Le"
-    [^\n\r]*                # date/time/name stuff
-    (?:<[^>\n\r]+@[^>\n\r]+>|""" + EMAIL_RE.pattern + r""")?  # an email (angle-bracket or plain)
-    [^\n\r]*                # rest of line
+    (?:On|Le)
+    [^\n\r]*
+    (?:<[^>\n\r]+@[^>\n\r]+>|""" + EMAIL_RE.pattern + r""")?
+    [^\n\r]*
     (?:wrote:|a\ écrit\s*:)?\s*$
     """
 )
-
 def strip_quoted_reply(text: str) -> str:
-    """Remove quoted history and common signature blocks (EN/FR, Gmail desktop/mobile)."""
     if not text:
         return ""
-
-    # Hard cut at any obvious reply/forward markers
     patterns = [
-        RE_REPLY_HEADER,                         # "On Wed ... wrote:" or with just an email
-        r"(?im)^\s*From:\s.*$",                  # forwarded headers
-        r"(?im)^\s*De\s*:\s.*$",                 # FR 'De :'
+        RE_REPLY_HEADER,
+        r"(?im)^\s*From:\s.*$",
+        r"(?im)^\s*De\s*:\s.*$",
         r"(?im)^-+\s*Original Message\s*-+$",
         r"(?im)^Sent from my .*",
-        r"(?m)^--\s*$",                          # standard signature delimiter
-        r"(?m)^__+\s*$",                         # long underscore lines
-        r"(?im)^>.*$",                           # quoted lines
+        r"(?m)^--\s*$",
+        r"(?m)^__+\s*$",
+        r"(?im)^>.*$",
     ]
-
     cutoff = len(text)
     for pat in patterns:
         m = re.search(pat, text) if isinstance(pat, str) else pat.search(text)
         if m:
             cutoff = min(cutoff, m.start())
     text = text[:cutoff].rstrip()
-
-    # Remove any remaining quoted lines and inline “wrote:/a écrit:” tails
     lines = []
     for ln in text.splitlines():
         s = ln.strip()
-        if s.startswith(">"):
-            continue
-        if re.search(r"(?i)\bwrote:\s*$", s) or re.search(r"(?i)a écrit\s*:\s*$", s):
-            break
-        # Also stop if a line begins with On/Le and contains an email address
-        if (s.startswith("On ") or s.startswith("Le ")) and EMAIL_RE.search(s):
-            break
+        if s.startswith(">"): continue
+        if re.search(r"(?i)\bwrote:\s*$", s) or re.search(r"(?i)a écrit\s*:\s*$", s): break
+        if (s.startswith("On ") or s.startswith("Le ")) and EMAIL_RE.search(s): break
         lines.append(ln)
     return "\n".join(lines).strip()
 
 # ---------- Helpers for description update ----------
 def append_block(current_desc: str, block: str) -> str:
-    """Append the new block at the BOTTOM of the description with a single separator.
-    If the existing description already ends with a horizontal rule, don't add another.
-    """
+    """Append the new block at the BOTTOM of the description with a single separator."""
     cur = (current_desc or "").rstrip()
     if not cur:
         return block
-
     # last non-empty line
     non_empty = [ln for ln in cur.splitlines() if ln.strip()]
     last = non_empty[-1].strip() if non_empty else ""
-
-    # Trello Markdown horizontal rules: --- or *** or ___ (3+)
     if re.match(r"^(?:-{3,}|\*{3,}|_{3,})$", last):
-        sep = "\n\n"           # already has a rule → just add spacing
+        sep = "\n\n"         # already ends with a rule
     else:
-        sep = "\n\n---\n\n"    # add a single rule
-
+        sep = "\n\n---\n\n"  # add one rule
     return f"{cur}{sep}{block}"
+
+# ---------- R2 marker (optional) ----------
+def write_r2_delete_marker(safe_id: str, due_iso: str):
+    if not R2_ENABLED:
+        log("[r2] creds missing; skipping delete marker")
+        return
+    try:
+        import boto3
+        endpoint = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            region_name="auto",
+            endpoint_url=endpoint,
+        )
+        key = f"{R2_MARKER_PREFIX}/{safe_id}__{due_iso[:10].replace('-', '')}.json"
+        # If marker already exists, don't move the date earlier/later
+        try:
+            s3.head_object(Bucket=R2_BUCKET_NAME, Key=key)
+            log(f"[r2] marker already exists: {key}")
+            return
+        except Exception:
+            pass
+        body = json.dumps({"id": safe_id, "due": due_iso}).encode("utf-8")
+        s3.put_object(Bucket=R2_BUCKET_NAME, Key=key, Body=body, ContentType="application/json")
+        log(f"[r2] queued delete marker: {key} (due {due_iso})")
+    except Exception as e:
+        log(f"[r2] marker write failed: {e}")
 
 # ---------- Core ----------
 def main():
@@ -266,7 +300,6 @@ def main():
 
         from_hdr = decode_mime_words(msg.get("From", ""))
         subj_hdr = decode_mime_words(msg.get("Subject", ""))
-        # extract pure email address
         m = EMAIL_RE.search(from_hdr)
         sender = m.group(0).lower() if m else ""
         body = extract_plain_text(msg)
@@ -275,22 +308,24 @@ def main():
         log(f"[imap] from={sender} subject={subj_hdr!r}")
 
         if not sender or sender not in email_to_cards:
-            # mark as seen anyway so we don't loop forever on unmatched mail
             M.store(eid, '+FLAGS', '\\Seen')
             continue
 
-        # Build the appended block (no extra --- here; append_block handles the rule)
-        label = "**RESPONSE**"  # Trello Markdown (no real centering support)
+        # Queue deletion marker (once per sender)
+        safe_id = _safe_id_from_email(sender)
+        due_iso = (datetime.utcnow() + timedelta(days=R2_DELETE_AFTER_DAYS)).isoformat(timespec="seconds") + "Z"
+        write_r2_delete_marker(safe_id, due_iso)
+
+        # Build the appended block (append_block adds the single --- rule)
+        label = "**RESPONSE**"  # Trello Markdown; not actually centered
         block = f"{label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
         for c in email_to_cards[sender]:
             cid    = c["id"]
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
-
             new_desc = append_block(old, block)
 
-            # 3) Move + update desc
             try:
                 trello_put(f"cards/{cid}", idList=DEST_LIST_ID, desc=new_desc)
                 trello_post(f"cards/{cid}/actions/comments", text=f"Synced reply from {sender} — {when}")
@@ -298,7 +333,6 @@ def main():
             except Exception as e:
                 log(f"[trello] update failed for {title}: {e}")
 
-        # mark email as seen so we don't process it again
         M.store(eid, '+FLAGS', '\\Seen')
         processed += 1
         time.sleep(0.6)
