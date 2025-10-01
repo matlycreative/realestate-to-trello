@@ -266,7 +266,7 @@ def main():
 
         # Build the appended block with a centered label
         center_label = "**RESPONSE**"  # Trello Markdown (no real centering)
-        block = f"---\n\n{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
+        block = f"{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
         for c in email_to_cards[sender]:
             cid    = c["id"]
