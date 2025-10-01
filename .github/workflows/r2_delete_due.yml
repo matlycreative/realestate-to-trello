@@ -3,32 +3,32 @@ name: R2 – Delete due samples
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"   # daily at 03:00 UTC (adjust as you like)
+    - cron: "0 3 * * *"   # daily at 03:00 UTC
 
 permissions:
   contents: read
 
 jobs:
   delete-due:
-    # If your secrets are saved under a named Environment in GitHub,
-    # uncomment this and set the correct environment name:
-    # environment:
-    #   name: production
-
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # If your secrets are stored under a GitHub Environment, uncomment:
+    # environment:
+    #   name: production
+
     env:
-      # Required R2 creds + bucket
+      # Required R2 creds + bucket (make sure these secrets exist!)
       R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+      R2_BUCKET:            ${{ secrets.R2_BUCKET }}           # bucket name only
 
-      # Optional (defaults in script are fine; include if you customized)
-      KEY_PREFIX_POINTERS: "pointers"
-      KEY_PREFIX_VIDEOS:   "videos"
-      OLDER_THAN_DAYS:     "30"
+      # Optional: customize prefixes / markers / dry-run
+      R2_MARKER_PREFIX:     delete_markers
+      KEY_PREFIX_POINTERS:  pointers
+      KEY_PREFIX_VIDEOS:    videos
+      DRY_RUN:              "0"
 
     steps:
       - uses: actions/checkout@v4
@@ -40,18 +40,17 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install boto3 botocore python-dateutil
+          python -m pip install boto3 botocore
 
       - name: Debug env presence (no secrets printed)
         run: |
           python - <<'PY'
           import os
-          keys = ["R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET"]
-          for k in keys:
-              print(f"{k} =", "set" if os.getenv(k) else "(missing)")
-          print("KEY_PREFIX_POINTERS =", os.getenv("KEY_PREFIX_POINTERS"))
-          print("KEY_PREFIX_VIDEOS   =", os.getenv("KEY_PREFIX_VIDEOS"))
-          print("OLDER_THAN_DAYS     =", os.getenv("OLDER_THAN_DAYS"))
+          for k in ["R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET","R2_BUCKET_NAME"]:
+              v = os.getenv(k)
+              print(f"{k}:","set" if (v and v.strip()) else "(missing)")
+          for k in ["R2_MARKER_PREFIX","KEY_PREFIX_POINTERS","KEY_PREFIX_VIDEOS","DRY_RUN"]:
+              print(f"{k}:", os.getenv(k))
           PY
 
       - name: Run cleanup
