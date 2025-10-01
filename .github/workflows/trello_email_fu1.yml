@@ -15,7 +15,6 @@ jobs:
   send-fu1:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     env:
       PYTHONUNBUFFERED: "1"
 
@@ -23,7 +22,6 @@ jobs:
       TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_FU1: ${{ secrets.TRELLO_LIST_ID_FU1 }}
-      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_FU1 }}
 
       # SMTP
       SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
@@ -46,23 +44,28 @@ jobs:
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # (Templates only used if your script has USE_ENV_TEMPLATES=True)
+      # FU1 templates (read by the script because USE_ENV_TEMPLATES defaults to 1)
       SUBJECT_A: ${{ secrets.SUBJECT_A_FU1 }}
       BODY_A:    ${{ secrets.BODY_A_FU1 }}
       SUBJECT_B: ${{ secrets.SUBJECT_B_FU1 }}
       BODY_B:    ${{ secrets.BODY_B_FU1 }}
 
+      # Appearance
       EMAIL_FONT_PX: "16"
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
       SIGNATURE_INLINE: "0"
       SIGNATURE_MAX_W_PX: "200"
       SIGNATURE_ADD_NAME: "0"
 
+      # Link rendering
       INCLUDE_PLAIN_URL: "0"
 
-      # 👇 different marker + cache so Day-0 and FU1 don’t collide
+      # Different marker/cache so Day-0 and FU1 don’t collide
       SENT_MARKER_TEXT: "Sent: FU1"
       SENT_CACHE_FILE: ".data/.sent_fu1.json"
+
+      # Make sure we actually use the env templates
+      USE_ENV_TEMPLATES: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -80,5 +83,5 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Run sender (same script)
-        run: python trello_email_poll.py
+      - name: Run FU1 sender
+        run: python trello_email_poll_fu1.py
