@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Gmail → Trello reply sync (append at bottom + centered 'RESPONSE' label)
+Gmail → Trello reply sync (append at bottom + 'RESPONSE' label)
 
 - Polls Gmail IMAP for UNSEEN messages (INBOX).
 - For each email, finds Trello card(s) whose description has "Email: <sender>".
 - Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description,
-  placing a centered "RESPONSE" label just above the captured text.
+  placing a "RESPONSE" label just above the captured text.
 
 Env (required):
   IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
@@ -147,47 +147,52 @@ def extract_plain_text(msg: email.message.Message) -> str:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
 
+# ---------- Quote/history stripper ----------
+RE_REPLY_HEADER = re.compile(
+    r"""(?imx)
+    ^\s*
+    (?:On|Le)               # English "On", French "Le"
+    [^\n\r]*                # date/time/name stuff
+    (?:<[^>\n\r]+@[^>\n\r]+>|""" + EMAIL_RE.pattern + r""")?  # an email (angle-bracket or plain)
+    [^\n\r]*                # rest of line
+    (?:wrote:|a\ écrit\s*:)?\s*$
+    """
+)
+
 def strip_quoted_reply(text: str) -> str:
-    ...
+    """Remove quoted history and common signature blocks (EN/FR, Gmail desktop/mobile)."""
+    if not text:
+        return ""
+
+    # Hard cut at any obvious reply/forward markers
+    patterns = [
+        RE_REPLY_HEADER,                         # "On Wed ... wrote:" or with just an email
+        r"(?im)^\s*From:\s.*$",                  # forwarded headers
+        r"(?im)^\s*De\s*:\s.*$",                 # FR 'De :'
+        r"(?im)^-+\s*Original Message\s*-+$",
+        r"(?im)^Sent from my .*",
+        r"(?m)^--\s*$",                          # standard signature delimiter
+        r"(?m)^__+\s*$",                         # long underscore lines
+        r"(?im)^>.*$",                           # quoted lines
+    ]
+
+    cutoff = len(text)
+    for pat in patterns:
+        m = re.search(pat, text) if isinstance(pat, str) else pat.search(text)
+        if m:
+            cutoff = min(cutoff, m.start())
+    text = text[:cutoff].rstrip()
+
+    # Remove any remaining quoted lines and inline “wrote:/a écrit:” tails
     lines = []
     for ln in text.splitlines():
         s = ln.strip()
         if s.startswith(">"):
             continue
-        # NEW: stop at Gmail/FR reply headers that include an email, even without "wrote:"
-        if (s.startswith("On ") or s.startswith("Le ")) and EMAIL_RE.search(s):
-            break
         if re.search(r"(?i)\bwrote:\s*$", s) or re.search(r"(?i)a écrit\s*:\s*$", s):
             break
-        lines.append(ln)
-    return "\n".join(lines).strip()
-
-    # Cut at common reply separators (make this aggressive)
-    patterns = [
-        r"(?im)^\s*On .*wrote:\s*$",                 # EN: On Wed, Oct 1, 2025 ... wrote:
-        r"(?im)^\s*Le .*a écrit\s*:\s*$",            # FR: Le mer. 1 oct. 2025 ... a écrit :
-        r"(?im)^\s*From:\s.*$",                      # forwarded headers
-        r"(?im)^\s*De\s*:\s.*$",                     # FR 'De :'
-        r"(?im)^---+ ?Original Message ?---+$",
-        r"(?im)^Sent from my .*",
-        r"(?m)^--\s*$",                              # standard signature delimiter
-        r"(?m)^__+\s*$",                             # long underscore lines
-        r"(?im)^>.+$",                               # quoted lines
-    ]
-    cutoff = len(text)
-    for pat in patterns:
-        m = re.search(pat, text)
-        if m:
-            cutoff = min(cutoff, m.start())
-    text = text[:cutoff].rstrip()
-
-    # Remove any remaining quoted lines or trailing “wrote:” variants on the same line
-    lines = []
-    for ln in text.splitlines():
-        if ln.strip().startswith(">"):
-            continue
-        # If the line itself contains a trailing wrote/a écrit marker, drop it and everything after
-        if re.search(r"(?i)\bwrote:\s*$", ln) or re.search(r"(?i)a écrit\s*:\s*$", ln):
+        # Also stop if a line begins with On/Le and contains an email address
+        if (s.startswith("On ") or s.startswith("Le ")) and EMAIL_RE.search(s):
             break
         lines.append(ln)
     return "\n".join(lines).strip()
@@ -274,15 +279,15 @@ def main():
             M.store(eid, '+FLAGS', '\\Seen')
             continue
 
-        # Build the appended block with a centered label
-        center_label = "**RESPONSE**"  # Trello Markdown (no real centering)
-        block = f"{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
+        # Build the appended block (no extra --- here; append_block handles the rule)
+        label = "**RESPONSE**"  # Trello Markdown (no real centering support)
+        block = f"{label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
-       for c in email_to_cards[sender]:
+        for c in email_to_cards[sender]:
             cid    = c["id"]
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
-         
+
             new_desc = append_block(old, block)
 
             # 3) Move + update desc
