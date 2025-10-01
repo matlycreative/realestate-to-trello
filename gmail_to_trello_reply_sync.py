@@ -4,7 +4,7 @@ Gmail → Trello reply sync
 
 - Polls Gmail IMAP for UNSEEN messages (INBOX).
 - For each email, finds Trello card(s) whose description has "Email: <sender>".
-- Moves matching card(s) to a target list and prepends the email (Subject/Body) to the description.
+- Moves matching card(s) to a target list and appends the email (Subject/Body) to the description.
 
 Requirements (env):
   IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
@@ -130,7 +130,6 @@ def extract_plain_text(msg: email.message.Message) -> str:
             if ctype.startswith("text/plain"):
                 parts.append(text)
             elif not parts and ctype.startswith("text/html"):
-                # only fallback to html if we have no plain text yet
                 stripped = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", text)
                 stripped = re.sub(r"(?is)<br\s*/?>", "\n", stripped)
                 stripped = re.sub(r"(?is)</p\s*>", "\n\n", stripped)
@@ -140,10 +139,17 @@ def extract_plain_text(msg: email.message.Message) -> str:
         payload = msg.get_payload(decode=True) or b""
         parts.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
     body = "\n".join(p.strip() for p in parts if p is not None).strip()
-    # trim long threads
     if len(body) > BODY_MAX_CHARS:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
+
+# ---------- Append helper (NEW) ----------
+def append_block(current_desc: str, block: str) -> str:
+    cur = (current_desc or "").rstrip()
+    if not cur:
+        return block
+    # nice visual separator; Trello supports Markdown
+    return f"{cur}\n\n---\n\n{block}"
 
 # ---------- Core ----------
 def main():
@@ -193,7 +199,6 @@ def main():
 
         from_hdr = decode_mime_words(msg.get("From", ""))
         subj_hdr = decode_mime_words(msg.get("Subject", ""))
-        # extract pure email address
         m = EMAIL_RE.search(from_hdr)
         sender = m.group(0).lower() if m else ""
         body = extract_plain_text(msg)
@@ -202,7 +207,6 @@ def main():
         log(f"[imap] from={sender} subject={subj_hdr!r}")
 
         if not sender or sender not in email_to_cards:
-            # mark as seen anyway so we don't loop forever on unmatched mail
             M.store(eid, '+FLAGS', '\\Seen')
             continue
 
@@ -211,16 +215,9 @@ def main():
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
 
-    
-def append_block(current_desc: str, block: str) -> str:
-    cur = (current_desc or "").rstrip()
-    if not cur:
-        return block
-    # nice visual separator; Trello supports Markdown
-    return f"{cur}\n\n---\n\n{block}"
-
-  block = f"Subject:\n\n{subject}\n\nBody:\n\n{body}\n"
-  new_desc = append_block(current_desc, block)
+            # build block and APPEND to bottom (changed here)
+            block = f"Subject :\n{subj_hdr}\n\nBody :\n{body}\n\n"
+            new_desc = append_block(old, block)
 
             # 3) Move + update desc
             try:
@@ -230,7 +227,6 @@ def append_block(current_desc: str, block: str) -> str:
             except Exception as e:
                 log(f"[trello] update failed for {title}: {e}")
 
-        # mark email as seen so we don't process it again
         M.store(eid, '+FLAGS', '\\Seen')
         processed += 1
         time.sleep(0.6)
