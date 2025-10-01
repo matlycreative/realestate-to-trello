@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+? #!/usr/bin/env python3
 """
 Day-0: Poll a Trello list and send one email per card.
 
