@@ -499,8 +499,8 @@ def main():
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        extra_ready = "— there’s also a free sample made with your content"
-        extra_wait  = "— if useful, I can cut a short sample this week at no cost"
+        extra_ready = "there’s also a free sample made with your content"
+        extra_wait  = "if you can send me 2-3 raw clips, I can make you a sample at no cost (free)"
 
         body = fill_with_two_extras(
             body_tpl,
