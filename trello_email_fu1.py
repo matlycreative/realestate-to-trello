@@ -1,6 +1,6 @@
 ? #!/usr/bin/env python3
 """
-Day-0: Poll a Trello list and send one email per card.
+follow_up_1: Poll a Trello list and send one email per card.
 
 - Parse Company / First / Email from the card description.
 - Choose template A (no First) or B (has First).
