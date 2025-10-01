@@ -36,7 +36,7 @@ def _safe_id_from_email(email: str) -> str:
 # ----------------- Config / Env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
-LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
+LIST_ID      = _get_env("TRELLO_LIST_ID_FU1", "TRELLO_LIST_ID")
 
 FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
 FROM_EMAIL = _get_env("FROM_EMAIL")
@@ -56,36 +56,29 @@ if USE_ENV_TEMPLATES:
     SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
 
     BODY_A = _get_env("BODY_A", default=
-"""Hi there, hope you're doing well,
+"""Hi there,
 
-I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
-
-Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
-
-If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
 
 Best,
 Matthieu from Matly""")
 
     BODY_B = _get_env("BODY_B", default=
-"""hi {first}
+"""Hi there,
 
-I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
-
-Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
 
-If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
-
 Best,
 Matthieu from Matly""")
+  
 else:
     # Hardcoded subjects/bodies you can edit directly:
-    SUBJECT_A = "Polished videos for {company}'s listings"
-    SUBJECT_B = "Polished videos for {company}'s listings"
+    SUBJECT_A = "Quick follow-up on listing videos for {company}"
+    SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
 
     BODY_A = """Hi there, hope you're doing well,
 
@@ -102,16 +95,13 @@ Matthieu from Matly"""
 
     BODY_B = """hi {first}
 
-I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
-
-Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
 
-If it looks useful, just reply — I’d be happy to chat about handling edits so you can focus on selling.
-
 Best,
 Matthieu from Matly"""
+
 
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
@@ -122,8 +112,8 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
-SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
-SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
+SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
+SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
@@ -534,7 +524,7 @@ def main():
 
         # --- Two different extra lines depending on readiness ---
         extra_ready = "as well as a free sample made with your content"
-        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+        extra_wait  = "If a short sample would help, I can cut one this week at no cost—just reply with 1–2 raw clips."
 
         # --- Build the body with two-{extra} logic ---
         body = fill_with_two_extras(
