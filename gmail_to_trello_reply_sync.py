@@ -184,11 +184,24 @@ def strip_quoted_reply(text: str) -> str:
 
 # ---------- Helpers for description update ----------
 def append_block(current_desc: str, block: str) -> str:
-    """Append the new block at the BOTTOM of the description with a separator."""
+    """Append the new block at the BOTTOM of the description with a single separator.
+    If the existing description already ends with a horizontal rule, don't add another.
+    """
     cur = (current_desc or "").rstrip()
     if not cur:
         return block
-    return f"{cur}\n\n---\n\n{block}"
+
+    # last non-empty line
+    non_empty = [ln for ln in cur.splitlines() if ln.strip()]
+    last = non_empty[-1].strip() if non_empty else ""
+
+    # Trello Markdown horizontal rules: --- or *** or ___ (3+)
+    if re.match(r"^(?:-{3,}|\*{3,}|_{3,})$", last):
+        sep = "\n\n"           # already has a rule → just add spacing
+    else:
+        sep = "\n\n---\n\n"    # add a single rule
+
+    return f"{cur}{sep}{block}"
 
 # ---------- Core ----------
 def main():
