@@ -211,8 +211,16 @@ def main():
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
 
-            block = f"Subject :\n{subj_hdr}\n\nBody :\n{body}\n\n"
-            new_desc = (block + old).strip()
+    
+def append_block(current_desc: str, block: str) -> str:
+    cur = (current_desc or "").rstrip()
+    if not cur:
+        return block
+    # nice visual separator; Trello supports Markdown
+    return f"{cur}\n\n---\n\n{block}"
+
+  block = f"Subject:\n\n{subject}\n\nBody:\n\n{body}\n"
+  new_desc = append_block(current_desc, block)
 
             # 3) Move + update desc
             try:
