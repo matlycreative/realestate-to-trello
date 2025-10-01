@@ -1,14 +1,14 @@
-? #!/usr/bin/env python3
+#!/usr/bin/env python3
 """
-follow_up_1: Poll a Trello list and send one email per card.
+FU1 — Poll a Trello list and send one email per card.
 
-- Parse Company / First / Email from the card description.
-- Choose template A (no First) or B (has First).
-- Build a personalized link from PUBLIC_BASE + the prospect's email.
-- If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
-  otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
-- Send via SMTP (plain text + HTML; optional inline signature logo).
-- Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
+- Reads cards from the list ID in TRELLO_LIST_ID_FU1.
+- Parses Company / First / Email from the card description.
+- Chooses template A (no First) or B (has First).
+- If /api/sample?id=<safe_id> returns a stream URL, we use the API 'link'.
+  Otherwise we fall back to PORTFOLIO_URL or PUBLIC_BASE.
+- Sends via SMTP (plain text + HTML; optional inline signature logo).
+- Marks the card with "Sent: FU1" and caches it locally so it won’t resend.
 """
 
 import os, re, time, json, html, mimetypes
@@ -47,60 +47,60 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
-# ----------------- Templates (edit here) -----------------
-# Set USE_ENV_TEMPLATES=False to ignore env and use the hardcoded templates below.
+# ----------------- Templates -----------------
+# Default: use templates coming from the workflow env.
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
 if USE_ENV_TEMPLATES:
-    SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
-    SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up on listing videos for {company}")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first} — listing videos at {company}")
 
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up in case you didn’t get a chance to look yet{extra}: {link}
 
 {extra}
 
+If it’s helpful, I can handle edits so you can focus on selling. Happy to share a short sample too.
 Best,
 Matthieu from Matly""")
 
     BODY_B = _get_env("BODY_B", default=
-"""Hi there,
+"""hi {first}
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up on the portfolio I shared{extra}: {link}
 
 {extra}
 
+If it’s helpful, I can handle edits so you can focus on selling.
 Best,
 Matthieu from Matly""")
-  
 else:
-    # Hardcoded subjects/bodies you can edit directly:
+    # Hardcoded FU1 copy (only used if USE_ENV_TEMPLATES is false)
     SUBJECT_A = "Quick follow-up on listing videos for {company}"
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
 
-     BODY_A = """Hi there,
+    BODY_A = """Hi there,
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up in case you didn’t get a chance to look yet{extra}: {link}
 
 {extra}
 
+If it’s helpful, I can handle edits so you can focus on selling. Happy to share a short sample too.
 Best,
 Matthieu from Matly"""
-
 
     BODY_B = """hi {first}
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up on the portfolio I shared{extra}: {link}
 
 {extra}
 
+If it’s helpful, I can handle edits so you can focus on selling.
 Best,
 Matthieu from Matly"""
-
-
 
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
@@ -132,7 +132,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}")
 
 # HTTP session
-UA = f"TrelloEmailer/1.9 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/1.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -169,8 +169,7 @@ def _trello_call(method, url_path, **params):
             r.raise_for_status()
             return r.json()
         except Exception:
-            if attempt == 2:
-                raise
+            if attempt == 2: raise
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError("Unreachable")
 
@@ -263,32 +262,23 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
-# --- Two-{extra} logic: fill only the correct slot ---
+# --- Two-{extra} logic ---
 EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
 def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
     link: str, is_ready: bool, extra_ready: str, extra_wait: str
 ) -> str:
-    # 1) Fill normal placeholders, but DO NOT touch {extra}
     base = fill_template_skip_extra(
-        tpl,
-        company=company, first=first, from_name=from_name, link=link
+        tpl, company=company, first=first, from_name=from_name, link=link
     )
-
-    # 2) Positional handling for the two {extra}s
     if is_ready:
         step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
         step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
     else:
         step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
-
-    # 3) Remove any further {extra} occurrences, just in case
     final = EXTRA_TOKEN.sub("", step2)
-
-    # 4) Tidy spacing + remove a stray " : " that can remain when the first {extra} was removed
-    #    (e.g., template "... {extra} : {link}" would otherwise leave " : {link}" in not-ready case)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
@@ -413,12 +403,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
 
 # --------------- Sample info helper ----------------
 def _sample_info(safe_id: str) -> Tuple[bool, str]:
-    """
-    Query /api/sample?id=<safe_id>.
-    Returns (is_ready, best_link_to_use).
-    If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
-    Handles relative links from the API.
-    """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
 
@@ -443,6 +427,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
 
         streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
         api_link  = (data.get("link") or "").strip()
+
         log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
 
         if not streamish:
@@ -452,7 +437,6 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
                 log(f"[ready?] API error: {err} (link tried: {link})")
             return (False, PORTFOLIO_URL)
 
-        # Normalize API link if it's relative or missing scheme
         if api_link:
             if api_link.startswith("/"):
                 api_link = f"{PUBLIC_BASE}{api_link}"
@@ -483,10 +467,8 @@ def main():
 
         card_id = c.get("id")
         title   = c.get("name","(no title)")
-        if not card_id:
-            continue
-        if card_id in sent_cache:
-            continue
+        if not card_id: continue
+        if card_id in sent_cache: continue
 
         desc = c.get("desc") or ""
         fields = parse_header(desc)
@@ -503,29 +485,24 @@ def main():
             sent_cache.add(card_id)
             continue
 
-        # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready
+        is_ready, chosen_link = _sample_info(safe_id)
 
-        # Choose template A/B *before* composing extra
-        use_b    = bool(first)  # B if First is present
+        use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
         n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
         log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
-        # --- Subject ---
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # --- Two different extra lines depending on readiness ---
-        extra_ready = "as well as a free sample made with your content"
-        extra_wait  = "If a short sample would help, I can cut one this week at no cost—just reply with 1–2 raw clips."
+        extra_ready = "— there’s also a free sample made with your content"
+        extra_wait  = "— if useful, I can cut a short sample this week at no cost"
 
-        # --- Build the body with two-{extra} logic ---
         body = fill_with_two_extras(
             body_tpl,
             company=company,
@@ -537,10 +514,8 @@ def main():
             extra_wait=extra_wait
         )
 
-        # --- Link label for the anchor/button ---
         link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
 
-        # Send
         try:
             send_email(
                 email_v,
@@ -556,7 +531,6 @@ def main():
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
-        # Mark sent (Trello + cache)
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
