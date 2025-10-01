@@ -36,6 +36,9 @@ import requests
 
 def log(*a): print(*a, flush=True)
 
+# before your env check:
+R2_BUCKET = (os.getenv("R2_BUCKET") or os.getenv("R2_BUCKET_NAME") or "").strip()
+
 # ---------- Env ----------
 def _get_env(*names, default=""):
     for n in names:
