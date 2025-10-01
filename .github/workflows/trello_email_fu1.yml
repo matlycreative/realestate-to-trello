@@ -84,4 +84,4 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run FU1 sender
-        run: python trello_email_poll_fu1.py
+        run: python trello_email_fu1.py
