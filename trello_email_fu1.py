@@ -49,7 +49,7 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 
 # ----------------- Templates -----------------
 # Default: use templates coming from the workflow env.
-USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "0").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
 if USE_ENV_TEMPLATES:
