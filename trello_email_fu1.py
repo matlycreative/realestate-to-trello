@@ -36,7 +36,7 @@ def _safe_id_from_email(email: str) -> str:
 # ----------------- Config / Env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
-LIST_ID      = _get_env("TRELLO_LIST_ID_FU1", "TRELLO_LIST_ID")
+LIST_ID      = _get_env("TRELLO_LIST_ID_FU1", "TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
 FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
 FROM_EMAIL = _get_env("FROM_EMAIL")
@@ -113,7 +113,7 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
-SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_.json")
+SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
@@ -151,7 +151,7 @@ def require_env():
     missing = []
     if not TRELLO_KEY:   missing.append("TRELLO_KEY")
     if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
-    if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU1")
+    if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU1 or TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
     if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
@@ -504,7 +504,7 @@ def main():
             continue
 
         if already_marked(card_id, SENT_MARKER_TEXT):
-            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {title}")
+            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {Sent: FU1}")
             sent_cache.add(card_id)
             continue
 
