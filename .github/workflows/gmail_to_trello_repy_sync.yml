@@ -1,9 +1,9 @@
-name: Gmail → Trello reply sync + R2 marker
+name: Gmail → Trello reply sync (+ optional R2 marker)
 
 on:
   workflow_dispatch:
   schedule:
-    # 24x at the top of each hour (UTC)
+    # 24× hourly (UTC)
     - cron: "0 0 * * *"
     - cron: "0 1 * * *"
     - cron: "0 2 * * *"
@@ -46,28 +46,29 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
 
-      # --- Gmail IMAP ---
+      # Gmail IMAP (App Password required)
       IMAP_USER:  ${{ secrets.IMAP_USER }}
       IMAP_PASS:  ${{ secrets.IMAP_PASS }}
-      # Optional overrides (defaults shown)
       IMAP_HOST:  imap.gmail.com
       IMAP_PORT:  "993"
 
-      # --- Trello ---
+      # Trello
       TRELLO_KEY:          ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN:        ${{ secrets.TRELLO_TOKEN }}
       TRELLO_BOARD_ID:     ${{ secrets.TRELLO_BOARD_ID }}
       TRELLO_DEST_LIST_ID: ${{ secrets.TRELLO_DEST_LIST_ID }}
 
-      # --- Script knobs (optional) ---
+      # Script knobs (optional)
       MAX_EMAILS_PER_RUN:  "20"
       BODY_MAX_CHARS:      "4000"
 
-      # --- Cloudflare R2 (enables delete-markers when all 4 are present) ---
+      # Optional Cloudflare R2 creds to enable delete-markers
       R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}   # or set R2_BUCKET
+      # Support either secret name; the script falls back automatically
+      R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}
+      R2_BUCKET:            ${{ secrets.R2_BUCKET }}
       R2_MARKER_PREFIX:     delete_markers
       R2_DELETE_AFTER_DAYS: "30"
 
