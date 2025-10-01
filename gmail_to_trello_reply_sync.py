@@ -118,6 +118,48 @@ def decode_mime_words(s: str | None) -> str:
     except Exception:
         return s
 
+# Strip quoted history from replies (common Gmail patterns, multi-language)
+QUOTE_HEAD_PATTERNS = [
+    re.compile(r"^On .+ wrote:\s*$", re.I),                          # EN
+    re.compile(r"^Le .+ a écrit\s*:\s*$", re.I),                     # FR
+    re.compile(r"^El .+ escribió\s*:\s*$", re.I),                    # ES
+    re.compile(r"^Am .+ schrieb\s*:\s*$", re.I),                     # DE
+    re.compile(r"^Il .+ ha scritto\s*:\s*$", re.I),                  # IT
+    re.compile(r"^Em .+ escreveu\s*:\s*$", re.I),                    # PT
+    re.compile(r"^Op .+ schreef\s*:\s*$", re.I),                     # NL
+    re.compile(r"^-{2,}\s*Original message\s*-{2,}\s*$", re.I),      # EN banner
+    re.compile(r"^-{2,}\s*Message d'origine\s*-{2,}\s*$", re.I),     # FR banner
+    re.compile(r"^---------- Forwarded message ---------\s*$", re.I),
+    re.compile(r"^From:\s.*$", re.I),                                # headers in quoted block
+    re.compile(r"^Sent:\s.*$", re.I),
+    re.compile(r"^Subject:\s.*$", re.I),
+]
+
+def strip_quoted_reply(body: str) -> str:
+    """
+    Keep only the fresh reply content (drop quoted history/signatures).
+    """
+    if not body:
+        return ""
+
+    lines = body.splitlines()
+    kept = []
+    for line in lines:
+        # Stop at common quote headers
+        if any(p.search(line) for p in QUOTE_HEAD_PATTERNS):
+            break
+        # Stop when the reply turns into a quoted block
+        if line.strip().startswith(">"):
+            break
+        kept.append(line)
+
+    text = "\n".join(kept).strip()
+
+    # Trim common signature separators and mobile footers
+    text = re.split(r"\n-- ?\n|\n__+\n|\nSent from my .*", text, maxsplit=1)[0].rstrip()
+
+    return text
+  
 def extract_plain_text(msg: email.message.Message) -> str:
     # prefer text/plain; fallback to stripped html
     parts = []
@@ -135,6 +177,7 @@ def extract_plain_text(msg: email.message.Message) -> str:
             if ctype.startswith("text/plain"):
                 parts.append(text)
             elif not parts and ctype.startswith("text/html"):
+                # only fallback to html if we have no plain text yet
                 stripped = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", text)
                 stripped = re.sub(r"(?is)<br\s*/?>", "\n", stripped)
                 stripped = re.sub(r"(?is)</p\s*>", "\n\n", stripped)
@@ -143,7 +186,13 @@ def extract_plain_text(msg: email.message.Message) -> str:
     else:
         payload = msg.get_payload(decode=True) or b""
         parts.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
+
     body = "\n".join(p.strip() for p in parts if p is not None).strip()
+
+    # NEW: remove quoted history / signatures
+    body = strip_quoted_reply(body)
+
+    # trim long replies (still apply your limit)
     if len(body) > BODY_MAX_CHARS:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
