@@ -8,27 +8,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: r2-delete-due
+  cancel-in-progress: true
+
 jobs:
   delete-due:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # If your secrets are stored under a GitHub Environment, uncomment:
-    # environment:
-    #   name: production
-
     env:
-      # Required R2 creds + bucket (make sure these secrets exist!)
+      # Required R2 creds + bucket
       R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_BUCKET:            ${{ secrets.R2_BUCKET }}           # bucket name only
+      # support either secret name; script falls back automatically
+      R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}
+      R2_BUCKET:            ${{ secrets.R2_BUCKET }}
 
-      # Optional: customize prefixes / markers / dry-run
-      R2_MARKER_PREFIX:     delete_markers
-      KEY_PREFIX_POINTERS:  pointers
-      KEY_PREFIX_VIDEOS:    videos
-      DRY_RUN:              "0"
+      # Optional
+      R2_MARKER_PREFIX: delete_markers
+      DRY_RUN: "0"
 
     steps:
       - uses: actions/checkout@v4
@@ -40,18 +40,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install boto3 botocore
-
-      - name: Debug env presence (no secrets printed)
-        run: |
-          python - <<'PY'
-          import os
-          for k in ["R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET","R2_BUCKET_NAME"]:
-              v = os.getenv(k)
-              print(f"{k}:","set" if (v and v.strip()) else "(missing)")
-          for k in ["R2_MARKER_PREFIX","KEY_PREFIX_POINTERS","KEY_PREFIX_VIDEOS","DRY_RUN"]:
-              print(f"{k}:", os.getenv(k))
-          PY
+          python -m pip install boto3
 
       - name: Run cleanup
         run: python r2_delete_due.py
