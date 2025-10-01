@@ -49,7 +49,8 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 
 # ----------------- Templates (edit here) -----------------
 # Set USE_ENV_TEMPLATES=False to ignore env and use the hardcoded templates below.
-USE_ENV_TEMPLATES = False
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
