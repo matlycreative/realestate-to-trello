@@ -7,24 +7,18 @@ Gmail → Trello reply sync (append at bottom + 'RESPONSE' label + R2 delete mar
 - Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description.
 - ALSO enqueues a Cloudflare R2 delete-marker so the sample for that email can be auto-deleted after N days.
 
-Env (required):
-  IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
+Required env:
+  IMAP_USER, IMAP_PASS
   IMAP_HOST (default: imap.gmail.com)
   IMAP_PORT (default: 993)
+  TRELLO_KEY, TRELLO_TOKEN, TRELLO_BOARD_ID, TRELLO_DEST_LIST_ID
 
-  TRELLO_KEY, TRELLO_TOKEN
-  TRELLO_BOARD_ID
-  TRELLO_DEST_LIST_ID
-
-Optional (reply capture):
+Optional:
   MAX_EMAILS_PER_RUN (default: 20)
-  BODY_MAX_CHARS     (default: 4000)
+  BODY_MAX_CHARS (default: 4000)
 
-Optional (R2 delete marker; if missing, marker is skipped):
-  R2_ACCOUNT_ID                  # Cloudflare account ID for R2
-  R2_ACCESS_KEY_ID
-  R2_SECRET_ACCESS_KEY
-  R2_BUCKET_NAME                 # e.g. samples
+R2 (optional — enables delete markers when all present):
+  R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME (or R2_BUCKET)
   R2_MARKER_PREFIX (default: delete_markers)
   R2_DELETE_AFTER_DAYS (default: 30)
 """
@@ -36,10 +30,7 @@ import requests
 
 def log(*a): print(*a, flush=True)
 
-# before your env check:
-R2_BUCKET = (os.getenv("R2_BUCKET") or os.getenv("R2_BUCKET_NAME") or "").strip()
-
-# ---------- Env ----------
+# ---------- Env helpers ----------
 def _get_env(*names, default=""):
     for n in names:
         v = os.getenv(n)
@@ -60,15 +51,16 @@ DEST_LIST_ID      = _get_env("TRELLO_DEST_LIST_ID")
 MAX_EMAILS_PER_RUN = int(_get_env("MAX_EMAILS_PER_RUN", default="20"))
 BODY_MAX_CHARS     = int(_get_env("BODY_MAX_CHARS", default="4000"))
 
-# R2 (optional)
+# ---------- R2 (optional) ----------
 R2_ACCOUNT_ID         = _get_env("R2_ACCOUNT_ID", "CF_R2_ACCOUNT_ID")
 R2_ACCESS_KEY_ID      = _get_env("R2_ACCESS_KEY_ID", "CF_R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY  = _get_env("R2_SECRET_ACCESS_KEY", "CF_R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME        = _get_env("R2_BUCKET_NAME", "R2_BUCKET")
-R2_MARKER_PREFIX      = _get_env("R2_MARKER_PREFIX", default="delete_markers")
+R2_MARKER_PREFIX      = _get_env("R2_MARKER_PREFIX", default="delete_markers").strip().strip("/")
 R2_DELETE_AFTER_DAYS  = int(_get_env("R2_DELETE_AFTER_DAYS", default="30"))
+R2_ENABLED            = all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
 
-R2_ENABLED = all([R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
+log(f"[r2] enabled={R2_ENABLED} bucket={R2_BUCKET_NAME or '-'} prefix={R2_MARKER_PREFIX or '-'} days={R2_DELETE_AFTER_DAYS}")
 
 # ---------- Trello helpers ----------
 SESS = requests.Session()
@@ -77,19 +69,12 @@ def trello_call(method, path, **params):
     url = f"https://api.trello.com/1/{path.lstrip('/')}"
     for attempt in range(3):
         try:
-            if method == "GET":
-                r = SESS.get(url, params=params, timeout=30)
-            elif method == "POST":
-                r = SESS.post(url, params=params, timeout=30)
-            elif method == "PUT":
-                r = SESS.put(url, params=params, timeout=30)
-            else:
-                raise ValueError("method must be GET/POST/PUT")
+            r = {"GET": SESS.get, "POST": SESS.post, "PUT": SESS.put}[method](url, params=params, timeout=30)
             if r.status_code in (429, 500, 502, 503, 504):
                 raise RuntimeError(f"Trello {r.status_code}")
             r.raise_for_status()
             return r.json()
-        except Exception as e:
+        except Exception:
             if attempt == 2: raise
             time.sleep(1.2 * (attempt + 1))
 
@@ -97,7 +82,6 @@ def trello_get(path, **params):  return trello_call("GET", path, **params)
 def trello_put(path, **params):  return trello_call("PUT", path, **params)
 def trello_post(path, **params): return trello_call("POST", path, **params)
 
-# same label parser you use elsewhere
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -176,13 +160,14 @@ def extract_plain_text(msg: Message) -> str:
 RE_REPLY_HEADER = re.compile(
     r"""(?imx)
     ^\s*
-    (?:On|Le)
+    (?:On|Le)               # EN/FR reply header
     [^\n\r]*
     (?:<[^>\n\r]+@[^>\n\r]+>|""" + EMAIL_RE.pattern + r""")?
     [^\n\r]*
-    (?:wrote:|a\ écrit\s*:)?\s*$
+    (?:wrote:|a\ écrit\s*:)?\s*$   # tolerate missing / present wrote/a écrit
     """
 )
+
 def strip_quoted_reply(text: str) -> str:
     if not text:
         return ""
@@ -211,28 +196,32 @@ def strip_quoted_reply(text: str) -> str:
         lines.append(ln)
     return "\n".join(lines).strip()
 
-# ---------- Helpers for description update ----------
+# ---------- Trello desc append ----------
 def append_block(current_desc: str, block: str) -> str:
-    """Append the new block at the BOTTOM of the description with a single separator."""
+    """Append at the bottom with a single horizontal rule separator."""
     cur = (current_desc or "").rstrip()
     if not cur:
         return block
-    # last non-empty line
     non_empty = [ln for ln in cur.splitlines() if ln.strip()]
     last = non_empty[-1].strip() if non_empty else ""
     if re.match(r"^(?:-{3,}|\*{3,}|_{3,})$", last):
-        sep = "\n\n"         # already ends with a rule
+        sep = "\n\n"
     else:
-        sep = "\n\n---\n\n"  # add one rule
+        sep = "\n\n---\n\n"
     return f"{cur}{sep}{block}"
 
 # ---------- R2 marker (optional) ----------
 def write_r2_delete_marker(safe_id: str, due_iso: str):
     if not R2_ENABLED:
-        log("[r2] creds missing; skipping delete marker")
+        log("[r2] disabled (missing creds/bucket) — skipping marker")
         return
     try:
         import boto3
+    except Exception as e:
+        log(f"[r2] boto3 not available — skipping marker: {e}")
+        return
+
+    try:
         endpoint = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
         s3 = boto3.client(
             "s3",
@@ -242,16 +231,18 @@ def write_r2_delete_marker(safe_id: str, due_iso: str):
             endpoint_url=endpoint,
         )
         key = f"{R2_MARKER_PREFIX}/{safe_id}__{due_iso[:10].replace('-', '')}.json"
-        # If marker already exists, don't move the date earlier/later
+
+        # If marker already exists, keep the earliest one (idempotent)
         try:
             s3.head_object(Bucket=R2_BUCKET_NAME, Key=key)
-            log(f"[r2] marker already exists: {key}")
+            log(f"[r2] marker already exists (kept): {key}")
             return
         except Exception:
             pass
+
         body = json.dumps({"id": safe_id, "due": due_iso}).encode("utf-8")
         s3.put_object(Bucket=R2_BUCKET_NAME, Key=key, Body=body, ContentType="application/json")
-        log(f"[r2] queued delete marker: {key} (due {due_iso})")
+        log(f"[r2] marker written: s3://{R2_BUCKET_NAME}/{key} (due {due_iso})")
     except Exception as e:
         log(f"[r2] marker write failed: {e}")
 
@@ -268,7 +259,7 @@ def main():
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
 
-    # 1) Load every card on the board (id, name, desc, idList)
+    # 1) Load all cards on the board
     log("[trello] fetching board cards…")
     cards = trello_get(f"boards/{TRELLO_BOARD_ID}/cards", fields="id,name,desc,idList", limit=1000)
     email_to_cards = {}
@@ -279,7 +270,7 @@ def main():
         if em:
             email_to_cards.setdefault(em, []).append(c)
 
-    # 2) Connect IMAP and search UNSEEN
+    # 2) IMAP unseen
     log("[imap] connecting…")
     M = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
     M.login(IMAP_USER, IMAP_PASS)
@@ -311,16 +302,18 @@ def main():
         log(f"[imap] from={sender} subject={subj_hdr!r}")
 
         if not sender or sender not in email_to_cards:
+            # mark seen anyway so we don't loop on unmatched mail
             M.store(eid, '+FLAGS', '\\Seen')
             continue
 
-        # Queue deletion marker (once per sender)
+        # 3) Queue R2 delete marker (once per sender)
         safe_id = _safe_id_from_email(sender)
         due_iso = (datetime.utcnow() + timedelta(days=R2_DELETE_AFTER_DAYS)).isoformat(timespec="seconds") + "Z"
+        log(f"[r2] attempt marker for id={safe_id} due={due_iso}")
         write_r2_delete_marker(safe_id, due_iso)
 
-        # Build the appended block (append_block adds the single --- rule)
-        label = "**RESPONSE**"  # Trello Markdown; not actually centered
+        # 4) Append reply at bottom
+        label = "**RESPONSE**"
         block = f"{label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
         for c in email_to_cards[sender]:
@@ -336,6 +329,7 @@ def main():
             except Exception as e:
                 log(f"[trello] update failed for {title}: {e}")
 
+        # mark email as seen
         M.store(eid, '+FLAGS', '\\Seen')
         processed += 1
         time.sleep(0.6)
