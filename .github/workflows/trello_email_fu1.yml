@@ -23,6 +23,7 @@ jobs:
       TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_FU1: ${{ secrets.TRELLO_LIST_ID_FU1 }}
+      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_FU1 }}
 
       # SMTP
       SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
