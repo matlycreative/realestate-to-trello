@@ -57,26 +57,27 @@ if USE_ENV_TEMPLATES:
     SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first} — listing videos at {company}")
 
     BODY_A = _get_env("BODY_A", default=
+                      
 """Hi there,
 
-Just following up in case you didn’t get a chance to look yet{extra}: {link}
+Just following up in case you didn’t get a chance to look yet {extra}: {link}
 
 {extra}
 
-If it’s helpful, I can handle edits so you can focus on selling. Happy to share a short sample too.
 Best,
 Matthieu from Matly""")
 
     BODY_B = _get_env("BODY_B", default=
+                      
 """hi {first}
 
-Just following up on the portfolio I shared{extra}: {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
 
-If it’s helpful, I can handle edits so you can focus on selling.
 Best,
 Matthieu from Matly""")
+  
 else:
     # Hardcoded FU1 copy (only used if USE_ENV_TEMPLATES is false)
     SUBJECT_A = "Quick follow-up on listing videos for {company}"
@@ -84,21 +85,19 @@ else:
 
     BODY_A = """Hi there,
 
-Just following up in case you didn’t get a chance to look yet{extra}: {link}
+Just following up in case you didn’t get a chance to look yet {extra}: {link}
 
 {extra}
 
-If it’s helpful, I can handle edits so you can focus on selling. Happy to share a short sample too.
 Best,
 Matthieu from Matly"""
 
     BODY_B = """hi {first}
 
-Just following up on the portfolio I shared{extra}: {link}
+Just following up on the portfolio I shared {extra}: {link}
 
 {extra}
 
-If it’s helpful, I can handle edits so you can focus on selling.
 Best,
 Matthieu from Matly"""
 
