@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Gmail → Trello reply sync (append once)
+Gmail → Trello reply sync (append at bottom + centered 'RESPONSE' label)
 
 - Polls Gmail IMAP for UNSEEN messages (INBOX).
 - For each email, finds Trello card(s) whose description has "Email: <sender>".
-- Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description.
-- Ensures it only happens ONCE per card by looking for a prior sync comment.
+- Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description,
+  placing a centered "RESPONSE" label just above the captured text.
 
-Requirements (env):
+Env (required):
   IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
   IMAP_HOST (default: imap.gmail.com)
   IMAP_PORT (default: 993)
@@ -19,8 +19,6 @@ Requirements (env):
 Optional:
   MAX_EMAILS_PER_RUN (default: 20)
   BODY_MAX_CHARS (default: 4000)
-  ONCE_MARKER_PREFIX (default: "Synced reply from")
-  ONCE_MARKER_TAG    (default: "[SYNCED_ONCE]")
 """
 
 import os, re, time, json, html, email, imaplib
@@ -51,9 +49,6 @@ DEST_LIST_ID      = _get_env("TRELLO_DEST_LIST_ID")
 MAX_EMAILS_PER_RUN = int(_get_env("MAX_EMAILS_PER_RUN", default="20"))
 BODY_MAX_CHARS     = int(_get_env("BODY_MAX_CHARS", default="4000"))
 
-ONCE_MARKER_PREFIX = _get_env("ONCE_MARKER_PREFIX", default="Synced reply from")
-ONCE_MARKER_TAG    = _get_env("ONCE_MARKER_TAG",    default="[SYNCED_ONCE]")
-
 # ---------- Trello helpers ----------
 SESS = requests.Session()
 def trello_call(method, path, **params):
@@ -73,7 +68,7 @@ def trello_call(method, path, **params):
                 raise RuntimeError(f"Trello {r.status_code}")
             r.raise_for_status()
             return r.json()
-        except Exception:
+        except Exception as e:
             if attempt == 2: raise
             time.sleep(1.2 * (attempt + 1))
 
@@ -81,6 +76,7 @@ def trello_get(path, **params):  return trello_call("GET", path, **params)
 def trello_put(path, **params):  return trello_call("PUT", path, **params)
 def trello_post(path, **params): return trello_call("POST", path, **params)
 
+# same label parser you use elsewhere
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -116,56 +112,14 @@ def decode_mime_words(s: str | None) -> str:
     try:
         return str(make_header(decode_header(s)))
     except Exception:
-        return s
+        return s or ""
 
-# Strip quoted history from replies (common Gmail patterns, multi-language)
-QUOTE_HEAD_PATTERNS = [
-    re.compile(r"^On .+ wrote:\s*$", re.I),                          # EN
-    re.compile(r"^Le .+ a écrit\s*:\s*$", re.I),                     # FR
-    re.compile(r"^El .+ escribió\s*:\s*$", re.I),                    # ES
-    re.compile(r"^Am .+ schrieb\s*:\s*$", re.I),                     # DE
-    re.compile(r"^Il .+ ha scritto\s*:\s*$", re.I),                  # IT
-    re.compile(r"^Em .+ escreveu\s*:\s*$", re.I),                    # PT
-    re.compile(r"^Op .+ schreef\s*:\s*$", re.I),                     # NL
-    re.compile(r"^-{2,}\s*Original message\s*-{2,}\s*$", re.I),      # EN banner
-    re.compile(r"^-{2,}\s*Message d'origine\s*-{2,}\s*$", re.I),     # FR banner
-    re.compile(r"^---------- Forwarded message ---------\s*$", re.I),
-    re.compile(r"^From:\s.*$", re.I),                                # headers in quoted block
-    re.compile(r"^Sent:\s.*$", re.I),
-    re.compile(r"^Subject:\s.*$", re.I),
-]
-
-def strip_quoted_reply(body: str) -> str:
-    """
-    Keep only the fresh reply content (drop quoted history/signatures).
-    """
-    if not body:
-        return ""
-
-    lines = body.splitlines()
-    kept = []
-    for line in lines:
-        # Stop at common quote headers
-        if any(p.search(line) for p in QUOTE_HEAD_PATTERNS):
-            break
-        # Stop when the reply turns into a quoted block
-        if line.strip().startswith(">"):
-            break
-        kept.append(line)
-
-    text = "\n".join(kept).strip()
-
-    # Trim common signature separators and mobile footers
-    text = re.split(r"\n-- ?\n|\n__+\n|\nSent from my .*", text, maxsplit=1)[0].rstrip()
-
-    return text
-  
 def extract_plain_text(msg: email.message.Message) -> str:
-    # prefer text/plain; fallback to stripped html
+    """Prefer text/plain; fallback to stripped HTML; then remove quoted history + signatures."""
     parts = []
     if msg.is_multipart():
         for part in msg.walk():
-            ctype = part.get_content_type() or ""
+            ctype = (part.get_content_type() or "").lower()
             disp  = (part.get("Content-Disposition") or "").lower()
             if "attachment" in disp:
                 continue
@@ -177,7 +131,6 @@ def extract_plain_text(msg: email.message.Message) -> str:
             if ctype.startswith("text/plain"):
                 parts.append(text)
             elif not parts and ctype.startswith("text/html"):
-                # only fallback to html if we have no plain text yet
                 stripped = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", text)
                 stripped = re.sub(r"(?is)<br\s*/?>", "\n", stripped)
                 stripped = re.sub(r"(?is)</p\s*>", "\n\n", stripped)
@@ -188,38 +141,47 @@ def extract_plain_text(msg: email.message.Message) -> str:
         parts.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
 
     body = "\n".join(p.strip() for p in parts if p is not None).strip()
-
-    # NEW: remove quoted history / signatures
     body = strip_quoted_reply(body)
 
-    # trim long replies (still apply your limit)
     if len(body) > BODY_MAX_CHARS:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
 
-# ---------- Append helper ----------
+def strip_quoted_reply(text: str) -> str:
+    """Remove quoted history and common signature blocks (EN/FR)."""
+    if not text:
+        return ""
+
+    # Cut at common reply separators
+    patterns = [
+        r"(?im)^\s*On .* wrote:\s*$",
+        r"(?im)^\s*Le .* a écrit\s*:\s*$",
+        r"(?im)^>.*$",                         # quoted lines
+        r"(?im)^From:\s.*$",                   # forwarded headers
+        r"(?im)^De\s*:\s.*$",                  # FR 'De :'
+        r"(?im)^---+ ?Original Message ?---+$",
+        r"(?im)^Sent from my .*",
+        r"(?m)^--\s*$",                        # signature delimiter
+        r"(?m)^__+\s*$",                       # long underscore lines
+    ]
+    cutoff = len(text)
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            cutoff = min(cutoff, m.start())
+    text = text[:cutoff].rstrip()
+
+    # Drop leading '>' quote markers if any slipped through
+    lines = [ln for ln in text.splitlines() if not ln.strip().startswith(">")]
+    return "\n".join(lines).strip()
+
+# ---------- Helpers for description update ----------
 def append_block(current_desc: str, block: str) -> str:
+    """Append the new block at the BOTTOM of the description with a separator."""
     cur = (current_desc or "").rstrip()
     if not cur:
         return block
-    # nice visual separator; Trello supports Markdown
     return f"{cur}\n\n---\n\n{block}"
-
-# ---------- Once-per-card helper ----------
-def card_already_synced(card_id: str) -> bool:
-    """Return True if the card already has our sync marker comment."""
-    try:
-        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
-    except Exception:
-        return False
-    pfx = (ONCE_MARKER_PREFIX or "").strip().lower()
-    tag = (ONCE_MARKER_TAG or "").strip().lower()
-    for a in acts or []:
-        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
-        tl = txt.lower()
-        if (tag and tag in tl) or (pfx and tl.startswith(pfx)):
-            return True
-    return False
 
 # ---------- Core ----------
 def main():
@@ -269,6 +231,7 @@ def main():
 
         from_hdr = decode_mime_words(msg.get("From", ""))
         subj_hdr = decode_mime_words(msg.get("Subject", ""))
+        # extract pure email address
         m = EMAIL_RE.search(from_hdr)
         sender = m.group(0).lower() if m else ""
         body = extract_plain_text(msg)
@@ -277,33 +240,30 @@ def main():
         log(f"[imap] from={sender} subject={subj_hdr!r}")
 
         if not sender or sender not in email_to_cards:
+            # mark as seen anyway so we don't loop forever on unmatched mail
             M.store(eid, '+FLAGS', '\\Seen')
             continue
+
+        # Build the appended block with a centered label
+        center_label = '<div align="center"><strong>RESPONSE</strong></div>'
+        block = f"{center_label}\n\nSubject :\n\n{subj_hdr}\n\nBody :\n\n{body}\n"
 
         for c in email_to_cards[sender]:
             cid    = c["id"]
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
 
-            # Skip if we've already synced once for this card
-            if card_already_synced(cid):
-                log(f"[trello] skip (already synced once): {title}")
-                continue
-
-            block = f"Subject :\n{subj_hdr}\n\nBody :\n{body}\n\n"
             new_desc = append_block(old, block)
 
-            # 3) Move + update desc + leave a marker comment
+            # 3) Move + update desc
             try:
                 trello_put(f"cards/{cid}", idList=DEST_LIST_ID, desc=new_desc)
-                trello_post(
-                    f"cards/{cid}/actions/comments",
-                    text=f"{ONCE_MARKER_TAG} {ONCE_MARKER_PREFIX} {sender} — {when}"
-                )
+                trello_post(f"cards/{cid}/actions/comments", text=f"Synced reply from {sender} — {when}")
                 log(f"[trello] updated + moved: {title}")
             except Exception as e:
                 log(f"[trello] update failed for {title}: {e}")
 
+        # mark email as seen so we don't process it again
         M.store(eid, '+FLAGS', '\\Seen')
         processed += 1
         time.sleep(0.6)
