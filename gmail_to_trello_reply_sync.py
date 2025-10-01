@@ -148,9 +148,19 @@ def extract_plain_text(msg: email.message.Message) -> str:
     return body
 
 def strip_quoted_reply(text: str) -> str:
-    """Remove quoted history and common signature blocks (EN/FR, Gmail desktop/mobile)."""
-    if not text:
-        return ""
+    ...
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith(">"):
+            continue
+        # NEW: stop at Gmail/FR reply headers that include an email, even without "wrote:"
+        if (s.startswith("On ") or s.startswith("Le ")) and EMAIL_RE.search(s):
+            break
+        if re.search(r"(?i)\bwrote:\s*$", s) or re.search(r"(?i)a écrit\s*:\s*$", s):
+            break
+        lines.append(ln)
+    return "\n".join(lines).strip()
 
     # Cut at common reply separators (make this aggressive)
     patterns = [
@@ -268,6 +278,11 @@ def main():
         center_label = "**RESPONSE**"  # Trello Markdown (no real centering)
         block = f"{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
+       for c in email_to_cards[sender]:
+            cid    = c["id"]
+            old    = c.get("desc") or ""
+            title  = c.get("name") or "(no title)"
+         
             new_desc = append_block(old, block)
 
             # 3) Move + update desc
