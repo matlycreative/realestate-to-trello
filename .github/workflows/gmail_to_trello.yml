@@ -1,28 +1,73 @@
-# …
+name: Gmail → Trello reply sync + R2 marker
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 24x at the top of each hour (UTC)
+    - cron: "0 0 * * *"
+    - cron: "0 1 * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
+    - cron: "0 4 * * *"
+    - cron: "0 5 * * *"
+    - cron: "0 6 * * *"
+    - cron: "0 7 * * *"
+    - cron: "0 8 * * *"
+    - cron: "0 9 * * *"
+    - cron: "0 10 * * *"
+    - cron: "0 11 * * *"
+    - cron: "0 12 * * *"
+    - cron: "0 13 * * *"
+    - cron: "0 14 * * *"
+    - cron: "0 15 * * *"
+    - cron: "0 16 * * *"
+    - cron: "0 17 * * *"
+    - cron: "0 18 * * *"
+    - cron: "0 19 * * *"
+    - cron: "0 20 * * *"
+    - cron: "0 21 * * *"
+    - cron: "0 22 * * *"
+    - cron: "0 23 * * *"
+    # +1 extra run to make 25/day
+    - cron: "30 12 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gmail-to-trello-reply-sync
+  cancel-in-progress: true
+
 jobs:
   gmail-to-trello:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     env:
       PYTHONUNBUFFERED: "1"
 
-      # Gmail IMAP
+      # --- Gmail IMAP ---
       IMAP_USER:  ${{ secrets.IMAP_USER }}
       IMAP_PASS:  ${{ secrets.IMAP_PASS }}
+      # Optional overrides (defaults shown)
+      IMAP_HOST:  imap.gmail.com
+      IMAP_PORT:  "993"
 
-      # Trello
-      TRELLO_KEY:         ${{ secrets.TRELLO_KEY }}
-      TRELLO_TOKEN:       ${{ secrets.TRELLO_TOKEN }}
-      TRELLO_BOARD_ID:    ${{ secrets.TRELLO_BOARD_ID }}
-      TRELLO_DEST_LIST_ID:${{ secrets.TRELLO_DEST_LIST_ID }}
+      # --- Trello ---
+      TRELLO_KEY:          ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN:        ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_BOARD_ID:     ${{ secrets.TRELLO_BOARD_ID }}
+      TRELLO_DEST_LIST_ID: ${{ secrets.TRELLO_DEST_LIST_ID }}
 
-      # ---------- R2 (needed for delete markers) ----------
+      # --- Script knobs (optional) ---
+      MAX_EMAILS_PER_RUN:  "20"
+      BODY_MAX_CHARS:      "4000"
+
+      # --- Cloudflare R2 (enables delete-markers when all 4 are present) ---
       R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      # Either of these names is fine; the script reads both:
-      R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}
-      # R2_BUCKET:          ${{ secrets.R2_BUCKET }}   # (optional alternative)
+      R2_BUCKET_NAME:       ${{ secrets.R2_BUCKET_NAME }}   # or set R2_BUCKET
       R2_MARKER_PREFIX:     delete_markers
       R2_DELETE_AFTER_DAYS: "30"
 
@@ -38,5 +83,5 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install requests boto3
 
-      - name: Run sync
+      - name: Run Gmail → Trello sync
         run: python gmail_to_trello_reply_sync.py
