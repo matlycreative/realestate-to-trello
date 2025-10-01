@@ -148,21 +148,21 @@ def extract_plain_text(msg: email.message.Message) -> str:
     return body
 
 def strip_quoted_reply(text: str) -> str:
-    """Remove quoted history and common signature blocks (EN/FR)."""
+    """Remove quoted history and common signature blocks (EN/FR, Gmail desktop/mobile)."""
     if not text:
         return ""
 
-    # Cut at common reply separators
+    # Cut at common reply separators (make this aggressive)
     patterns = [
-        r"(?im)^\s*On .* wrote:\s*$",
-        r"(?im)^\s*Le .* a écrit\s*:\s*$",
-        r"(?im)^>.*$",                         # quoted lines
-        r"(?im)^From:\s.*$",                   # forwarded headers
-        r"(?im)^De\s*:\s.*$",                  # FR 'De :'
+        r"(?im)^\s*On .*wrote:\s*$",                 # EN: On Wed, Oct 1, 2025 ... wrote:
+        r"(?im)^\s*Le .*a écrit\s*:\s*$",            # FR: Le mer. 1 oct. 2025 ... a écrit :
+        r"(?im)^\s*From:\s.*$",                      # forwarded headers
+        r"(?im)^\s*De\s*:\s.*$",                     # FR 'De :'
         r"(?im)^---+ ?Original Message ?---+$",
         r"(?im)^Sent from my .*",
-        r"(?m)^--\s*$",                        # signature delimiter
-        r"(?m)^__+\s*$",                       # long underscore lines
+        r"(?m)^--\s*$",                              # standard signature delimiter
+        r"(?m)^__+\s*$",                             # long underscore lines
+        r"(?im)^>.+$",                               # quoted lines
     ]
     cutoff = len(text)
     for pat in patterns:
@@ -171,8 +171,15 @@ def strip_quoted_reply(text: str) -> str:
             cutoff = min(cutoff, m.start())
     text = text[:cutoff].rstrip()
 
-    # Drop leading '>' quote markers if any slipped through
-    lines = [ln for ln in text.splitlines() if not ln.strip().startswith(">")]
+    # Remove any remaining quoted lines or trailing “wrote:” variants on the same line
+    lines = []
+    for ln in text.splitlines():
+        if ln.strip().startswith(">"):
+            continue
+        # If the line itself contains a trailing wrote/a écrit marker, drop it and everything after
+        if re.search(r"(?i)\bwrote:\s*$", ln) or re.search(r"(?i)a écrit\s*:\s*$", ln):
+            break
+        lines.append(ln)
     return "\n".join(lines).strip()
 
 # ---------- Helpers for description update ----------
@@ -245,8 +252,8 @@ def main():
             continue
 
         # Build the appended block with a centered label
-        center_label = '<div align="center"><strong>RESPONSE</strong></div>'
-        block = f"{center_label}\n\nSubject :\n\n{subj_hdr}\n\nBody :\n\n{body}\n"
+        center_label = "**RESPONSE**"  # Trello Markdown (no real centering)
+        block = f"---\n\n{center_label}\n\n**Subject :**\n\n{subj_hdr}\n\n**Body :**\n\n{body}\n"
 
         for c in email_to_cards[sender]:
             cid    = c["id"]
