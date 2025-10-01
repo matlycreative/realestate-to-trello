@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Gmail → Trello reply sync
+Gmail → Trello reply sync (append once)
 
 - Polls Gmail IMAP for UNSEEN messages (INBOX).
 - For each email, finds Trello card(s) whose description has "Email: <sender>".
-- Moves matching card(s) to a target list and appends the email (Subject/Body) to the description.
+- Moves matching card(s) to a target list and APPENDS the email (Subject/Body) to the description.
+- Ensures it only happens ONCE per card by looking for a prior sync comment.
 
 Requirements (env):
   IMAP_USER, IMAP_PASS                     # Gmail address + App Password (IMAP enabled)
@@ -18,6 +19,8 @@ Requirements (env):
 Optional:
   MAX_EMAILS_PER_RUN (default: 20)
   BODY_MAX_CHARS (default: 4000)
+  ONCE_MARKER_PREFIX (default: "Synced reply from")
+  ONCE_MARKER_TAG    (default: "[SYNCED_ONCE]")
 """
 
 import os, re, time, json, html, email, imaplib
@@ -48,6 +51,9 @@ DEST_LIST_ID      = _get_env("TRELLO_DEST_LIST_ID")
 MAX_EMAILS_PER_RUN = int(_get_env("MAX_EMAILS_PER_RUN", default="20"))
 BODY_MAX_CHARS     = int(_get_env("BODY_MAX_CHARS", default="4000"))
 
+ONCE_MARKER_PREFIX = _get_env("ONCE_MARKER_PREFIX", default="Synced reply from")
+ONCE_MARKER_TAG    = _get_env("ONCE_MARKER_TAG",    default="[SYNCED_ONCE]")
+
 # ---------- Trello helpers ----------
 SESS = requests.Session()
 def trello_call(method, path, **params):
@@ -67,7 +73,7 @@ def trello_call(method, path, **params):
                 raise RuntimeError(f"Trello {r.status_code}")
             r.raise_for_status()
             return r.json()
-        except Exception as e:
+        except Exception:
             if attempt == 2: raise
             time.sleep(1.2 * (attempt + 1))
 
@@ -75,7 +81,6 @@ def trello_get(path, **params):  return trello_call("GET", path, **params)
 def trello_put(path, **params):  return trello_call("PUT", path, **params)
 def trello_post(path, **params): return trello_call("POST", path, **params)
 
-# same label parser you use elsewhere
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -143,13 +148,29 @@ def extract_plain_text(msg: email.message.Message) -> str:
         body = body[:BODY_MAX_CHARS].rstrip() + "\n…"
     return body
 
-# ---------- Append helper (NEW) ----------
+# ---------- Append helper ----------
 def append_block(current_desc: str, block: str) -> str:
     cur = (current_desc or "").rstrip()
     if not cur:
         return block
     # nice visual separator; Trello supports Markdown
     return f"{cur}\n\n---\n\n{block}"
+
+# ---------- Once-per-card helper ----------
+def card_already_synced(card_id: str) -> bool:
+    """Return True if the card already has our sync marker comment."""
+    try:
+        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
+    except Exception:
+        return False
+    pfx = (ONCE_MARKER_PREFIX or "").strip().lower()
+    tag = (ONCE_MARKER_TAG or "").strip().lower()
+    for a in acts or []:
+        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
+        tl = txt.lower()
+        if (tag and tag in tl) or (pfx and tl.startswith(pfx)):
+            return True
+    return False
 
 # ---------- Core ----------
 def main():
@@ -215,14 +236,21 @@ def main():
             old    = c.get("desc") or ""
             title  = c.get("name") or "(no title)"
 
-            # build block and APPEND to bottom (changed here)
+            # Skip if we've already synced once for this card
+            if card_already_synced(cid):
+                log(f"[trello] skip (already synced once): {title}")
+                continue
+
             block = f"Subject :\n{subj_hdr}\n\nBody :\n{body}\n\n"
             new_desc = append_block(old, block)
 
-            # 3) Move + update desc
+            # 3) Move + update desc + leave a marker comment
             try:
                 trello_put(f"cards/{cid}", idList=DEST_LIST_ID, desc=new_desc)
-                trello_post(f"cards/{cid}/actions/comments", text=f"Synced reply from {sender} — {when}")
+                trello_post(
+                    f"cards/{cid}/actions/comments",
+                    text=f"{ONCE_MARKER_TAG} {ONCE_MARKER_PREFIX} {sender} — {when}"
+                )
                 log(f"[trello] updated + moved: {title}")
             except Exception as e:
                 log(f"[trello] update failed for {title}: {e}")
