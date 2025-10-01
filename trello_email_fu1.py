@@ -142,6 +142,10 @@ TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
+env:
+  # ...
+  TRELLO_LIST_ID_FU1: ${{ secrets.TRELLO_LIST_ID_FU1 }}
+
 # --------------- Sanity checks ----------------
 def require_env():
     missing = []
