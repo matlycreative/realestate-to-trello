@@ -365,12 +365,6 @@ def send_email(
             html_core = html_core.replace(MARK, anchor)
         else:
             html_core += f"<p>{anchor}</p>"
-  
-    if BCC_TO:
-        msg["Bcc"] = BCC_TO
-    msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
-    msg.add_alternative(html_core, subtype="html")
 
     for attempt in range(3):
         try:
