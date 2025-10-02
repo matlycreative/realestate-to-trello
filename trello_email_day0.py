@@ -366,16 +366,15 @@ def send_email(
         else:
             html_core += f"<p>{anchor}</p>"
 
-    html_full = html_core
-
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
+  
     if BCC_TO:
         msg["Bcc"] = BCC_TO
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html")
+    msg.add_alternative(html_core, subtype="html")
 
     for attempt in range(3):
         try:
