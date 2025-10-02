@@ -28,7 +28,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+    return (val or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -48,7 +48,6 @@ SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_passwor
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
 # ----------------- Templates -----------------
-# Default: use templates coming from the workflow env.
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "0").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
@@ -57,7 +56,6 @@ if USE_ENV_TEMPLATES:
     SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first} — listing videos at {company}")
 
     BODY_A = _get_env("BODY_A", default=
-                      
 """Hi there,
 
 Just following up in case you didn’t get a chance to look yet {extra}: {link}
@@ -68,7 +66,6 @@ Best,
 Matthieu from Matly""")
 
     BODY_B = _get_env("BODY_B", default=
-                      
 """hi {first}
 
 Just following up on the portfolio I shared {extra}: {link}
@@ -77,9 +74,7 @@ Just following up on the portfolio I shared {extra}: {link}
 
 Best,
 Matthieu from Matly""")
-  
 else:
-    # Hardcoded FU1 copy (only used if USE_ENV_TEMPLATES is false)
     SUBJECT_A = "Quick follow-up on listing videos for {company}"
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
 
@@ -114,10 +109,11 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
+PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # <--- NEW
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -128,7 +124,7 @@ def _norm_base(u: str) -> str:
 
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}")
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
 UA = f"TrelloEmailer-FU1/1.0 (+{FROM_EMAIL or 'no-email'})"
@@ -144,11 +140,11 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 def require_env():
     missing = []
     if not TRELLO_KEY:   missing.append("TRELLO_KEY")
-    if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
+    if not TRELLO_TOKEN: missing_append = "TRELLO_TOKEN"; missing.append(missing_append)
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU1 or TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
-    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
+    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.com)")
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
     if not SMTP_USER:
@@ -442,7 +438,12 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+        # Respect override
+        if not USE_API_LINK:
+            best = f"{PUBLIC_BASE}/p/?id={safe_id}"
+        else:
+            best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+
         return (True, best)
 
     except Exception as e:
