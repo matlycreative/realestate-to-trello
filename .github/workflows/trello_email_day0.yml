@@ -24,7 +24,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
 
       # Trello
-      TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
+      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
@@ -38,20 +38,18 @@ jobs:
         || secrets.smtp_pass != '' && secrets.smtp_pass
         || secrets.SMTP_PASSWORD != '' && secrets.SMTP_PASSWORD
         || secrets.smtp_password }}
-      SMTP_HOST:  ${{ secrets.SMTP_HOST }}
-      SMTP_PORT:  ${{ secrets.SMTP_PORT }}
-      FROM_NAME:  ${{ secrets.FROM_NAME }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # Links — set PUBLIC_BASE to your domain (e.g. https://matlycreative.com)
-      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
-      # Force fallback to PUBLIC_BASE by leaving this empty
-      PORTFOLIO_URL: ""
+      # Links (use your domain)
+      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.com
+      PORTFOLIO_URL: ""                          # force fallback to PUBLIC_BASE
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Day-0 templates (your script currently uses hardcoded templates;
-      # keeping these here is harmless / future-proof)
+      # Templates (read only if your script uses env templates)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -67,15 +65,18 @@ jobs:
       # Link rendering
       INCLUDE_PLAIN_URL: "0"
 
-      # Markers/cache
+      # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # Force using your domain link (script supports this flag)
+      # Keep consistent with FU1/FU2 (safe even if the script ignores it)
       USE_API_LINK: "0"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # ensure we’re running against the commit that triggered the workflow
+          fetch-depth: 0
 
       - name: Ensure data dir
         run: mkdir -p .data
@@ -90,18 +91,15 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Debug config
-        run: |
-          echo "PUBLIC_BASE=${PUBLIC_BASE}"
-          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
-          echo "USE_API_LINK=${USE_API_LINK}"
-          echo "FROM_EMAIL=${FROM_EMAIL}"
-
-      - name: Verify Day-0 script exists at repo root
+      - name: Sanity check Day-0 script
         run: |
           set -e
+          echo "CWD: $(pwd)"
           ls -la
-          test -f trello_email_day0.py || { echo "Expected trello_email_day0.py at repo root; not found." >&2; exit 1; }
+          if [ ! -f trello_email_day0.py ]; then
+            echo "Expected trello_email_day0.py at repo root; not found." >&2
+            exit 1
+          fi
 
       - name: Run Day-0 sender
         run: python trello_email_day0.py
