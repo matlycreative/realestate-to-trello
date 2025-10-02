@@ -74,7 +74,7 @@ jobs:
       # Make sure we actually use env templates
       USE_ENV_TEMPLATES: "1"
 
-      # Force using your domain link (FU2 script supports this flag)
+      # Force using your domain link (override API-provided absolute links)
       USE_API_LINK: "0"
 
     steps:
@@ -98,6 +98,7 @@ jobs:
           echo "PUBLIC_BASE=${PUBLIC_BASE}"
           echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
           echo "USE_API_LINK=${USE_API_LINK}"
+          echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
       - name: Run FU2 sender
         run: python trello_email_fu2.py
