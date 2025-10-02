@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
 jobs:
   send-fu1:
     runs-on: ubuntu-latest
@@ -39,12 +43,14 @@ jobs:
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
       # Links
+      # Set this secret to your domain, e.g. https://matlycreative.com
       PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
-      PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
+      # Force fallback to PUBLIC_BASE by leaving this empty
+      PORTFOLIO_URL: ""
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # FU1 templates (read by the script because USE_ENV_TEMPLATES defaults to 1)
+      # FU1 templates (the script reads these)
       SUBJECT_A: ${{ secrets.SUBJECT_A_FU1 }}
       BODY_A:    ${{ secrets.BODY_A_FU1 }}
       SUBJECT_B: ${{ secrets.SUBJECT_B_FU1 }}
@@ -60,12 +66,15 @@ jobs:
       # Link rendering
       INCLUDE_PLAIN_URL: "0"
 
-      # Different marker/cache so Day-0 and FU1 don’t collide
+      # Marker/cache
       SENT_MARKER_TEXT: "Sent: FU1"
       SENT_CACHE_FILE: ".data/.sent_fu1.json"
 
-      # Make sure we actually use the env templates
+      # Make sure we actually use env templates
       USE_ENV_TEMPLATES: "1"
+
+      # Force using your domain link (if the script supports this flag)
+      USE_API_LINK: "0"
 
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +91,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Debug base URL
+        run: |
+          echo "PUBLIC_BASE=${PUBLIC_BASE}"
+          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
+          echo "USE_API_LINK=${USE_API_LINK}"
 
       - name: Run FU1 sender
         run: python trello_email_fu1.py
