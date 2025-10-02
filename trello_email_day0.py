@@ -8,10 +8,11 @@ Day-0 — Poll a Trello list and send one email per card.
 - If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
   otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
 - You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
+- Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
 
-import os, re, time, json, html
+import os, re, time, json, html, mimetypes
 from datetime import datetime
 from typing import Tuple
 import requests
@@ -28,7 +29,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1","true","yes","on")
+    return (val or "").strip().lower() in ("1", "true", "yes", "on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -47,7 +48,12 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
+# Diagnostics & delivery helpers
+SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
+BCC_TO     = _get_env("BCC_TO", default="").strip()
+
 # ----------------- Templates -----------------
+# Default to using templates from env (so workflow secrets are respected).
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
@@ -85,6 +91,7 @@ Matthieu from Matly""")
 else:
     SUBJECT_A = "Polished videos for {company}'s listings"
     SUBJECT_B = "Polished videos for {company}'s listings"
+
     BODY_A = """Hi there, hope you're doing well,
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -97,6 +104,7 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 
 Best,
 Matthieu from Matly"""
+
     BODY_B = """hi {first}
 
 I noticed {company} shares great properties, but editing can take valuable time away from your business. I specialize in turning raw footage into clean, polished videos that make listings shine.
@@ -110,15 +118,23 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 Best,
 Matthieu from Matly"""
 
-EMAIL_FONT_PX = int(os.getenv("EMAIL_FONT_PX", "16"))
+# Appearance / signature
+EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
+SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
+SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
+SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 
+# Sending control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
+# Links
+PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://yourdomain.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
@@ -145,9 +161,6 @@ TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
-BCC_TO     = _get_env("BCC_TO", default="").strip()
-
 # --------------- Sanity checks ----------------
 def require_env():
     missing = []
@@ -156,7 +169,7 @@ def require_env():
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
-    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.com)")
+    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://yourdomain.com)")
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
     if not SMTP_USER:
@@ -270,6 +283,7 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
+# --- Two-{extra} logic: fill only the correct slot ---
 EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
 def fill_with_two_extras(
@@ -280,11 +294,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -313,6 +327,19 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
+def signature_html(logo_cid: str | None) -> str:
+    parts = []
+    if SIGNATURE_ADD_NAME:
+        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
+        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
+    if SIGNATURE_LOGO_URL:
+        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
+        parts.append(
+            f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
+            f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
+        )
+    return "".join(parts)
+
 # ----------------- Email sender -----------------
 def send_email(
     to_email: str,
@@ -321,11 +348,12 @@ def send_email(
     *,
     link_url: str = "",
     link_text: str = "",
-    link_color: str = ""
+    link_color: str = "",
 ):
     from email.message import EmailMessage
     import smtplib
 
+    # Normalize link and label
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
     label = (link_text or "My portfolio").strip() or "My portfolio"
@@ -335,6 +363,7 @@ def send_email(
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if bare else ""
 
+    # Plain text body: replace URL with label unless INCLUDE_PLAIN_URL=1
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -345,6 +374,7 @@ def send_email(
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
+    # HTML body: mark link locations, autolink other URLs, then insert anchor
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
@@ -353,11 +383,45 @@ def send_email(
 
     html_core = text_to_html(body_marked)
     html_core = _autolink_html(html_core)
-
     for pat in (esc_full, esc_bare):
         if pat:
             html_core = html_core.replace(pat, MARK)
 
+    if full:
+        style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
+        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
+        if MARK in html_core:
+            html_core = html_core.replace(MARK, anchor)
+        else:
+            html_core += f"<p>{anchor}</p>"
+
+    # Append signature (optional inline logo)
+    logo_cid = "siglogo@local"
+    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+
+    msg = EmailMessage()
+    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
+    msg["To"] = to_email
+    if BCC_TO:
+        msg["Bcc"] = BCC_TO
+    msg["Subject"] = sanitize_subject(subject)
+    msg.set_content(body_pt)
+    msg.add_alternative(html_full, subtype="html")
+
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
+        try:
+            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
+            r.raise_for_status()
+            data = r.content
+            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
+        except Exception as e:
+            log(f"Inline logo fetch failed, sending without embed: {e}")
+
+    # Send with retries
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -366,8 +430,7 @@ def send_email(
                 if SMTP_USE_TLS:
                     s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-                to_addrs = [to_email] + ([BCC_TO] if BCC_TO else [])
-                s.send_message(msg, from_addr=SMTP_USER or FROM_EMAIL, to_addrs=to_addrs)
+                s.send_message(msg)
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
@@ -381,7 +444,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     Query /api/sample?id=<safe_id>.
     Returns (is_ready, best_link_to_use).
     If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
-    Allows overriding API link via USE_API_LINK.
+    Handles relative links from the API. Allows overriding API link via USE_API_LINK.
     """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
@@ -416,17 +479,20 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
                 log(f"[ready?] API error: {err} (link tried: {link})")
             return (False, PORTFOLIO_URL)
 
+        # Normalize API link if it's relative or missing scheme
         if api_link:
             if api_link.startswith("/"):
                 api_link = f"{PUBLIC_BASE}{api_link}"
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
+        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
             best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
 
+        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
         return (True, best)
 
     except Exception as e:
@@ -470,24 +536,29 @@ def main():
             sent_cache.add(card_id)
             continue
 
+        # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)
+        is_ready, chosen_link = _sample_info(safe_id)  # uses API link when ready (unless override)
 
-        use_b    = bool(first)
+        # Choose template A/B *before* composing extra
+        use_b    = bool(first)  # B if First is present
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
         n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
         log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
+        # --- Subject ---
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
+        # --- Two different extra lines depending on readiness ---
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
+        # --- Build the body with two-{extra} logic ---
         body = fill_with_two_extras(
             body_tpl,
             company=company,
@@ -499,8 +570,10 @@ def main():
             extra_wait=extra_wait
         )
 
+        # --- Link label for the anchor/button ---
         link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
 
+        # Send
         try:
             send_email(
                 email_v,
@@ -516,6 +589,7 @@ def main():
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
+        # Mark sent (Trello + cache)
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
