@@ -96,7 +96,13 @@ Just following up on the portfolio I shared {extra}: {link}
 Best,
 Matthieu from Matly"""
 
-EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
+# Appearance / signature
+EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
+SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
+SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
+SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
@@ -108,7 +114,7 @@ PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")
-USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # override: 0 -> force PUBLIC_BASE link
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -296,6 +302,19 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
+def signature_html(logo_cid: str | None) -> str:
+    parts = []
+    if SIGNATURE_ADD_NAME:
+        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
+        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
+    if SIGNATURE_LOGO_URL:
+        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
+        parts.append(
+            f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
+            f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
+        )
+    return "".join(parts)
+
 # ----------------- Email sender -----------------
 def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
     from email.message import EmailMessage
@@ -341,6 +360,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             html_core += f"<p>{anchor}</p>"
 
+    # finalize HTML + optional signature
+    logo_cid = "siglogo@local"
+    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
@@ -348,12 +371,13 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
 
-    if TURE_INLINE and TURE_LOGO_URL:
+    # inline embed of signature image (if enabled)
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
-            r = SESS.get(TURE_LOGO_URL, timeout=20)
+            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
             r.raise_for_status()
             data = r.content
-            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(TURE_LOGO_URL)[0] or "image/png"
+            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
             if not ctype.startswith("image/"):
                 ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
@@ -417,12 +441,13 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
+        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
             best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
 
-        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
+        log(f"[link] chosen is_ready=True USE_API_LINK={USE_API_LINK} -> {best}")
         return (True, best)
 
     except Exception as e:
