@@ -55,7 +55,7 @@ jobs:
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (repo secrets)
+      # Templates (repo/org secrets)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -75,7 +75,8 @@ jobs:
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # (Future-proof: ignored by Day-0 script today, safe to keep consistent)
+      # Make the script use env templates & force your domain if desired
+      USE_ENV_TEMPLATES: "1"
       USE_API_LINK: "0"
 
     steps:
@@ -98,6 +99,8 @@ jobs:
         run: |
           echo "PUBLIC_BASE=${PUBLIC_BASE}"
           echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
+          echo "USE_API_LINK=${USE_API_LINK}"
+          echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
       - name: Run sender
-        run: python trello_email_poll.py
+        run: python trello_email_day0.py
