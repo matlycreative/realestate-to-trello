@@ -7,6 +7,7 @@ FU1 — Poll a Trello list and send one email per card.
 - Chooses template A (no First) or B (has First).
 - If /api/sample?id=<safe_id> returns a stream URL, we use the API 'link'.
   Otherwise we fall back to PORTFOLIO_URL or PUBLIC_BASE.
+- You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
 - Sends via SMTP (plain text + HTML; optional inline signature logo).
 - Marks the card with "Sent: FU1" and caches it locally so it won’t resend.
 """
@@ -28,7 +29,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1","true","yes","on")
+    return (val or "").strip().lower() in ("1", "true", "yes", "on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -48,7 +49,7 @@ SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_passwor
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
 # ----------------- Templates -----------------
-USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "0").strip().lower() in ("1","true","yes","on")
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
 if USE_ENV_TEMPLATES:
@@ -113,7 +114,7 @@ PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")
-USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # <--- NEW
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # override: 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -127,7 +128,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
-UA = f"TrelloEmailer-FU1/1.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/2.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -140,7 +141,7 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 def require_env():
     missing = []
     if not TRELLO_KEY:   missing.append("TRELLO_KEY")
-    if not TRELLO_TOKEN: missing_append = "TRELLO_TOKEN"; missing.append(missing_append)
+    if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU1 or TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
@@ -438,12 +439,12 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
             best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
 
+        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
         return (True, best)
 
     except Exception as e:
@@ -526,7 +527,7 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'}")
+            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
