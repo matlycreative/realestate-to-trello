@@ -44,8 +44,7 @@ jobs:
       FROM_NAME: ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # Build personalized link from this base + the prospect’s email
-      # Set this secret to your domain, e.g. https://matlycreative.com
+      # Base link domain (e.g., https://matlycreative.com)
       PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
 
       # Force fallback to PUBLIC_BASE by leaving this empty
@@ -55,7 +54,7 @@ jobs:
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (optional; Day-0 script may ignore if hardcoded)
+      # Templates (repo secrets)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -75,7 +74,7 @@ jobs:
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # Explicitly not using API link for Day-0 (script will ignore if unsupported)
+      # Optional flag; day-0 script will ignore or respect depending on version
       USE_API_LINK: "0"
 
     steps:
@@ -94,34 +93,32 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Show repo tree (top 3 levels)
-        run: |
-          echo "PWD: $(pwd)"
-          echo "HEAD: $(git rev-parse --short HEAD)"
-          ls -la
-          find . -maxdepth 3 -type f -name 'trello_email*.py' -print
-
-      - name: Debug base URL
-        run: |
-          echo "PUBLIC_BASE=${PUBLIC_BASE}"
-          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
-
-      - name: Run Day-0 sender (robust)
+      - name: Locate Day-0 script
+        id: locate_day0
         run: |
           set -euo pipefail
-          for f in \
+          CANDIDATES=""
+          for p in \
             trello_email_day0.py \
             trello_email_poll.py \
             scripts/trello_email_day0.py \
             scripts/trello_email_poll.py \
-            src/trello_email_day0.py \
-            src/trello_email_poll.py
+            email/trello_email_day0.py \
+            automation/trello_email_day0.py
           do
-            if [ -f "$f" ]; then
-              echo "Found script at: $f"
-              python "$f"
-              exit 0
-            fi
+            [ -f "$p" ] && CANDIDATES="${CANDIDATES}"$'\n'"$p"
           done
-          echo "ERROR: Could not find the Day-0 script. Searched common paths."
-          exit 1
+          if [ -z "$CANDIDATES" ]; then
+            CANDIDATES=$(git ls-files | grep -Ei 'trello_email.*(day0|day-0|d0|poll).*\.py$' || true)
+          fi
+          if [ -z "$CANDIDATES" ]; then
+            echo "Could not find Day-0 script. Available Python files:" >&2
+            git ls-files '*.py' || true
+            exit 1
+          fi
+          SCRIPT=$(echo "$CANDIDATES" | head -n1)
+          echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
+          echo "Using: $SCRIPT"
+
+      - name: Run Day-0 sender
+        run: python "${{ steps.locate_day0.outputs.script }}"
