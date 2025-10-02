@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Day-0: Poll a Trello list and send one email per card.
+Day-0 — Poll a Trello list and send one email per card.
 
 - Parse Company / First / Email from the card description.
 - Choose template A (no First) or B (has First).
 - Build a personalized link from PUBLIC_BASE + the prospect's email.
 - If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
   otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
+- You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
 - Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
@@ -47,9 +48,10 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
-# ----------------- Templates (edit here) -----------------
-# Set USE_ENV_TEMPLATES=False to ignore env and use the hardcoded templates below.
-USE_ENV_TEMPLATES = False
+# ----------------- Templates -----------------
+# Default to using templates from env (so workflow secrets are respected).
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
@@ -83,7 +85,6 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 Best,
 Matthieu from Matly""")
 else:
-    # Hardcoded subjects/bodies you can edit directly:
     SUBJECT_A = "Polished videos for {company}'s listings"
     SUBJECT_B = "Polished videos for {company}'s listings"
 
@@ -130,7 +131,7 @@ PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
-USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # <--- NEW
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # override: 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -144,7 +145,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
-UA = f"TrelloEmailer/1.9 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/2.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -282,24 +283,16 @@ def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
     link: str, is_ready: bool, extra_ready: str, extra_wait: str
 ) -> str:
-    # 1) Fill normal placeholders, but DO NOT touch {extra}
     base = fill_template_skip_extra(
-        tpl,
-        company=company, first=first, from_name=from_name, link=link
+        tpl, company=company, first=first, from_name=from_name, link=link
     )
-
-    # 2) Positional handling for the two {extra}s
     if is_ready:
         step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
         step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
     else:
         step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
-
-    # 3) Remove any further {extra} occurrences, just in case
     final = EXTRA_TOKEN.sub("", step2)
-
-    # 4) Tidy spacing
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
@@ -476,6 +469,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
         else:
             best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
 
+        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
         return (True, best)
 
     except Exception as e:
@@ -521,7 +515,7 @@ def main():
 
         # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready (unless override)
+        is_ready, chosen_link = _sample_info(safe_id)  # uses API link when ready (unless override)
 
         # Choose template A/B *before* composing extra
         use_b    = bool(first)  # B if First is present
@@ -567,7 +561,7 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'}")
+            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
