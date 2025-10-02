@@ -55,7 +55,7 @@ jobs:
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (repo/org secrets)
+      # Templates (optional; Day-0 script may ignore if hardcoded)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -75,8 +75,7 @@ jobs:
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # Make the script use env templates & force your domain if desired
-      USE_ENV_TEMPLATES: "1"
+      # Explicitly not using API link for Day-0 (script will ignore if unsupported)
       USE_API_LINK: "0"
 
     steps:
@@ -95,12 +94,34 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Show repo tree (top 3 levels)
+        run: |
+          echo "PWD: $(pwd)"
+          echo "HEAD: $(git rev-parse --short HEAD)"
+          ls -la
+          find . -maxdepth 3 -type f -name 'trello_email*.py' -print
+
       - name: Debug base URL
         run: |
           echo "PUBLIC_BASE=${PUBLIC_BASE}"
           echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
-          echo "USE_API_LINK=${USE_API_LINK}"
-          echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
-      - name: Run sender
-        run: python trello_email_day0.py
+      - name: Run Day-0 sender (robust)
+        run: |
+          set -euo pipefail
+          for f in \
+            trello_email_day0.py \
+            trello_email_poll.py \
+            scripts/trello_email_day0.py \
+            scripts/trello_email_poll.py \
+            src/trello_email_day0.py \
+            src/trello_email_poll.py
+          do
+            if [ -f "$f" ]; then
+              echo "Found script at: $f"
+              python "$f"
+              exit 0
+            fi
+          done
+          echo "ERROR: Could not find the Day-0 script. Searched common paths."
+          exit 1
