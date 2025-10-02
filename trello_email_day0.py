@@ -365,10 +365,6 @@ def send_email(
             html_core = html_core.replace(MARK, anchor)
         else:
             html_core += f"<p>{anchor}</p>"
-
-    msg = EmailMessage()
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
-    msg["To"] = to_email
   
     if BCC_TO:
         msg["Bcc"] = BCC_TO
