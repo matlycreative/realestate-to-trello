@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  send:
+  send-day0:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -24,7 +24,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
 
       # Trello
-      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+      TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
@@ -38,29 +38,26 @@ jobs:
         || secrets.smtp_pass != '' && secrets.smtp_pass
         || secrets.SMTP_PASSWORD != '' && secrets.SMTP_PASSWORD
         || secrets.smtp_password }}
-
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      FROM_NAME: ${{ secrets.FROM_NAME }}
+      SMTP_HOST:  ${{ secrets.SMTP_HOST }}
+      SMTP_PORT:  ${{ secrets.SMTP_PORT }}
+      FROM_NAME:  ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # Base link domain (e.g., https://matlycreative.com)
-      PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
-
+      # Links — set PUBLIC_BASE to your domain (e.g. https://matlycreative.com)
+      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
       # Force fallback to PUBLIC_BASE by leaving this empty
       PORTFOLIO_URL: ""
-
-      # Friendly link appearance
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (repo secrets)
+      # Day-0 templates (your script currently uses hardcoded templates;
+      # keeping these here is harmless / future-proof)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
       BODY_B:    ${{ secrets.BODY_B }}
 
-      # Font + signature
+      # Appearance
       EMAIL_FONT_PX: "16"
       SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
       SIGNATURE_INLINE: "0"
@@ -70,11 +67,11 @@ jobs:
       # Link rendering
       INCLUDE_PLAIN_URL: "0"
 
-      # Marker/cache
+      # Markers/cache
       SENT_MARKER_TEXT: "Sent: Day0"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # Optional flag; day-0 script will ignore or respect depending on version
+      # Force using your domain link (script supports this flag)
       USE_API_LINK: "0"
 
     steps:
@@ -93,32 +90,18 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Locate Day-0 script
-        id: locate_day0
+      - name: Debug config
         run: |
-          set -euo pipefail
-          CANDIDATES=""
-          for p in \
-            trello_email_day0.py \
-            trello_email_poll.py \
-            scripts/trello_email_day0.py \
-            scripts/trello_email_poll.py \
-            email/trello_email_day0.py \
-            automation/trello_email_day0.py
-          do
-            [ -f "$p" ] && CANDIDATES="${CANDIDATES}"$'\n'"$p"
-          done
-          if [ -z "$CANDIDATES" ]; then
-            CANDIDATES=$(git ls-files | grep -Ei 'trello_email.*(day0|day-0|d0|poll).*\.py$' || true)
-          fi
-          if [ -z "$CANDIDATES" ]; then
-            echo "Could not find Day-0 script. Available Python files:" >&2
-            git ls-files '*.py' || true
-            exit 1
-          fi
-          SCRIPT=$(echo "$CANDIDATES" | head -n1)
-          echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
-          echo "Using: $SCRIPT"
+          echo "PUBLIC_BASE=${PUBLIC_BASE}"
+          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
+          echo "USE_API_LINK=${USE_API_LINK}"
+          echo "FROM_EMAIL=${FROM_EMAIL}"
+
+      - name: Verify Day-0 script exists at repo root
+        run: |
+          set -e
+          ls -la
+          test -f trello_email_day0.py || { echo "Expected trello_email_day0.py at repo root; not found." >&2; exit 1; }
 
       - name: Run Day-0 sender
-        run: python "${{ steps.locate_day0.outputs.script }}"
+        run: python trello_email_day0.py
