@@ -1,4 +1,4 @@
-name: Trello day0 Email
+name: Trello DAY0 Email
 
 on:
   workflow_dispatch:
@@ -100,4 +100,4 @@ jobs:
           echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
       - name: Run DAY0 sender
-        run: python trello_email_day0.py
+         run: python trello_email_day0.py
