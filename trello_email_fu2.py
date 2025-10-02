@@ -377,4 +377,182 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         msg["Bcc"] = BCC_TO
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html
+    msg.add_alternative(html_full, subtype="html")
+
+    # inline embed of signature image (if enabled)
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
+        try:
+            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
+            r.raise_for_status()
+            data = r.content
+            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
+        except Exception as e:
+            log(f"Inline logo fetch failed, sending without embed: {e}")
+
+    # send with retries
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                if SMTP_DEBUG:
+                    s.set_debuglevel(1)
+                if SMTP_USE_TLS:
+                    s.starttls()
+                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
+                s.send_message(msg)
+            return
+        except Exception as e:
+            log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
+# --------------- Sample info helper ----------------
+def _sample_info(safe_id: str) -> Tuple[bool, str]:
+    expected_pointer = f"pointers/{safe_id}.json"
+    expected_video_pattern = f"videos/{safe_id}__<filename>"
+
+    check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
+    log(f"[ready?] id={safe_id}")
+    log(f"[ready?] expect pointer: {expected_pointer}")
+    log(f"[ready?] expect video:   {expected_video_pattern}")
+    log(f"[ready?] GET {check_url}")
+
+    try:
+        r = SESS.get(check_url, timeout=15)
+        preview = (r.text or "")[:300]
+        log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
+        if not r.ok:
+            return (False, PORTFOLIO_URL)
+
+        try:
+            data = r.json()
+        except Exception:
+            log("[ready?] non-JSON response")
+            return (False, PORTFOLIO_URL)
+
+        streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
+        api_link  = (data.get("link") or "").strip()
+
+        log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
+
+        if not streamish:
+            err  = data.get("error")
+            link = data.get("link")
+            if err:
+                log(f"[ready?] API error: {err} (link tried: {link})")
+            return (False, PORTFOLIO_URL)
+
+        if api_link:
+            if api_link.startswith("/"):
+                api_link = f"{PUBLIC_BASE}{api_link}"
+            elif not re.match(r"^https?://", api_link, flags=re.I):
+                api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
+
+        # Respect override
+        if not USE_API_LINK:
+            best = f"{PUBLIC_BASE}/p/?id={safe_id}"
+        else:
+            best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+
+        log(f"[link] chosen is_ready=True USE_API_LINK={USE_API_LINK} -> {best}")
+        return (True, best)
+
+    except Exception as e:
+        log(f"[ready?] error: {e}")
+        return (False, PORTFOLIO_URL)
+
+# --------------- Main Flow ----------------
+def main():
+    require_env()
+    sent_cache = load_sent_cache()
+
+    cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
+    if not isinstance(cards, list):
+        log("No cards found or Trello error.")
+        return
+
+    processed = 0
+    for c in cards:
+        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
+            break
+
+        card_id = c.get("id")
+        title   = c.get("name","(no title)")
+        if not card_id: continue
+        if card_id in sent_cache: continue
+
+        desc = c.get("desc") or ""
+        fields = parse_header(desc)
+        company = (fields.get("Company") or "").strip()
+        first   = (fields.get("First")   or "").strip()
+        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
+
+        if not email_v:
+            log(f"Skip: no valid Email on card '{title}'.")
+            continue
+
+        if already_marked(card_id, SENT_MARKER_TEXT):
+            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {title}")
+            sent_cache.add(card_id)
+            continue
+
+        safe_id = _safe_id_from_email(email_v)
+        is_ready, chosen_link = _sample_info(safe_id)
+
+        use_b    = bool(first)
+        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+        body_tpl = BODY_B    if use_b else BODY_A
+
+        n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
+        log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
+
+        subject = fill_template(
+            subj_tpl,
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link
+        )
+
+        # FU2 has no extra lines by default
+        extra_ready = ""
+        extra_wait  = ""
+
+        body = fill_with_two_extras(
+            body_tpl,
+            company=company,
+            first=first,
+            from_name=FROM_NAME,
+            link=chosen_link,
+            is_ready=is_ready,
+            extra_ready=extra_ready,
+            extra_wait=extra_wait
+        )
+
+        link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
+
+        try:
+            send_email(
+                email_v,
+                subject,
+                body,
+                link_url=chosen_link,
+                link_text=link_label,
+                link_color=LINK_COLOR
+            )
+            processed += 1
+            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
+        except Exception as e:
+            log(f"Send failed for '{title}' to {email_v}: {e}")
+            continue
+
+        mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
+        sent_cache.add(card_id)
+        save_sent_cache(sent_cache)
+        time.sleep(1.0)
+
+    log(f"Done. Emails sent: {processed}")
+
+if __name__ == "__main__":
+    main()
