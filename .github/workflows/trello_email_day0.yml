@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  Send-day0:
+  send-day0:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -25,7 +25,7 @@ jobs:
       # Trello
       TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-      TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
+      TRELLO_LIST_ID_DAY=: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
       # SMTP
       SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
@@ -50,7 +50,7 @@ jobs:
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Day0 templates (the script reads these)
+      # DAY0 templates (the script reads these)
       SUBJECT_A: ${{ secrets.SUBJECT_A_DAY0 }}
       BODY_A:    ${{ secrets.BODY_A_DAY0 }}
       SUBJECT_B: ${{ secrets.SUBJECT_B_DAY0 }}
@@ -67,8 +67,8 @@ jobs:
       INCLUDE_PLAIN_URL: "0"
 
       # Marker/cache
-      SENT_MARKER_TEXT: "Sent: FU1"
-      SENT_CACHE_FILE: ".data/.sent_day0.json"
+      SENT_MARKER_TEXT: "Sent: DAY0"
+      SENT_CACHE_FILE: ".data/.sent_DAY0.json"
 
       # Make sure we actually use env templates
       USE_ENV_TEMPLATES: "1"
@@ -100,4 +100,4 @@ jobs:
           echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
       - name: Run DAY0 sender
-         run: python trello_email_day0.py
+        run: python trello_email_day0.py
