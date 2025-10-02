@@ -67,7 +67,7 @@ jobs:
       INCLUDE_PLAIN_URL: "0"
 
       # Marker/cache
-      SENT_MARKER_TEXT: "Sent: DAY0”
+      SENT_MARKER_TEXT: "Sent: FU1"
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
       # Make sure we actually use env templates
