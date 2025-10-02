@@ -8,7 +8,6 @@ Day-0 — Poll a Trello list and send one email per card.
 - If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
   otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
 - You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
-- Send via SMTP (plain text + HTML; optional inline signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
 
@@ -115,11 +114,6 @@ Best,
 Matthieu from Matly"""
 
 EMAIL_FONT_PX       = int(os.getenv("EMAIL_FONT_PX", "16"))
-SIGNATURE_LOGO_URL  = os.getenv("SIGNATURE_LOGO_URL", "").strip()
-SIGNATURE_INLINE    = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX  = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
-SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
-SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
@@ -153,6 +147,9 @@ SESS.headers.update({"User-Agent": UA})
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+
+SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
+BCC_TO     = _get_env("BCC_TO", default="").strip()
 
 # --------------- Sanity checks ----------------
 def require_env():
@@ -320,19 +317,6 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
-def signature_html(logo_cid: str | None) -> str:
-    parts = []
-    if SIGNATURE_ADD_NAME:
-        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
-        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
-    if SIGNATURE_LOGO_URL:
-        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
-        parts.append(
-            f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
-            f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
-        )
-    return "".join(parts)
-
 # ----------------- Email sender -----------------
 def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
     from email.message import EmailMessage
@@ -379,41 +363,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             html_core += f"<p>{anchor}</p>"
 
     logo_cid = "siglogo@local"
-    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
-    msg = EmailMessage()
-    msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
-    msg["To"] = to_email
-    msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html")
-
-    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
-        try:
-            r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
-            r.raise_for_status()
-            data = r.content
-            ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
-            if not ctype.startswith("image/"):
-                ctype = "image/png"
-            maintype, subtype = ctype.split("/", 1)
-            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
-        except Exception as e:
-            log(f"Inline logo fetch failed, sending without embed: {e}")
-
-    for attempt in range(3):
-        try:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-                if SMTP_USE_TLS:
-                    s.starttls()
-                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-                s.send_message(msg)
-            return
-        except Exception as e:
-            log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
-            if attempt == 2:
-                raise
-            time.sleep(1.5 * (attempt + 1))
+    def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
+    from email.message import EmailMessage
+    import smtplib
 
 # --------------- Sample info helper ----------------
 def _sample_info(safe_id: str) -> Tuple[bool, str]:
