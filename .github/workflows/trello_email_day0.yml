@@ -1,12 +1,12 @@
-name: Trello Day-0 Email
+name: Trello day0 Email
 
 on:
   workflow_dispatch:
   schedule:
     # 08:45 GMT+2 → 06:45 UTC
-    - cron: "45 6 * * 1-5"
+    - cron: "50 6 * * 1-5"
     # 16:45 GMT+2 → 14:45 UTC
-    - cron: "45 14 * * 1-5"
+    - cron: "50 14 * * 1-5"
 
 permissions:
   contents: read
@@ -16,19 +16,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  send-day0:
+  Send-day0:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     env:
       PYTHONUNBUFFERED: "1"
 
       # Trello
-      TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+      TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID_DAY0: ${{ secrets.TRELLO_LIST_ID_DAY0 }}
 
-      # SMTP (first non-empty wins)
+      # SMTP
       SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
         || secrets.SMTP_USERNAME != '' && secrets.SMTP_USERNAME
         || secrets.smtp_user != '' && secrets.smtp_user
@@ -38,22 +37,24 @@ jobs:
         || secrets.smtp_pass != '' && secrets.smtp_pass
         || secrets.SMTP_PASSWORD != '' && secrets.SMTP_PASSWORD
         || secrets.smtp_password }}
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      FROM_NAME: ${{ secrets.FROM_NAME }}
+      SMTP_HOST:  ${{ secrets.SMTP_HOST }}
+      SMTP_PORT:  ${{ secrets.SMTP_PORT }}
+      FROM_NAME:  ${{ secrets.FROM_NAME }}
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
-      # Links (use your domain)
-      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.com
-      PORTFOLIO_URL: ""                          # force fallback to PUBLIC_BASE
+      # Links
+      # Set this secret to your domain, e.g. https://matlycreative.com
+      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
+      # Force fallback to PUBLIC_BASE by leaving this empty
+      PORTFOLIO_URL: ""
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (read only if your script uses env templates)
-      SUBJECT_A: ${{ secrets.SUBJECT_A }}
-      BODY_A:    ${{ secrets.BODY_A }}
-      SUBJECT_B: ${{ secrets.SUBJECT_B }}
-      BODY_B:    ${{ secrets.BODY_B }}
+      # Day0 templates (the script reads these)
+      SUBJECT_A: ${{ secrets.SUBJECT_A_DAY0 }}
+      BODY_A:    ${{ secrets.BODY_A_DAY0 }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B_DAY0 }}
+      BODY_B:    ${{ secrets.BODY_B_DAY0 }}
 
       # Appearance
       EMAIL_FONT_PX: "16"
@@ -66,17 +67,17 @@ jobs:
       INCLUDE_PLAIN_URL: "0"
 
       # Marker/cache
-      SENT_MARKER_TEXT: "Sent: Day0"
+      SENT_MARKER_TEXT: "Sent: DAY0”
       SENT_CACHE_FILE: ".data/.sent_day0.json"
 
-      # Keep consistent with FU1/FU2 (safe even if the script ignores it)
+      # Make sure we actually use env templates
+      USE_ENV_TEMPLATES: "1"
+
+      # Force using your domain link (override API-provided absolute links)
       USE_API_LINK: "0"
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # ensure we’re running against the commit that triggered the workflow
-          fetch-depth: 0
 
       - name: Ensure data dir
         run: mkdir -p .data
@@ -91,15 +92,12 @@ jobs:
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Sanity check Day-0 script
+      - name: Debug base URL
         run: |
-          set -e
-          echo "CWD: $(pwd)"
-          ls -la
-          if [ ! -f trello_email_day0.py ]; then
-            echo "Expected trello_email_day0.py at repo root; not found." >&2
-            exit 1
-          fi
+          echo "PUBLIC_BASE=${PUBLIC_BASE}"
+          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
+          echo "USE_API_LINK=${USE_API_LINK}"
+          echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
 
-      - name: Run Day-0 sender
+      - name: Run DAY0 sender
         run: python trello_email_day0.py
