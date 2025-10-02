@@ -61,6 +61,9 @@ jobs:
       SIGNATURE_MAX_W_PX: "200"
       SIGNATURE_ADD_NAME: "0"
 
+      BCC_TO: matthieu@matlycreative.com   # or use a secret; remove after testing
+      SMTP_DEBUG: "1"
+
       # Link rendering
       INCLUDE_PLAIN_URL: "0"
 
