@@ -28,7 +28,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+    return (val or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -48,7 +48,6 @@ SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_passwor
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
 # ----------------- Templates -----------------
-# Default to using templates coming from workflow/env secrets.
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
@@ -76,7 +75,6 @@ Matthieu from Matly""")
 Best,
 Matthieu from Matly""")
 else:
-    # Fallbacks (won't be used if USE_ENV_TEMPLATES=1)
     SUBJECT_A = "Quick follow-up (2) on listing videos for {company}"
     SUBJECT_B = "Quick follow-up (2) for {first} — listing videos at {company}"
 
@@ -107,15 +105,15 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
 
-# Distinct marker/cache for FU2
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU2")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu2.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
+PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # <--- NEW
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -126,7 +124,7 @@ def _norm_base(u: str) -> str:
 
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}")
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
 UA = f"TrelloEmailer-FU2/1.0 (+{FROM_EMAIL or 'no-email'})"
@@ -146,7 +144,7 @@ def require_env():
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_FU2 or TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
-    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
+    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.com)")
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
     if not SMTP_USER:
@@ -270,11 +268,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -440,7 +438,12 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+        # Respect override
+        if not USE_API_LINK:
+            best = f"{PUBLIC_BASE}/p/?id={safe_id}"
+        else:
+            best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+
         return (True, best)
 
     except Exception as e:
@@ -497,7 +500,6 @@ def main():
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # You can customize these two lines; left empty by default for FU2.
         extra_ready = ""
         extra_wait  = ""
 
