@@ -358,14 +358,6 @@ def send_email(
         if pat:
             html_core = html_core.replace(pat, MARK)
 
-    if full:
-        style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
-        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        if MARK in html_core:
-            html_core = html_core.replace(MARK, anchor)
-        else:
-            html_core += f"<p>{anchor}</p>"
-
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
