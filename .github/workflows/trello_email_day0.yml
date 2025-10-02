@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
 jobs:
   send:
     runs-on: ubuntu-latest
@@ -41,15 +45,17 @@ jobs:
       FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
 
       # Build personalized link from this base + the prospect’s email
-      PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.pages.dev
+      # Set this secret to your domain, e.g. https://matlycreative.com
+      PUBLIC_BASE: ${{ secrets.PUBLIC_BASE }}
 
-      PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}   # if empty, we’ll fall back to PUBLIC_BASE
+      # Force fallback to PUBLIC_BASE by leaving this empty
+      PORTFOLIO_URL: ""
 
       # Friendly link appearance
       LINK_TEXT: "My portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
-      # Templates (must exist in repo secrets)
+      # Templates (repo secrets)
       SUBJECT_A: ${{ secrets.SUBJECT_A }}
       BODY_A:    ${{ secrets.BODY_A }}
       SUBJECT_B: ${{ secrets.SUBJECT_B }}
@@ -63,12 +69,14 @@ jobs:
       SIGNATURE_ADD_NAME: "0"
 
       # Link rendering
-      APPEND_FRIENDLY_LINK: "0"
-      INCLUDE_PLAIN_URL:    "0"
+      INCLUDE_PLAIN_URL: "0"
 
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: Day0"
-      SENT_CACHE_FILE: ".data/.sent_day0.json"   # (optional) different path to avoid stale cache
+      SENT_CACHE_FILE: ".data/.sent_day0.json"
+
+      # (Future-proof: ignored by Day-0 script today, safe to keep consistent)
+      USE_API_LINK: "0"
 
     steps:
       - uses: actions/checkout@v4
@@ -80,11 +88,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps (if any)
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           python -m pip install requests
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Debug base URL
+        run: |
+          echo "PUBLIC_BASE=${PUBLIC_BASE}"
+          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
 
       - name: Run sender
         run: python trello_email_poll.py
