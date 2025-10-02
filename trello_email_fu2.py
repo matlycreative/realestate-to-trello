@@ -7,6 +7,7 @@ FU2 — Poll a Trello list and send one email per card.
 - Chooses template A (no First) or B (has First).
 - If /api/sample?id=<safe_id> returns a stream URL, we use the API 'link'.
   Otherwise we fall back to PORTFOLIO_URL or PUBLIC_BASE.
+- You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
 - Sends via SMTP (plain text + HTML; optional inline signature logo).
 - Marks the card with "Sent: FU2" and caches it locally so it won’t resend.
 """
@@ -113,7 +114,7 @@ PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")
-USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # <--- NEW
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")    # override: 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -127,7 +128,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
-UA = f"TrelloEmailer-FU2/1.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU2/2.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -268,11 +269,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -438,12 +439,12 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
             best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
 
+        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
         return (True, best)
 
     except Exception as e:
@@ -526,7 +527,7 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'}")
+            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
