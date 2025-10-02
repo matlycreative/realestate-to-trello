@@ -126,10 +126,11 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Da
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.pages.dev
+PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
+USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # <--- NEW
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -140,7 +141,7 @@ def _norm_base(u: str) -> str:
 
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}")
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
 # HTTP session
 UA = f"TrelloEmailer/1.9 (+{FROM_EMAIL or 'no-email'})"
@@ -160,7 +161,7 @@ def require_env():
     if not LIST_ID:      missing.append("TRELLO_LIST_ID_DAY0")
     if not FROM_EMAIL:   missing.append("FROM_EMAIL")
     if not SMTP_PASS:    missing.append("SMTP_PASS (or SMTP_PASSWORD / smtp_pass)")
-    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.pages.dev)")
+    if not PUBLIC_BASE:  missing.append("PUBLIC_BASE (e.g., https://matlycreative.com)")
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
     if not SMTP_USER:
@@ -298,8 +299,7 @@ def fill_with_two_extras(
     # 3) Remove any further {extra} occurrences, just in case
     final = EXTRA_TOKEN.sub("", step2)
 
-    # 4) Tidy spacing + remove a stray " : " that can remain when the first {extra} was removed
-    #    (e.g., template "... {extra} : {link}" would otherwise leave " : {link}" in not-ready case)
+    # 4) Tidy spacing
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
@@ -428,7 +428,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     Query /api/sample?id=<safe_id>.
     Returns (is_ready, best_link_to_use).
     If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
-    Handles relative links from the API.
+    Handles relative links from the API. Allows overriding API link via USE_API_LINK.
     """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
@@ -470,7 +470,12 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+        # Respect override
+        if not USE_API_LINK:
+            best = f"{PUBLIC_BASE}/p/?id={safe_id}"
+        else:
+            best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+
         return (True, best)
 
     except Exception as e:
@@ -516,7 +521,7 @@ def main():
 
         # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready
+        is_ready, chosen_link = _sample_info(safe_id)  # <-- use API link when ready (unless override)
 
         # Choose template A/B *before* composing extra
         use_b    = bool(first)  # B if First is present
