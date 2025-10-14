@@ -151,12 +151,6 @@ PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
 
-# ---------- NEW: always route clicks through your website ----------
-def _prospect_link(safe_id: str) -> str:
-    # Use a pretty path; switch to query if you prefer: f"{PUBLIC_BASE}/p/?id={safe_id}"
-    return f"{PUBLIC_BASE}/p/{safe_id}"
-# ------------------------------------------------------------------
-
 # HTTP session
 UA = f"TrelloEmailer-Day0/2.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
@@ -449,8 +443,8 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     """
     Query /api/sample?id=<safe_id>.
     Returns (is_ready, best_link_to_use).
-    If ready, prefer the API's 'link' for the email;
-    otherwise, fall back to portfolio.
+    If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
+    Handles relative links from the API. Allows overriding API link via USE_API_LINK.
     """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
@@ -461,21 +455,18 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     log(f"[ready?] expect video:   {expected_video_pattern}")
     log(f"[ready?] GET {check_url}")
 
-    # Always send users through your own site; this URL is unique per prospect
-    best_link = _prospect_link(safe_id)
-
     try:
         r = SESS.get(check_url, timeout=15)
         preview = (r.text or "")[:300]
         log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
         if not r.ok:
-            return (False, best_link)
+            return (False, PORTFOLIO_URL)
 
         try:
             data = r.json()
         except Exception:
             log("[ready?] non-JSON response")
-            return (False, best_link)
+            return (False, PORTFOLIO_URL)
 
         streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
         api_link  = (data.get("link") or "").strip()
@@ -486,15 +477,27 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             link = data.get("link")
             if err:
                 log(f"[ready?] API error: {err} (link tried: {link})")
-            return (False, best_link)
+            return (False, PORTFOLIO_URL)
 
-        # If sample exists, we still route via your domain (/p/<id>)
-        log(f"[link] chosen is_ready={True} -> {best_link}")
-        return (True, best_link)
+        # Normalize API link if it's relative or missing scheme
+        if api_link:
+            if api_link.startswith("/"):
+                api_link = f"{PUBLIC_BASE}{api_link}"
+            elif not re.match(r"^https?://", api_link, flags=re.I):
+                api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
+
+        # Respect override
+        if not USE_API_LINK:
+            best = f"{PUBLIC_BASE}/p/?id={safe_id}"
+        else:
+            best = api_link if api_link else f"{PUBLIC_BASE}/p/?id={safe_id}"
+
+        log(f"[link] chosen is_ready={True} USE_API_LINK={USE_API_LINK} -> {best}")
+        return (True, best)
 
     except Exception as e:
         log(f"[ready?] error: {e}")
-        return (False, best_link)
+        return (False, PORTFOLIO_URL)
 
 # --------------- Main Flow ----------------
 def main():
@@ -535,7 +538,7 @@ def main():
 
         # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)  # now always returns your site link (/p/<id>)
+        is_ready, chosen_link = _sample_info(safe_id)  # uses API link when ready (unless override)
 
         # Choose template A/B *before* composing extra
         use_b    = bool(first)  # B if First is present
