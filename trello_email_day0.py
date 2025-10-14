@@ -438,21 +438,17 @@ def send_email(
                 raise
             time.sleep(1.5 * (attempt + 1))
 
-# --------------- Sample info helper ----------------
 def _sample_info(safe_id: str) -> Tuple[bool, str]:
     """
-    Query /api/sample?id=<safe_id>.
+    Query /api/sample?id=<safe_id> (WordPress).
     Returns (is_ready, best_link_to_use).
-    If ready, prefer the API's 'link' field; otherwise fall back to portfolio.
-    Handles relative links from the API. Allows overriding API link via USE_API_LINK.
-    """
-    expected_pointer = f"pointers/{safe_id}.json"
-    expected_video_pattern = f"videos/{safe_id}__<filename>"
 
+    WordPress now returns: { id, src, embedType, link }
+    Treat presence of 'src' (or legacy streamUrl/signedUrl/url) as ready.
+    If USE_API_LINK=0, always return /p/?id=<id> while still marking ready=True.
+    """
     check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
     log(f"[ready?] id={safe_id}")
-    log(f"[ready?] expect pointer: {expected_pointer}")
-    log(f"[ready?] expect video:   {expected_video_pattern}")
     log(f"[ready?] GET {check_url}")
 
     try:
@@ -468,25 +464,28 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             log("[ready?] non-JSON response")
             return (False, PORTFOLIO_URL)
 
-        streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
-        api_link  = (data.get("link") or "").strip()
-        log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
+        # New WP shape: 'src' + 'embedType' + 'link'
+        # (also accept legacy keys to be safe)
+        src = (data.get("src") or
+               data.get("streamUrl") or
+               data.get("signedUrl") or
+               data.get("url"))
 
-        if not streamish:
-            err  = data.get("error")
-            link = data.get("link")
+        if not src:
+            err = data.get("error")
             if err:
-                log(f"[ready?] API error: {err} (link tried: {link})")
+                log(f"[ready?] API error: {err}")
             return (False, PORTFOLIO_URL)
 
-        # Normalize API link if it's relative or missing scheme
+        # Normalize 'link' (what we put in the email)
+        api_link = (data.get("link") or "").strip()
         if api_link:
             if api_link.startswith("/"):
                 api_link = f"{PUBLIC_BASE}{api_link}"
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override
+        # Respect override: if USE_API_LINK=0 -> always use your site /p/?id=<id>
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
