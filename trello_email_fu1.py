@@ -206,7 +206,7 @@ def save_sent_cache(ids):
     d = os.path.dirname(SENT_CACHE_FILE)
     if d: os.makedirs(d, exist_ok=True)
     try:
-        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
+        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f):
             json.dump(sorted(ids), f)
     except Exception:
         pass
@@ -269,11 +269,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -360,7 +360,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             html_core += f"<p>{anchor}</p>"
 
-    # finalize HTML + optional signature
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -371,7 +370,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
 
-    # inline embed of signature image (if enabled)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -401,6 +399,11 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
 
 # --------------- Sample info helper ----------------
 def _sample_info(safe_id: str) -> Tuple[bool, str]:
+    """
+    Query /api/sample?id=<safe_id> on your site.
+    Accept JSON even if status != 200 (WordPress route sometimes flags 404),
+    and treat 'src' as the primary playable signal.
+    """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
 
@@ -412,20 +415,24 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
 
     try:
         r = SESS.get(check_url, timeout=15)
+        status = r.status_code
         preview = (r.text or "")[:300]
-        log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
-        if not r.ok:
-            return (False, PORTFOLIO_URL)
+        log(f"[ready?] HTTP {status} :: {preview!r}")
 
+        # Try to parse JSON regardless of status code
+        data = None
         try:
             data = r.json()
         except Exception:
-            log("[ready?] non-JSON response")
+            pass
+
+        if not isinstance(data, dict):
+            # No parseable JSON → not ready
             return (False, PORTFOLIO_URL)
 
-        streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
+        # NEW: support 'src' (primary), plus older keys
+        streamish = data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url")
         api_link  = (data.get("link") or "").strip()
-
         log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
 
         if not streamish:
@@ -435,6 +442,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
                 log(f"[ready?] API error: {err} (link tried: {link})")
             return (False, PORTFOLIO_URL)
 
+        # Normalize API link if relative or schemeless
         if api_link:
             if api_link.startswith("/"):
                 api_link = f"{PUBLIC_BASE}{api_link}"
