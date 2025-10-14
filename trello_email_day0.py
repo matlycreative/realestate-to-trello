@@ -8,7 +8,7 @@ Day-0 — Poll a Trello list and send one email per card.
 - If /api/sample?id=... returns a stream URL, prefer the API's 'link' for the email;
   otherwise, use PORTFOLIO_URL (or PUBLIC_BASE).
 - You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
-- Send via SMTP (plain text + HTML; optional inline signature logo).
+- Send via SMTP (plain text + HTML; optional inline <signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 """
 
@@ -137,7 +137,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://yourdomain.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
+PORTFOLIO_URL = https://matlycreative.com/portfolio/, default="")  # falls back to PUBLIC_BASE if blank
 USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
