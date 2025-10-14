@@ -443,9 +443,9 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     Query /api/sample?id=<safe_id> (WordPress).
     Returns (is_ready, best_link_to_use).
 
-    WordPress now returns: { id, src, embedType, link }
-    Treat presence of 'src' (or legacy streamUrl/signedUrl/url) as ready.
-    If USE_API_LINK=0, always return /p/?id=<id> while still marking ready=True.
+    WP returns: { id, src, embedType, link } on success.
+    We treat presence of 'src' as ready, even if HTTP status isn't 200.
+    If USE_API_LINK=0, always use /p/?id=<id> while still marking ready=True.
     """
     check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
     log(f"[ready?] id={safe_id}")
@@ -455,17 +455,15 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
         r = SESS.get(check_url, timeout=15)
         preview = (r.text or "")[:300]
         log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
-        if not r.ok:
-            return (False, PORTFOLIO_URL)
 
+        # Try to parse JSON regardless of status code
         try:
             data = r.json()
         except Exception:
             log("[ready?] non-JSON response")
             return (False, PORTFOLIO_URL)
 
-        # New WP shape: 'src' + 'embedType' + 'link'
-        # (also accept legacy keys to be safe)
+        # New shape (plus legacy fallbacks)
         src = (data.get("src") or
                data.get("streamUrl") or
                data.get("signedUrl") or
@@ -477,7 +475,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
                 log(f"[ready?] API error: {err}")
             return (False, PORTFOLIO_URL)
 
-        # Normalize 'link' (what we put in the email)
+        # Normalize 'link' for the email
         api_link = (data.get("link") or "").strip()
         if api_link:
             if api_link.startswith("/"):
@@ -485,7 +483,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override: if USE_API_LINK=0 -> always use your site /p/?id=<id>
+        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
