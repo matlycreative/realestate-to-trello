@@ -137,7 +137,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://yourdomain.com
 LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
 LINK_COLOR    = _get_env("LINK_COLOR", default="")
-PORTFOLIO_URL = https://matlycreative.com/portfolio/  # falls back to PUBLIC_BASE if blank
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
 USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # 0 -> force PUBLIC_BASE link
 
 def _norm_base(u: str) -> str:
