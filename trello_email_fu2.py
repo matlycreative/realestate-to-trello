@@ -5,10 +5,15 @@ FU2 — Poll a Trello list and send one email per card.
 - Reads cards from the list ID in TRELLO_LIST_ID_FU2.
 - Parses Company / First / Email from the card description.
 - Chooses template A (no First) or B (has First).
-- If /api/sample?id=<safe_id> returns a stream URL, we use the API 'link'.
+- If /api/sample?id=<safe_id> returns a playable sample, we use the API 'link'.
   Otherwise we fall back to PORTFOLIO_URL or PUBLIC_BASE.
 - You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
 - Marks the card with "Sent: FU2" and caches it locally so it won’t resend.
+
+Added diagnostics and test controls:
+- IGNORE_LOCAL_CACHE=1   -> ignore .data/sent_fu2.json
+- IGNORE_TRELLO_MARKER=1 -> ignore existing "Sent: FU2" Trello comments
+- ONLY_EMAIL=someone@domain.com -> process only that one email
 """
 
 import os, re, time, json, html, mimetypes
@@ -47,9 +52,12 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
-# Diagnostics (optional)
-SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
-BCC_TO     = _get_env("BCC_TO", default="").strip()
+# Diagnostics / testing
+SMTP_DEBUG            = _env_bool("SMTP_DEBUG", "0")
+BCC_TO                = _get_env("BCC_TO", default="").strip()
+IGNORE_LOCAL_CACHE    = _env_bool("IGNORE_LOCAL_CACHE", "0")
+IGNORE_TRELLO_MARKER  = _env_bool("IGNORE_TRELLO_MARKER", "0")
+ONLY_EMAIL            = _get_env("ONLY_EMAIL", default="").strip().lower()
 
 # ----------------- Templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
@@ -100,7 +108,7 @@ Matthieu from Matly"""
 Best,
 Matthieu from Matly"""
 
-# Appearance / signature (kept consistent with FU1/DAY0)
+# Appearance / signature
 EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
@@ -130,6 +138,7 @@ def _norm_base(u: str) -> str:
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
 PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  PORTFOLIO_URL={PORTFOLIO_URL}  USE_API_LINK={USE_API_LINK}")
+log(f"[env] LIST_ID(FU2)={LIST_ID}  IGNORE_LOCAL_CACHE={IGNORE_LOCAL_CACHE}  IGNORE_TRELLO_MARKER={IGNORE_TRELLO_MARKER}  ONLY_EMAIL={ONLY_EMAIL or '(none)'}")
 
 # HTTP session
 UA = f"TrelloEmailer-FU2/2.0 (+{FROM_EMAIL or 'no-email'})"
@@ -200,20 +209,30 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
 
 # --------------- Parsing / email formatting ----------------
 def load_sent_cache():
+    if IGNORE_LOCAL_CACHE:
+        log("[cache] IGNORE_LOCAL_CACHE=1 -> not loading local cache")
+        return set()
     try:
         with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
+            s = set(json.load(f))
+            log(f"[cache] loaded {len(s)} entries from {SENT_CACHE_FILE}")
+            return s
     except Exception:
+        log(f"[cache] no cache file at {SENT_CACHE_FILE}")
         return set()
 
 def save_sent_cache(ids):
+    if IGNORE_LOCAL_CACHE:
+        log("[cache] IGNORE_LOCAL_CACHE=1 -> not saving local cache")
+        return
     d = os.path.dirname(SENT_CACHE_FILE)
     if d: os.makedirs(d, exist_ok=True)
     try:
         with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(sorted(ids), f)
-    except Exception:
-        pass
+        log(f"[cache] saved {len(ids)} entries to {SENT_CACHE_FILE}")
+    except Exception as e:
+        log(f"[cache] save failed: {e}")
 
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
@@ -273,11 +292,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -324,7 +343,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     from email.message import EmailMessage
     import smtplib
 
-    # Normalize link + label
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
     label = (link_text or "My portfolio").strip() or "My portfolio"
@@ -334,7 +352,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if bare else ""
 
-    # Plain text body: replace URL with label unless INCLUDE_PLAIN_URL=1
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -345,7 +362,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML body: mark link, autolink others, insert styled anchor
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
@@ -366,7 +382,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             html_core += f"<p>{anchor}</p>"
 
-       # finalize HTML + optional signature
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -379,7 +394,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
 
-    # inline embed of signature image (if enabled)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = SESS.get(SIGNATURE_LOGO_URL, timeout=20)
@@ -393,7 +407,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         except Exception as e:
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # send with retries
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -412,6 +425,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
 
 # --------------- Sample info helper ----------------
 def _sample_info(safe_id: str) -> Tuple[bool, str]:
+    """
+    Query /api/sample?id=<safe_id>. Accepts modern WP shape {src,embedType,link}
+    and legacy shape {streamUrl|signedUrl|url}.
+    """
     expected_pointer = f"pointers/{safe_id}.json"
     expected_video_pattern = f"videos/{safe_id}__<filename>"
 
@@ -434,16 +451,15 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             log("[ready?] non-JSON response")
             return (False, PORTFOLIO_URL)
 
-        streamish = data.get("streamUrl") or data.get("signedUrl") or data.get("url")
+        streamish = data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url")
         api_link  = (data.get("link") or "").strip()
 
-        log(f"[ready?] JSON keys: {list(data.keys())} -> streamish={bool(streamish)} | api_link={bool(api_link)}")
+        log(f"[ready?] JSON keys: {list(data.keys())} -> playable={bool(streamish)} | api_link={bool(api_link)}")
 
         if not streamish:
             err  = data.get("error")
-            link = data.get("link")
             if err:
-                log(f"[ready?] API error: {err} (link tried: {link})")
+                log(f"[ready?] API error: {err}")
             return (False, PORTFOLIO_URL)
 
         if api_link:
@@ -452,7 +468,6 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
@@ -475,28 +490,42 @@ def main():
         log("No cards found or Trello error.")
         return
 
+    log(f"[trello] fetched {len(cards)} cards from LIST_ID={LIST_ID}")
     processed = 0
-    for c in cards:
-        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
-            break
+    examined  = 0
 
+    for c in cards:
         card_id = c.get("id")
         title   = c.get("name","(no title)")
-        if not card_id: continue
-        if card_id in sent_cache: continue
+        desc    = c.get("desc") or ""
+        examined += 1
+        if not card_id:
+            log(f"[skip] missing card_id for '{title}'")
+            continue
 
-        desc = c.get("desc") or ""
+        if ONLY_EMAIL:
+            # gate by email later after parsing
+            pass
+
+        if card_id in sent_cache:
+            log(f"[skip] cache: already sent (local) — {title} ({card_id})")
+            continue
+
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
 
-        if not email_v:
-            log(f"Skip: no valid Email on card '{title}'.")
+        if ONLY_EMAIL and (email_v or "").lower() != ONLY_EMAIL:
+            log(f"[skip] ONLY_EMAIL set, card '{title}' email {email_v!r} != {ONLY_EMAIL!r}")
             continue
 
-        if already_marked(card_id, SENT_MARKER_TEXT):
-            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {title}")
+        if not email_v:
+            log(f"[skip] no valid Email on card '{title}'")
+            continue
+
+        if not IGNORE_TRELLO_MARKER and already_marked(card_id, SENT_MARKER_TEXT):
+            log(f"[skip] already marked '{SENT_MARKER_TEXT}' — {title}")
             sent_cache.add(card_id)
             continue
 
@@ -508,14 +537,14 @@ def main():
         body_tpl = BODY_B    if use_b else BODY_A
 
         n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
-        log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
+        log(f"[compose] {title} :: template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # FU2 has no extra lines by default
+        # FU2 default: no extra lines
         extra_ready = ""
         extra_wait  = ""
 
@@ -542,17 +571,19 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
+            log(f"[sent] to {email_v} — '{title}' (type {'B' if use_b else 'A'}) — link={'video' if is_ready else 'portfolio'} :: {chosen_link}")
         except Exception as e:
-            log(f"Send failed for '{title}' to {email_v}: {e}")
+            log(f"[error] send failed for '{title}' to {email_v}: {e}")
             continue
 
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
+        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
+            break
         time.sleep(1.0)
 
-    log(f"Done. Emails sent: {processed}")
+    log(f"Done. Emails sent: {processed} (examined {examined} cards)")
 
 if __name__ == "__main__":
     main()
