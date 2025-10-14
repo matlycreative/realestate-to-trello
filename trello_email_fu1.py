@@ -206,7 +206,7 @@ def save_sent_cache(ids):
     d = os.path.dirname(SENT_CACHE_FILE)
     if d: os.makedirs(d, exist_ok=True)
     try:
-        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f):
+        with open(SENT_CACHE_FILE, "w", encoding="utf-8") f):
             json.dump(sorted(ids), f)
     except Exception:
         pass
