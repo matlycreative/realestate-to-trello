@@ -11,7 +11,7 @@ Day-0 — Poll a Trello list and send one email per card.
 - Send via SMTP (plain + HTML, signature, optional inline logo).
 - Mark the card as "Sent" (cache + Trello comment).
 
-Adds a “here” upload button (HTML) / link (plain text) when sample is not ready.
+Adds a “here” upload link (HTML) / link text (plain) when sample is not ready.
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -67,7 +67,7 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
 
-# Upload page (for the “here” button)
+# Upload page (for the “here” link)
 UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/")
 
 # ----------------- Templates -----------------
@@ -157,9 +157,8 @@ ALWAYS_USE_PAGE_LINK = True  # always /p/?id=<id>
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
-    if not u: return ""
-    if not re.match(r"^https?://", u, flags=re.I):
-        u = "https://" + u
+    if not re.match(r"^https?://", u or "", flags=re.I):
+        u = "https://" + (u or "")
     return u.rstrip("/")
 
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
@@ -167,7 +166,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.3 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.4 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -302,12 +301,10 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
         src = data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or ""
         src = (src or "").strip()
 
-        # Cloudflare Stream cases: iframe URL or playbackId
         if _CF_IFRAME.search(src) or _CF_PLAYID.match(src):
             log("[ready?] Cloudflare Stream detected -> READY")
             return (True, page_link)
 
-        # Absolute mp4/m3u8 URLs: verify existence with HEAD
         if _HTTP_MPX.match(src):
             try:
                 h = requests.head(src, timeout=6, allow_redirects=True)
@@ -319,7 +316,6 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
             except Exception as e:
                 log(f"[ready?] HEAD error -> NOT READY :: {e}")
 
-        # Anything else is NOT READY (blocks false positives like bare 'filename.mp4')
         log("[ready?] src not playable/verified -> NOT READY")
         return (False, page_link)
 
@@ -456,14 +452,10 @@ def send_email(
         if pat:
             html_core = html_core.replace(pat, MARK)
 
-    # Replace upload placeholder with a button-style link
-    upload_btn = (
-        f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
-        f'style="display:inline-block;padding:8px 14px;border-radius:999px;'
-        f'background:{html.escape(link_color or LINK_COLOR)};color:#fff;'
-        f'text-decoration:none;font-weight:600">here</a>'
-    )
-    html_core = html_core.replace("[UPLOAD_HERE]", upload_btn)
+    # Replace upload placeholder with a *text* link styled like the main link
+    style_attr_up = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
+    upload_link = f'<a{style_attr_up} href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
+    html_core = html_core.replace("[UPLOAD_HERE]", upload_link)
 
     # Insert main link anchor if present
     if full:
@@ -577,7 +569,7 @@ def main():
             company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
         )
 
-        # ---- Two-{extra} with upload “here” on wait ----
+        # ---- Two-{extra} with upload “here” link on wait ----
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free). [UPLOAD_HERE]"
 
