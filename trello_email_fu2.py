@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-FU2 — Poll Trello and send one email per card (Day-0/FU1 style behavior).
+FU2 — Poll Trello and send one email per card (portfolio fallback when not ready).
 
-STRICT RULES:
+Rules:
 - Personalized ID = Company slug (fallback email-safe).
-- READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
-- NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
-- With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
-- [here] (if present in copy) becomes a link to UPLOAD_URL (default https://matlycreative.com/upload/).
-- No “Email me” contact line; no hidden overrides in send_email().
+- READY    -> link = <PUBLIC_BASE>/p/?id=<id>
+- NOT READY-> link = <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
+- Optional pointer readiness (MATLY_POINTER_BASE) with freshness + 'sample' filename.
+- '[here]' (if present) becomes a link to UPLOAD_URL.
+- No 'Email me' line anywhere.
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -18,9 +18,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Tuple
 import requests
 
+VERSION = "FU2 v7.0"
+
 def log(*a): print(*a, flush=True)
 
-# ----------------- Small helpers -----------------
+# ----------------- helpers -----------------
 def _get_env(*names, default=""):
     for n in names:
         v = os.getenv(n)
@@ -30,7 +32,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+    return (val or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -55,7 +57,7 @@ def _norm_base(u: str) -> str:
         u = "https://" + u
     return u.rstrip("/")
 
-# ----------------- Config / Env -----------------
+# ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_FU2", "TRELLO_LIST_ID")
@@ -71,15 +73,15 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
-PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
+PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))
 PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
 UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
 
-# Pointer readiness (optional)
+# optional pointer readiness
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
-# Link styles
+# link styles
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
@@ -88,15 +90,17 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu2.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
+log(f"[{VERSION}] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # HTTP session
-UA = f"TrelloEmailer-FU2/6.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU2/{VERSION} (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
-# ----------------- Templates -----------------
+# ----------------- templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
+
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up (2) on listing videos for {company}")
     SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up (2) for {first} — listing videos at {company}")
@@ -138,7 +142,7 @@ Matthieu from Matly"""
 Best,
 Matthieu from Matly"""
 
-# ----------------- Parsing -----------------
+# ----------------- parsing -----------------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
@@ -209,7 +213,7 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
     except Exception:
         pass
 
-# ----------------- Readiness -----------------
+# ----------------- readiness -----------------
 def _pointer_ready(pid: str) -> bool:
     """Pointer must exist, be fresh, AND filename must include 'sample'."""
     base = MATLY_POINTER_BASE
@@ -265,7 +269,7 @@ def is_sample_ready(pid: str) -> bool:
     log(f"[ready api] id={pid} -> {ok}")
     return ok
 
-# ----------------- Templating -----------------
+# ----------------- templating & signature -----------------
 EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
 SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
 SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
@@ -360,6 +364,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     body_pt = body_text
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
+
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
@@ -390,7 +395,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
         upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
         html_core = html_core.replace("[here]", upload_anchor)
 
-    # finalize HTML + optional signature (no contact line)
+    # finalize HTML + optional signature
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -403,7 +408,8 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
 
-    if SIGNATURE_INLINE && SIGNATURE_LOGO_URL:
+    # inline logo
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
             r.raise_for_status()
@@ -428,7 +434,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
             if attempt == 2: raise
             time.sleep(1.0 * (attempt + 1))
 
-# ----------------- Cache -----------------
+# ----------------- cache -----------------
 def load_sent_cache():
     try:
         with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -445,7 +451,7 @@ def save_sent_cache(ids):
     except Exception:
         pass
 
-# ----------------- Main -----------------
+# ----------------- main -----------------
 def main():
     missing = []
     for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
@@ -482,15 +488,15 @@ def main():
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
         log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
 
+        # choose template
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
-        # FU2 wording: minimal
         extra_ready = "there’s a short free sample included"
-        extra_wait  = ""
+        extra_wait  = ""   # FU2: keep quiet
 
         body = fill_with_two_extras(
             body_tpl, company=company, first=first, from_name=FROM_NAME,
