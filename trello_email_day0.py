@@ -4,14 +4,19 @@
 Day-0 — Poll a Trello list and send one email per card.
 
 - Parse Company / First / Email from the card description.
-- Build the personalized ID from **Company slug** (fallback to email-safe id).
-- ALWAYS link to your personal page:  <PUBLIC_BASE>/p/?id=<id>
-  (We still ping /api/sample?id=<id> just to know if a sample is ready and tweak copy.)
+- Personalized ID = Company slug (fallback to email-safe id).
+- If sample READY -> link to:  <PUBLIC_BASE>/p/?id=<id>
+  If NOT READY     -> link to:  <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
 - Choose template A (no First) or B (has First).
-- Send via SMTP (plain + HTML, signature, optional inline logo).
+- Send via SMTP (plain + HTML, optional inline logo).
 - Mark the card as "Sent" (cache + Trello comment).
 
-Adds a “here” upload link (HTML) / link text (plain) when sample is not ready.
+Defaults baked-in (override via .env):
+  FROM_NAME=Matthieu from Matly
+  FROM_EMAIL=matthieu@matlycreative.com
+  LINK_TEXT=See examples
+  LINK_COLOR=#1a73e8
+  UPLOAD_URL=https://matlycreative.com/upload/
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -54,7 +59,7 @@ TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
-# Defaults you wanted
+# Your defaults (can be overridden via env)
 FROM_NAME  = _get_env("FROM_NAME",  default="Matthieu from Matly")
 FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
@@ -67,7 +72,7 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
 
-# Upload page (for the “here” link)
+# Upload page — used in the “here” text when sample is NOT ready
 UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/")
 
 # ----------------- Templates -----------------
@@ -146,14 +151,14 @@ INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
 
+# Sending control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-# Links
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # fallback if needed (not used for button logic)
-ALWAYS_USE_PAGE_LINK = True  # always /p/?id=<id>
+# Site base + portfolio
+PUBLIC_BASE   = _get_env("PUBLIC_BASE")  # e.g., https://matlycreative.com
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # fallback for NOT READY
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -162,11 +167,11 @@ def _norm_base(u: str) -> str:
     return u.rstrip("/")
 
 PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
-PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
+PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or (PUBLIC_BASE + "/portfolio")
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  |  PORTFOLIO_URL={PORTFOLIO_URL}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.4 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.5 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -269,20 +274,16 @@ _HTTP_MPX  = re.compile(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', re.I)
 def _sample_info(personal_id: str) -> Tuple[bool, str]:
     """
     Ping /api/sample?id=<personal_id> to decide readiness.
-
-    READY ONLY IF:
-      - HTTP 200, and
-      - src is Cloudflare Stream (iframe/playbackId), OR
-      - src is an absolute http(s) .mp4/.m3u8 URL that returns 200 on HEAD.
-
-    Regardless, we link to: <PUBLIC_BASE>/p/?id=<personal_id>
+      READY ONLY IF:
+        - HTTP 200 AND
+        - src is Cloudflare Stream (iframe/playbackId) OR
+        - src is .mp4/.m3u8 that returns 200 on HEAD
+    Returns (is_ready, page_link_ignored)
     """
     page_link = f"{PUBLIC_BASE}/p/?id={personal_id}"
-    if not PUBLIC_BASE:
-        return (False, page_link)
-
     check_url = f"{PUBLIC_BASE}/api/sample?id={personal_id}"
     log(f"[ready?] id={personal_id} -> GET {check_url}")
+
     try:
         r = requests.get(check_url, timeout=12, headers={"Accept": "application/json"})
         if r.status_code != 200:
@@ -293,32 +294,25 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
         if not isinstance(data, dict):
             log("[ready?] non-JSON -> NOT READY")
             return (False, page_link)
-
         if str(data.get("error", "")).strip():
             log(f"[ready?] error={data.get('error')} -> NOT READY")
             return (False, page_link)
 
-        src = data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or ""
-        src = (src or "").strip()
-
+        src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if _CF_IFRAME.search(src) or _CF_PLAYID.match(src):
-            log("[ready?] Cloudflare Stream detected -> READY")
             return (True, page_link)
 
         if _HTTP_MPX.match(src):
             try:
                 h = requests.head(src, timeout=6, allow_redirects=True)
                 if h.status_code == 200:
-                    log("[ready?] HEAD 200 for media -> READY")
                     return (True, page_link)
                 else:
                     log(f"[ready?] HEAD {h.status_code} -> NOT READY")
             except Exception as e:
                 log(f"[ready?] HEAD error -> NOT READY :: {e}")
 
-        log("[ready?] src not playable/verified -> NOT READY")
         return (False, page_link)
-
     except Exception as e:
         log(f"[ready?] exception -> NOT READY :: {e}")
         return (False, page_link)
@@ -426,9 +420,7 @@ def send_email(
     esc_bare = html.escape(bare, quote=True) if full else ""
 
     # ----- Plain text body -----
-    body_pt = body_text
-    body_pt = body_pt.replace("[UPLOAD_HERE]", f"here: {UPLOAD_URL}")
-
+    body_pt = body_text.replace("[UPLOAD_HERE]", f"here: {UPLOAD_URL}")
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
@@ -557,7 +549,12 @@ def main():
 
         # ---- Personalized ID & readiness ----
         pid = choose_id(company, email_v)
-        is_ready, chosen_link = _sample_info(pid)  # always /p/?id=<pid>
+        is_ready, _ = _sample_info(pid)  # we only need readiness
+
+        # Choose link based on readiness
+        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}"
+                       if is_ready
+                       else (PORTFOLIO_URL or f"{PUBLIC_BASE}/portfolio"))
 
         # Choose template
         use_b    = bool(first)
@@ -569,7 +566,7 @@ def main():
             company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
         )
 
-        # ---- Two-{extra} with upload “here” link on wait ----
+        # ---- Two-{extra} with upload “here” text on wait ----
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free). [UPLOAD_HERE]"
 
@@ -584,7 +581,7 @@ def main():
             extra_wait=extra_wait
         )
 
-        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT
+        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # e.g., “See examples”
 
         try:
             send_email(
