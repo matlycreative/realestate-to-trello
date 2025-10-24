@@ -58,7 +58,6 @@ TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
-# Your defaults (overridable via env)
 FROM_NAME  = _get_env("FROM_NAME",  default="Matthieu from Matly")
 FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
@@ -167,7 +166,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or (PUBLIC_BASE + "/portfolio")
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  |  PORTFOLIO_URL={PORTFOLIO_URL}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.6 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.7 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -274,7 +273,7 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
         - HTTP 200 AND
         - src is Cloudflare Stream (iframe/playbackId) OR
         - src is .mp4/.m3u8 that returns 200 on HEAD
-    Returns (is_ready, page_link_ignored)
+    Returns (is_ready, page_link_placeholder)
     """
     page_link = f"{PUBLIC_BASE}/p/?id={personal_id}"
     check_url = f"{PUBLIC_BASE}/api/sample?id={personal_id}"
@@ -283,16 +282,11 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
     try:
         r = requests.get(check_url, timeout=12, headers={"Accept": "application/json"})
         if r.status_code != 200:
-            log(f"[ready?] HTTP {r.status_code} -> NOT READY")
             return (False, page_link)
 
         data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
-        if not isinstance(data, dict):
-            log("[ready?] non-JSON -> NOT READY")
-            return (False, page_link)
-        if str(data.get("error", "")).strip():
-            log(f"[ready?] error={data.get('error')} -> NOT READY")
-            return (False, page_link)
+        if not isinstance(data, dict): return (False, page_link)
+        if str(data.get("error", "")).strip(): return (False, page_link)
 
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if _CF_IFRAME.search(src) or _CF_PLAYID.match(src):
@@ -303,14 +297,11 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
                 h = requests.head(src, timeout=6, allow_redirects=True)
                 if h.status_code == 200:
                     return (True, page_link)
-                else:
-                    log(f"[ready?] HEAD {h.status_code} -> NOT READY")
-            except Exception as e:
-                log(f"[ready?] HEAD error -> NOT READY :: {e}")
+            except Exception:
+                pass
 
         return (False, page_link)
-    except Exception as e:
-        log(f"[ready?] exception -> NOT READY :: {e}")
+    except Exception:
         return (False, page_link)
 
 # ----------------- Templating -----------------
@@ -378,7 +369,7 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
-# --- signature (no contact line) ---
+# --- signature (no contact “Email me” line) ---
 def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
@@ -405,10 +396,17 @@ def send_email(
     from email.message import EmailMessage
     import smtplib
 
-    # Normalize link and label
+    # Normalize label and URL
+    label = (link_text or "See examples").strip() or "See examples"
+
+    # --- FORCE portfolio URL when using portfolio label ---
+    # If the label equals your portfolio CTA (e.g., "See examples" or "My portfolio"),
+    # always point it to PORTFOLIO_URL, no matter what link_url was passed.
+    if label.lower() in {"my portfolio", "see examples", os.getenv("LINK_TEXT", "See examples").strip().lower()}:
+        link_url = PORTFOLIO_URL
+
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
-    label = (link_text or "See examples").strip() or "See examples"
 
     full = link_url
     bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
@@ -440,7 +438,6 @@ def send_email(
         if pat:
             html_core = html_core.replace(pat, MARK)
 
-    # Insert main link anchor if present
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
@@ -457,8 +454,7 @@ def send_email(
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
-    if BCC_TO:
-        msg["Bcc"] = BCC_TO
+    if BCC_TO: msg["Bcc"] = BCC_TO
     msg["Reply-To"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
@@ -480,17 +476,14 @@ def send_email(
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-                if SMTP_DEBUG:
-                    s.set_debuglevel(1)
-                if SMTP_USE_TLS:
-                    s.starttls()
+                if SMTP_DEBUG: s.set_debuglevel(1)
+                if SMTP_USE_TLS: s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
                 s.send_message(msg)
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
-            if attempt == 2:
-                raise
+            if attempt == 2: raise
             time.sleep(1.5 * (attempt + 1))
 
 # ----------------- Main flow -----------------
@@ -524,7 +517,7 @@ def main():
             continue
 
         desc = c.get("desc") or ""
-        fields = parse_header(desc)
+        fields  = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
@@ -545,19 +538,20 @@ def main():
         # Choose link based on readiness
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}"
                        if is_ready
-                       else (PORTFOLIO_URL or f"{PUBLIC_BASE}/portfolio"))
+                       else PORTFOLIO_URL)
 
         # Choose template
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        # Compose subject/body
+        # Subject/body
         subject = fill_template(
             subj_tpl,
-            company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
+        # ---- Two-{extra} (no extra “here” link anywhere) ----
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
@@ -572,7 +566,7 @@ def main():
             extra_wait=extra_wait
         )
 
-        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # “See examples”
+        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # e.g., “See examples”
 
         try:
             send_email(
