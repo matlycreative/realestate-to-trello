@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Day-0 — Poll Trello and send one email per card.
+Day-0 — Trello → email (strict ready/not-ready routing)
 
-STRICT RULES:
-- Personalized ID = Company slug (fallback email-safe).
-- READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
-- NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
-- With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
-- No signature "Email me" line; no hidden overrides in send_email().
+Rules:
+- ID = company slug (fallback to email-safe id).
+- READY  -> link to  <PUBLIC_BASE>/p/?id=<id>
+- NOT    -> link to  <PORTFOLIO_URL>  (default <PUBLIC_BASE>/portfolio)
+
+Readiness (pointer path recommended):
+- If MATLY_POINTER_BASE is set:
+    pointer must exist AND
+    filename contains REQUIRE_FILENAME_CONTAINS (default: 'sample') AND
+    updatedAt within READY_MAX_AGE_DAYS AND
+    key starts with 'videos/<id>__'
+- Else: /api/sample?id=<id> must return a real playable source.
+
+Hard overrides for testing:
+- FORCE_READY=1   or   FORCE_NOT_READY=1
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -18,7 +27,7 @@ import requests
 
 def log(*a): print(*a, flush=True)
 
-# ----------------- tiny utils -----------------
+# ----------------- helpers -----------------
 def _get_env(*names, default=""):
     for n in names:
         v = os.getenv(n)
@@ -27,8 +36,7 @@ def _get_env(*names, default=""):
     return default
 
 def _env_bool(name: str, default: str = "0") -> bool:
-    val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1","true","yes","on")
+    return (os.getenv(name, default) or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -63,20 +71,25 @@ FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
 SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
 SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
-SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
+SMTP_USE_TLS = _env_bool("SMTP_USE_TLS", "1")
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
-PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
+PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g. https://matlycreative.com
 PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
 
-# Pointer readiness (recommended)
-MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
-READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
+# Pointer readiness settings
+MATLY_POINTER_BASE         = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
+READY_MAX_AGE_DAYS         = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
+REQUIRE_FILENAME_CONTAINS  = (_get_env("REQUIRE_FILENAME_CONTAINS", default="sample") or "").lower()
 
-# Link look
+# Test overrides
+FORCE_READY     = _env_bool("FORCE_READY", "0")
+FORCE_NOT_READY = _env_bool("FORCE_NOT_READY", "0")
+
+# Link styling
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
@@ -89,12 +102,12 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-Day0/5.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/6.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
 # ----------------- templates -----------------
-USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+USE_ENV_TEMPLATES = _env_bool("USE_ENV_TEMPLATES", "1")
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
     SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
@@ -183,7 +196,7 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
 
-# ----------------- Trello I/O -----------------
+# ----------------- trello -----------------
 def _trello_call(method, url_path, **params):
     for attempt in range(3):
         try:
@@ -210,26 +223,22 @@ def already_marked(card_id: str, marker: str) -> bool:
     marker_l = (marker or "").lower().strip()
     for a in acts:
         txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
-        if txt.lower().startswith(marker_l):
-            return True
+        if txt.lower().startswith(marker_l): return True
     return False
 
 def mark_sent(card_id: str, marker: str, extra: str = ""):
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     text = f"{marker} — {ts}"
     if extra: text += f"\n{extra}"
-    try:
-        trello_post(f"cards/{card_id}/actions/comments", text=text)
-    except Exception:
-        pass
+    try: trello_post(f"cards/{card_id}/actions/comments", text=text)
+    except Exception: pass
 
 # ----------------- readiness -----------------
 def _pointer_ready(pid: str) -> bool:
-    """Pointer must exist, be fresh, AND filename must include 'sample' (case-insensitive)."""
     base = MATLY_POINTER_BASE
     if not base:
         return False
-    # allow base to be .../pointers or the root; normalize:
+    # normalize to .../pointers
     if not base.endswith("/pointers") and not base.endswith("/pointers/"):
         base = base.rstrip("/") + "/pointers"
     url = f"{base.rstrip('/')}/{pid}.json"
@@ -239,13 +248,16 @@ def _pointer_ready(pid: str) -> bool:
             return False
         data = r.json()
         fname = (data.get("filename") or "").lower()
-        if "sample" not in fname:
+        key   = (data.get("key") or "")
+        if REQUIRE_FILENAME_CONTAINS and REQUIRE_FILENAME_CONTAINS not in fname:
+            return False
+        # require correct videos prefix
+        if not re.match(rf"^videos/{re.escape(pid)}__", key):
             return False
         updated = (data.get("updatedAt") or "").strip()
         if not updated:
             return False
-        if updated.endswith("Z"):
-            updated = updated[:-1]
+        if updated.endswith("Z"): updated = updated[:-1]
         dt = datetime.fromisoformat(updated).replace(tzinfo=timezone.utc)
         fresh_after = datetime.now(timezone.utc) - timedelta(days=READY_MAX_AGE_DAYS)
         return dt >= fresh_after
@@ -253,34 +265,29 @@ def _pointer_ready(pid: str) -> bool:
         return False
 
 def _api_ready(pid: str) -> bool:
-    """Fallback: /api/sample must 200 with a playable src."""
     check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
     try:
         r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
         if r.status_code != 200:
             return False
-        data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
+        ctype = r.headers.get("Content-Type","")
+        data = r.json() if "application/json" in ctype else {}
         if not isinstance(data, dict) or str(data.get("error","")).strip():
             return False
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if not src:
             return False
-        # Cloudflare Stream (iframe/playback id) or direct media URL both count:
-        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I):
-            return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src):
-            return True
-        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I):
-            try:
-                h = requests.head(src, timeout=6, allow_redirects=True)
-                return h.status_code == 200
-            except Exception:
-                return False
+        # treat Cloudflare Stream iframe/playback id or media urls as playable
+        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
+        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
+        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
         return False
     except Exception:
         return False
 
 def is_sample_ready(pid: str) -> bool:
+    if FORCE_READY:     return True
+    if FORCE_NOT_READY: return False
     if MATLY_POINTER_BASE:
         ok = _pointer_ready(pid)
         log(f"[ready pointer] id={pid} -> {ok}")
@@ -293,22 +300,24 @@ def is_sample_ready(pid: str) -> bool:
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
-        if key == "company":   return company or ""
-        if key == "first":     return first or ""
-        if key == "from_name": return from_name or ""
-        if key == "link":      return link or ""
-        if key == "extra":     return extra or ""
-        return m.group(0)
+        return {
+            "company":   company or "",
+            "first":     first or "",
+            "from_name": from_name or "",
+            "link":      link or "",
+            "extra":     extra or "",
+        }.get(key, m.group(0))
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
 def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: str, link: str) -> str:
     def repl(m):
         key = m.group(1).strip().lower()
-        if key == "company":   return company or ""
-        if key == "first":     return first or ""
-        if key == "from_name": return from_name or ""
-        if key == "link":      return link or ""
-        return m.group(0)
+        return {
+            "company":   company or "",
+            "first":     first or "",
+            "from_name": from_name or "",
+            "link":      link or "",
+        }.get(key, m.group(0))
     return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
 EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
@@ -317,9 +326,7 @@ def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
     link: str, is_ready: bool, extra_ready: str, extra_wait: str
 ) -> str:
-    base = fill_template_skip_extra(
-        tpl, company=company, first=first, from_name=from_name, link=link
-    )
+    base = fill_template_skip_extra(tpl, company=company, first=first, from_name=from_name, link=link)
     if is_ready:
         step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
         step2 = EXTRA_TOKEN.sub("",         step1, count=1)
@@ -339,7 +346,7 @@ def text_to_html(text: str) -> str:
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
     p_style = "margin:0 0 12px 0;color:#111111 !important;"
     wrap_style = (
-        f"font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;"
+        "font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;"
         "color:#111111 !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
     esc = f'<p style="{p_style}">{esc}</p>'
@@ -348,9 +355,9 @@ def text_to_html(text: str) -> str:
 
 # ----------------- signature (no 'Email me' line) -----------------
 SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
-SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_INLINE      = _env_bool("SIGNATURE_INLINE", "0")
 SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
-SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_ADD_NAME    = _env_bool("SIGNATURE_ADD_NAME", "1")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
@@ -366,7 +373,7 @@ def signature_html(logo_cid: str | None) -> str:
         )
     return "".join(parts)
 
-# ----------------- sender (uses the chosen_link exactly) -----------------
+# ----------------- sender -----------------
 def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, link_text: str, link_color: str):
     from email.message import EmailMessage
     import smtplib
@@ -380,23 +387,21 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text
+    # plain text
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
-                if pat:
-                    body_pt = body_pt.replace(pat, label)
+                if pat: body_pt = body_pt.replace(pat, label)
         else:
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML with explicit marker replacement
+    # html
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
-        if pat:
-            body_marked = body_marked.replace(pat, MARK)
+        if pat: body_marked = body_marked.replace(pat, MARK)
 
     html_core = text_to_html(body_marked)
     html_core = re.sub(re.escape(esc_full), MARK, html_core)
@@ -407,13 +412,13 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
         html_core = html_core.replace(MARK, anchor) if MARK in html_core else (html_core + f"<p>{anchor}</p>")
 
-    # Signature
+    # signature
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
-    msg["To"] = to_email
+    msg["To"]   = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
@@ -465,8 +470,7 @@ def save_sent_cache(ids):
 def main():
     missing = []
     for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
-        if not globals()[k]:
-            missing.append(k)
+        if not globals()[k]: missing.append(k)
     if not LIST_ID: missing.append("TRELLO_LIST_ID_DAY0")
     if missing: raise SystemExit("Missing env: " + ", ".join(missing))
 
@@ -495,9 +499,12 @@ def main():
 
         pid   = choose_id(company, email_v)
         ready = is_sample_ready(pid)
+
+        # *** SINGLE SOURCE OF TRUTH ***
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
         log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
 
+        # compose
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
