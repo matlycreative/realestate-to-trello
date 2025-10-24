@@ -77,6 +77,7 @@ PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfo
 
 # Upload page link for NOT READY path
 UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
+UPLOAD_URL=https://matlycreative.com/upload/
 
 # Pointer readiness (recommended)
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
