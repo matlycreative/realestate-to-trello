@@ -14,7 +14,7 @@ Baked-in defaults:
   FROM_NAME=Matthieu from Matly
   FROM_EMAIL=matthieu@matlycreative.com
   CONTACT_EMAIL=matthieu@matlycreative.com
-  INCLUDE_CONTACT_LINK=1
+  INCLUDE_CONTACT_LINK=0
   CONTACT_LINK_TEXT=Email me
   LINK_TEXT=See examples
   LINK_COLOR=#1a73e8
