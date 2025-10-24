@@ -10,6 +10,10 @@ Day-0 — Poll a Trello list and send one email per card.
 - You can override API linking with USE_API_LINK=0 to always use your PUBLIC_BASE.
 - Send via SMTP (plain text + HTML; optional inline <signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
+
+ADDED:
+- Clickable “Email me” link (HTML + plain) and Reply-To header.
+- Controlled by CONTACT_* env vars.
 """
 
 import os, re, time, json, html, mimetypes
@@ -53,7 +57,6 @@ SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
 
 # ----------------- Templates -----------------
-# Default to using templates from env (so workflow secrets are respected).
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
 
@@ -126,7 +129,16 @@ SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
+# Link styles
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
+LINK_COLOR    = _get_env("LINK_COLOR", default="")
+
+# NEW: contact link controls
+CONTACT_EMAIL       = _get_env("CONTACT_EMAIL", "FROM_EMAIL") or FROM_EMAIL
+INCLUDE_CONTACT_LINK= _env_bool("INCLUDE_CONTACT_LINK", "1")
+CONTACT_LINK_TEXT   = _get_env("CONTACT_LINK_TEXT", default="Email me")
+CONTACT_LINK_COLOR  = _get_env("CONTACT_LINK_COLOR", default=LINK_COLOR)
 
 # Sending control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
@@ -135,8 +147,6 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 # Links
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://yourdomain.com
-LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
-LINK_COLOR    = _get_env("LINK_COLOR", default="")
 PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # falls back to PUBLIC_BASE if blank
 USE_API_LINK  = _env_bool("USE_API_LINK", "1")         # 0 -> force PUBLIC_BASE link
 
@@ -283,7 +293,6 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
-# --- Two-{extra} logic: fill only the correct slot ---
 EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
 def fill_with_two_extras(
@@ -294,11 +303,11 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)  # first -> ready text
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)  # second -> removed
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)   # first -> removed
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)  # second -> wait text
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -327,11 +336,17 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
+# --- NEW: signature footer with mailto link ---
 def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
         line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
         parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
+    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
+        addr = html.escape(CONTACT_EMAIL or FROM_EMAIL)
+        style = f' style="color:{html.escape(CONTACT_LINK_COLOR)};text-decoration:underline;"' if CONTACT_LINK_COLOR else ''
+        label = html.escape(CONTACT_LINK_TEXT or "Email me")
+        parts.append(f'<p style="margin:6px 0 0 0;"><a href="mailto:{addr}"{style}>{label}</a></p>')
     if SIGNATURE_LOGO_URL:
         img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
         parts.append(
@@ -361,9 +376,9 @@ def send_email(
     full = link_url
     bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
     esc_full = html.escape(full, quote=True) if full else ""
-    esc_bare = html.escape(bare, quote=True) if bare else ""
+    esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text body: replace URL with label unless INCLUDE_PLAIN_URL=1
+    # Plain text body (with optional contact line)
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -373,6 +388,11 @@ def send_email(
         else:
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+    # NEW: add "Email me" line in plain text
+    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
+        contact_addr = (CONTACT_EMAIL or FROM_EMAIL)
+        if contact_addr and f"Email me: {contact_addr}" not in body_pt:
+            body_pt = (body_pt.rstrip() + f"\n\nEmail me: {contact_addr}").strip()
 
     # HTML body: mark link locations, autolink other URLs, then insert anchor
     MARK = "__LINK_MARKER__"
@@ -395,7 +415,7 @@ def send_email(
         else:
             html_core += f"<p>{anchor}</p>"
 
-    # Append signature (optional inline logo)
+    # Append signature (with optional inline logo + mailto)
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -404,6 +424,9 @@ def send_email(
     msg["To"] = to_email
     if BCC_TO:
         msg["Bcc"] = BCC_TO
+    # NEW: set Reply-To to your contact email
+    if CONTACT_EMAIL or FROM_EMAIL:
+        msg["Reply-To"] = f"{FROM_NAME} <{CONTACT_EMAIL or FROM_EMAIL}>"
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
@@ -417,7 +440,7 @@ def send_email(
             if not ctype.startswith("image/"):
                 ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
-            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid=logo_cid)
+            msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid="siglogo@local")
         except Exception as e:
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
@@ -442,13 +465,9 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     """
     Query /api/sample?id=<safe_id> (WordPress).
     Returns (is_ready, best_link_to_use).
-
-    WP returns: { id, src, embedType, link } on success.
-    We treat presence of 'src' as ready, even if HTTP status isn't 200.
-    If USE_API_LINK=0, always use /p/?id=<id> while still marking ready=True.
     """
     check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
-    log(f"[ready?] id={safe_id}")
+    log(f("[ready?] id={safe_id}"))
     log(f"[ready?] GET {check_url}")
 
     try:
@@ -456,26 +475,22 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
         preview = (r.text or "")[:300]
         log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
 
-        # Try to parse JSON regardless of status code
         try:
             data = r.json()
         except Exception:
             log("[ready?] non-JSON response")
             return (False, PORTFOLIO_URL)
 
-        # New shape (plus legacy fallbacks)
         src = (data.get("src") or
                data.get("streamUrl") or
                data.get("signedUrl") or
                data.get("url"))
-
         if not src:
             err = data.get("error")
             if err:
                 log(f"[ready?] API error: {err}")
             return (False, PORTFOLIO_URL)
 
-        # Normalize 'link' for the email
         api_link = (data.get("link") or "").strip()
         if api_link:
             if api_link.startswith("/"):
@@ -483,7 +498,6 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
             elif not re.match(r"^https?://", api_link, flags=re.I):
                 api_link = f"{PUBLIC_BASE.rstrip('/')}/{api_link.lstrip('/')}"
 
-        # Respect override
         if not USE_API_LINK:
             best = f"{PUBLIC_BASE}/p/?id={safe_id}"
         else:
@@ -533,29 +547,24 @@ def main():
             sent_cache.add(card_id)
             continue
 
-        # -------- Build links + decide which to send now --------
         safe_id = _safe_id_from_email(email_v)
-        is_ready, chosen_link = _sample_info(safe_id)  # uses API link when ready (unless override)
+        is_ready, chosen_link = _sample_info(safe_id)
 
-        # Choose template A/B *before* composing extra
-        use_b    = bool(first)  # B if First is present
+        use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
         n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
         log(f"[compose] template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
 
-        # --- Subject ---
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # --- Two different extra lines depending on readiness ---
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
-        # --- Build the body with two-{extra} logic ---
         body = fill_with_two_extras(
             body_tpl,
             company=company,
@@ -567,10 +576,8 @@ def main():
             extra_wait=extra_wait
         )
 
-        # --- Link label for the anchor/button ---
         link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
 
-        # Send
         try:
             send_email(
                 email_v,
@@ -586,7 +593,6 @@ def main():
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
-        # Mark sent (Trello + cache)
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
