@@ -167,7 +167,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.2 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -176,7 +176,7 @@ TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# --------------- Trello helpers ----------------
+# ----------------- Trello helpers -----------------
 def _trello_call(method, url_path, **params):
     for attempt in range(3):
         try:
@@ -218,7 +218,7 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
     except Exception:
         pass
 
-# --------------- Cache ----------------
+# ----------------- Cache -----------------
 def load_sent_cache():
     try:
         with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -235,7 +235,7 @@ def save_sent_cache(ids):
     except Exception:
         pass
 
-# --------------- Parsing ----------------
+# ----------------- Parsing -----------------
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
     d = (desc or "").replace("\r\n","\n").replace("\r","\n")
@@ -246,7 +246,7 @@ def parse_header(desc: str) -> dict:
         for lab in TARGET_LABELS:
             m = LABEL_RE[lab].match(line)
             if m:
-                val = (m.group(1) or "").strip()
+                val = (m.group(1) or "").trim() if hasattr(str, "trim") else (m.group(1) or "").strip()
                 if not val and (i+1) < len(lines):
                     nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
@@ -262,11 +262,28 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
 
-# --------------- Link & readiness ----------------
+# ----------------- Robust readiness check -----------------
+_PLAYABLE_PATTERNS = (
+    re.compile(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', re.I),
+    re.compile(r'\.(mp4|m3u8)(\?|$)', re.I),
+    re.compile(r'^[A-Za-z0-9_-]{12,40}$')  # Cloudflare playbackId shape
+)
+
+def _looks_playable(val) -> bool:
+    if not val:
+        return False
+    if isinstance(val, (list, tuple)):
+        return any(_looks_playable(x) for x in val)
+    if isinstance(val, dict):
+        return any(_looks_playable(v) for v in val.values())
+    s = str(val).strip()
+    return any(p.search(s) for p in _PLAYABLE_PATTERNS)
+
 def _sample_info(personal_id: str) -> Tuple[bool, str]:
     """
     Ping /api/sample?id=<personal_id> to decide readiness.
-    ALWAYS return the personal page link: <PUBLIC_BASE>/p/?id=<personal_id>.
+    ONLY ready if HTTP 200 AND we can detect a playable src (mp4/m3u8/iframe/playbackId).
+    Regardless, the link we send is always the personal page: <PUBLIC_BASE>/p/?id=<personal_id>.
     """
     page_link = f"{PUBLIC_BASE}/p/?id={personal_id}"
     if not PUBLIC_BASE:
@@ -275,19 +292,35 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
     check_url = f"{PUBLIC_BASE}/api/sample?id={personal_id}"
     log(f"[ready?] id={personal_id} -> GET {check_url}")
     try:
-        r = requests.get(check_url, timeout=12)
-        try:
-            data = r.json()
-        except Exception:
+        r = requests.get(check_url, timeout=12, headers={"Accept": "application/json"})
+        if r.status_code != 200:
+            log(f"[ready?] HTTP {r.status_code} -> NOT READY")
             return (False, page_link)
 
-        src = (data.get("src") or data.get("streamUrl") or
-               data.get("signedUrl") or data.get("url"))
-        return (bool(src), page_link)
-    except Exception:
+        data = r.json()
+        if not isinstance(data, dict):
+            log("[ready?] non-JSON -> NOT READY")
+            return (False, page_link)
+
+        if str(data.get("error", "")).strip():
+            log(f"[ready?] error={data.get('error')} -> NOT READY")
+            return (False, page_link)
+
+        # Collect potential source fields
+        candidates = []
+        for k in ("src", "streamUrl", "signedUrl", "url", "videoUrl"):
+            v = data.get(k)
+            if v is not None:
+                candidates.append(v)
+
+        ready = _looks_playable(candidates)
+        log(f"[ready?] playable={ready}")
+        return (ready, page_link)
+    except Exception as e:
+        log(f"[ready?] exception -> NOT READY :: {e}")
         return (False, page_link)
 
-# --------------- Templating ----------------
+# ----------------- Templating -----------------
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
@@ -391,8 +424,6 @@ def send_email(
 
     # ----- Plain text body -----
     body_pt = body_text
-
-    # Replace upload placeholder in plain text
     body_pt = body_pt.replace("[UPLOAD_HERE]", f"here: {UPLOAD_URL}")
 
     if full:
@@ -480,26 +511,7 @@ def send_email(
                 raise
             time.sleep(1.5 * (attempt + 1))
 
-# --------------- Ready check ----------------
-def _sample_info(safe_id: str) -> Tuple[bool, str]:
-    page_link = f"{PUBLIC_BASE}/p/?id={safe_id}"
-    if not PUBLIC_BASE:
-        return (False, page_link)
-    check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
-    log(f"[ready?] id={safe_id} -> GET {check_url}")
-    try:
-        r = requests.get(check_url, timeout=15)
-        try:
-            data = r.json()
-        except Exception:
-            return (False, page_link)
-        src = (data.get("src") or data.get("streamUrl") or
-               data.get("signedUrl") or data.get("url"))
-        return (bool(src), page_link)
-    except Exception:
-        return (False, page_link)
-
-# --------------- Main ----------------
+# ----------------- Main flow -----------------
 def main():
     # sanity
     missing = []
@@ -512,26 +524,8 @@ def main():
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
 
-    # cache
-    def load_sent_cache():
-        try:
-            with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-
-    def save_sent_cache(ids):
-        d = os.path.dirname(SENT_CACHE_FILE)
-        if d: os.makedirs(d, exist_ok=True)
-        try:
-            with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(sorted(ids), f)
-        except Exception:
-            pass
-
     sent_cache = load_sent_cache()
 
-    # Trello
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
         log("No cards found or Trello error.")
@@ -548,41 +542,11 @@ def main():
             continue
 
         desc = c.get("desc") or ""
-
-        # parse header
-        def parse_header(desc: str) -> dict:
-            out = {k: "" for k in TARGET_LABELS}
-            d = (desc or "").replace("\r\n","\n").replace("\r","\n")
-            lines = d.splitlines()
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                for lab in TARGET_LABELS:
-                    m = LABEL_RE[lab].match(line)
-                    if m:
-                        val = (m.group(1) or "").strip()
-                        if not val and (i+1) < len(lines):
-                            nxt = lines[i+1]
-                            if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                                val = nxt.strip(); i += 1
-                        out[lab] = val
-                        break
-                i += 1
-            return out
-
         fields = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
-
-        # email
-        EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-        def clean_email(raw: str) -> str:
-            if not raw: return ""
-            txt = html.unescape(raw)
-            m = EMAIL_RE.search(txt)
-            return m.group(0).strip() if m else ""
-
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
+
         if not email_v:
             log(f"Skip: no valid Email on card '{title}'.")
             continue
@@ -606,14 +570,11 @@ def main():
             company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
         )
 
-        # ---- Two-{extra} with upload “here” button on wait ----
+        # ---- Two-{extra} with upload “here” on wait ----
         extra_ready = "as well as a free sample made with your content"
-        extra_wait  = f"If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free). [UPLOAD_HERE]"
+        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free). [UPLOAD_HERE]"
 
-        def fill_with_two_extras_local(tpl, **kw):
-            return fill_with_two_extras(tpl, **kw)
-
-        body = fill_with_two_extras_local(
+        body = fill_with_two_extras(
             body_tpl,
             company=company,
             first=first,
