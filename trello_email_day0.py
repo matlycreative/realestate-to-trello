@@ -16,7 +16,6 @@ Defaults baked-in (override via .env):
   FROM_EMAIL=matthieu@matlycreative.com
   LINK_TEXT=See examples
   LINK_COLOR=#1a73e8
-  UPLOAD_URL=https://matlycreative.com/upload/
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -59,7 +58,7 @@ TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
-# Your defaults (can be overridden via env)
+# Your defaults (overridable via env)
 FROM_NAME  = _get_env("FROM_NAME",  default="Matthieu from Matly")
 FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
@@ -71,9 +70,6 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
-
-# Upload page — used in the “here” text when sample is NOT ready
-UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/")
 
 # ----------------- Templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
@@ -171,7 +167,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or (PUBLIC_BASE + "/portfolio")
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  |  PORTFOLIO_URL={PORTFOLIO_URL}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.5 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.6 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -382,7 +378,7 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
-# --- signature (no contact “Email me” line) ---
+# --- signature (no contact line) ---
 def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
@@ -420,7 +416,7 @@ def send_email(
     esc_bare = html.escape(bare, quote=True) if full else ""
 
     # ----- Plain text body -----
-    body_pt = body_text.replace("[UPLOAD_HERE]", f"here: {UPLOAD_URL}")
+    body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
@@ -443,11 +439,6 @@ def send_email(
     for pat in (esc_full, esc_bare):
         if pat:
             html_core = html_core.replace(pat, MARK)
-
-    # Replace upload placeholder with a *text* link styled like the main link
-    style_attr_up = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
-    upload_link = f'<a{style_attr_up} href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
-    html_core = html_core.replace("[UPLOAD_HERE]", upload_link)
 
     # Insert main link anchor if present
     if full:
@@ -549,7 +540,7 @@ def main():
 
         # ---- Personalized ID & readiness ----
         pid = choose_id(company, email_v)
-        is_ready, _ = _sample_info(pid)  # we only need readiness
+        is_ready, _ = _sample_info(pid)  # only need readiness
 
         # Choose link based on readiness
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}"
@@ -561,14 +552,14 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
+        # Compose subject/body
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
         )
 
-        # ---- Two-{extra} with upload “here” text on wait ----
         extra_ready = "as well as a free sample made with your content"
-        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free). [UPLOAD_HERE]"
+        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
         body = fill_with_two_extras(
             body_tpl,
@@ -581,7 +572,7 @@ def main():
             extra_wait=extra_wait
         )
 
-        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # e.g., “See examples”
+        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # “See examples”
 
         try:
             send_email(
