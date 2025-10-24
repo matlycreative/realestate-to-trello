@@ -359,11 +359,7 @@ def signature_html(logo_cid: str | None) -> str:
     if SIGNATURE_ADD_NAME:
         line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
         parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
-    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
-        addr = html.escape(CONTACT_EMAIL or FROM_EMAIL)
-        style = f' style="color:{html.escape(CONTACT_LINK_COLOR)};text-decoration:underline;"' if CONTACT_LINK_COLOR else ''
-        label = html.escape(CONTACT_LINK_TEXT or "Email me")
-        parts.append(f'<p style="margin:6px 0 0 0;"><a href="mailto:{addr}"{style}>{label}</a></p>')
+    # Contact link intentionally removed
     if SIGNATURE_LOGO_URL:
         img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
         parts.append(
