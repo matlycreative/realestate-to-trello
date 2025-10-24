@@ -77,7 +77,6 @@ PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfo
 
 # Upload page link for NOT READY path
 UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
-UPLOAD_URL=https://matlycreative.com/upload/
 
 # Pointer readiness (recommended)
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
@@ -96,7 +95,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-Day0/6.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/6.2 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -511,13 +510,17 @@ def main():
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
         extra_ready = "as well as a free sample made with your content"
-        # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
+        # MUST CONTAIN [here] so we can link it to UPLOAD_URL
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free) — upload them [here]."
 
         body = fill_with_two_extras(
             body_tpl, company=company, first=first, from_name=FROM_NAME,
             link=chosen_link, is_ready=ready, extra_ready=extra_ready, extra_wait=extra_wait
         )
+
+        # Safety net: ensure [here] exists in NOT-READY copy
+        if not ready and "[here]" not in body:
+            body += " — upload them [here]."
 
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
