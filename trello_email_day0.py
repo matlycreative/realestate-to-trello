@@ -167,7 +167,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.2 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/3.3 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -246,7 +246,7 @@ def parse_header(desc: str) -> dict:
         for lab in TARGET_LABELS:
             m = LABEL_RE[lab].match(line)
             if m:
-                val = (m.group(1) or "").trim() if hasattr(str, "trim") else (m.group(1) or "").strip()
+                val = (m.group(1) or "").strip()
                 if not val and (i+1) < len(lines):
                     nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
@@ -263,27 +263,20 @@ def clean_email(raw: str) -> str:
     return m.group(0).strip() if m else ""
 
 # ----------------- Robust readiness check -----------------
-_PLAYABLE_PATTERNS = (
-    re.compile(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', re.I),
-    re.compile(r'\.(mp4|m3u8)(\?|$)', re.I),
-    re.compile(r'^[A-Za-z0-9_-]{12,40}$')  # Cloudflare playbackId shape
-)
-
-def _looks_playable(val) -> bool:
-    if not val:
-        return False
-    if isinstance(val, (list, tuple)):
-        return any(_looks_playable(x) for x in val)
-    if isinstance(val, dict):
-        return any(_looks_playable(v) for v in val.values())
-    s = str(val).strip()
-    return any(p.search(s) for p in _PLAYABLE_PATTERNS)
+_CF_IFRAME = re.compile(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', re.I)
+_CF_PLAYID = re.compile(r'^[A-Za-z0-9_-]{12,40}$')
+_HTTP_MPX  = re.compile(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', re.I)
 
 def _sample_info(personal_id: str) -> Tuple[bool, str]:
     """
     Ping /api/sample?id=<personal_id> to decide readiness.
-    ONLY ready if HTTP 200 AND we can detect a playable src (mp4/m3u8/iframe/playbackId).
-    Regardless, the link we send is always the personal page: <PUBLIC_BASE>/p/?id=<personal_id>.
+
+    READY ONLY IF:
+      - HTTP 200, and
+      - src is Cloudflare Stream (iframe/playbackId), OR
+      - src is an absolute http(s) .mp4/.m3u8 URL that returns 200 on HEAD.
+
+    Regardless, we link to: <PUBLIC_BASE>/p/?id=<personal_id>
     """
     page_link = f"{PUBLIC_BASE}/p/?id={personal_id}"
     if not PUBLIC_BASE:
@@ -297,7 +290,7 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
             log(f"[ready?] HTTP {r.status_code} -> NOT READY")
             return (False, page_link)
 
-        data = r.json()
+        data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
         if not isinstance(data, dict):
             log("[ready?] non-JSON -> NOT READY")
             return (False, page_link)
@@ -306,16 +299,30 @@ def _sample_info(personal_id: str) -> Tuple[bool, str]:
             log(f"[ready?] error={data.get('error')} -> NOT READY")
             return (False, page_link)
 
-        # Collect potential source fields
-        candidates = []
-        for k in ("src", "streamUrl", "signedUrl", "url", "videoUrl"):
-            v = data.get(k)
-            if v is not None:
-                candidates.append(v)
+        src = data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or ""
+        src = (src or "").strip()
 
-        ready = _looks_playable(candidates)
-        log(f"[ready?] playable={ready}")
-        return (ready, page_link)
+        # Cloudflare Stream cases: iframe URL or playbackId
+        if _CF_IFRAME.search(src) or _CF_PLAYID.match(src):
+            log("[ready?] Cloudflare Stream detected -> READY")
+            return (True, page_link)
+
+        # Absolute mp4/m3u8 URLs: verify existence with HEAD
+        if _HTTP_MPX.match(src):
+            try:
+                h = requests.head(src, timeout=6, allow_redirects=True)
+                if h.status_code == 200:
+                    log("[ready?] HEAD 200 for media -> READY")
+                    return (True, page_link)
+                else:
+                    log(f"[ready?] HEAD {h.status_code} -> NOT READY")
+            except Exception as e:
+                log(f"[ready?] HEAD error -> NOT READY :: {e}")
+
+        # Anything else is NOT READY (blocks false positives like bare 'filename.mp4')
+        log("[ready?] src not playable/verified -> NOT READY")
+        return (False, page_link)
+
     except Exception as e:
         log(f"[ready?] exception -> NOT READY :: {e}")
         return (False, page_link)
