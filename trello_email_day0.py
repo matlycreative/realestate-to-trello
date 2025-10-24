@@ -401,10 +401,6 @@ def send_email(
         else:
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
-    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
-        contact_addr = (CONTACT_EMAIL or FROM_EMAIL)
-        if contact_addr and f"Email me: {contact_addr}" not in body_pt:
-            body_pt = (body_pt.rstrip() + f"\n\nEmail me: {contact_addr}").strip()
 
     # HTML body: mark link locations, autolink other URLs, then insert anchor
     MARK = "__LINK_MARKER__"
