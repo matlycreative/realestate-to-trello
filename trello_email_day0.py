@@ -52,6 +52,14 @@ SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in 
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 
+CONTACT_EMAIL=you@matlycreative.com
+INCLUDE_CONTACT_LINK=1
+CONTACT_LINK_TEXT=Email me
+# CONTACT_LINK_COLOR=#1a73e8
+
+LINK_TEXT=See examples
+LINK_COLOR=#1a73e8
+
 # Diagnostics & delivery helpers
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
