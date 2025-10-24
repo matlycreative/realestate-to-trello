@@ -3,29 +3,25 @@
 """
 Day-0 — Poll a Trello list and send one email per card.
 
-- Parse Company / First / Email from the card description.
+Key rules:
 - Personalized ID = Company slug (fallback to email-safe id).
-- If sample READY -> link to:  <PUBLIC_BASE>/p/?id=<id>
-  If NOT READY     -> link to:  <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
-- Choose template A (no First) or B (has First).
-- Send via SMTP (plain + HTML, optional inline logo).
-- Mark the card as "Sent" (cache + Trello comment).
+- READY -> link:  <PUBLIC_BASE>/p/?id=<id>
+- NOT READY -> link:  <PORTFOLIO_URL>  (default: <PUBLIC_BASE>/portfolio)
+- "Ready" is determined strictly:
+    1) If MATLY_POINTER_BASE is set: pointer must exist AND be newer than READY_MAX_AGE_DAYS (default 30).
+    2) Else: /api/sample?id=<id> must return a playable src (CF Stream or valid .mp4/.m3u8 HEAD 200).
 
-Defaults baked-in (override via .env):
-  FROM_NAME=Matthieu from Matly
-  FROM_EMAIL=matthieu@matlycreative.com
-  LINK_TEXT=See examples
-  LINK_COLOR=#1a73e8
+No “Email me” line in the signature.
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Tuple
 import requests
 
 def log(*a): print(*a, flush=True)
 
-# ----------------- Small helpers -----------------
+# ---------- helpers ----------
 def _get_env(*names, default=""):
     for n in names:
         v = os.getenv(n)
@@ -35,7 +31,7 @@ def _get_env(*names, default=""):
 
 def _env_bool(name: str, default: str = "0") -> bool:
     val = os.getenv(name, default)
-    return (val or "").strip().lower() in ("1", "true", "yes", "on")
+    return (val or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -53,7 +49,13 @@ def choose_id(company: str, email: str) -> str:
     sid = _slugify_company(company)
     return sid if sid else _safe_id_from_email(email)
 
-# ----------------- Config / Env -----------------
+def _norm_base(u: str) -> str:
+    u = (u or "").strip()
+    if not re.match(r"^https?://", u or "", flags=re.I):
+        u = "https://" + (u or "")
+    return u.rstrip("/")
+
+# ---------- env ----------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
@@ -70,10 +72,33 @@ SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_usernam
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
 BCC_TO     = _get_env("BCC_TO", default="").strip()
 
-# ----------------- Templates -----------------
-USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
-log(f"[tpl] Using {'ENV' if USE_ENV_TEMPLATES else 'HARDCODED'} templates")
+# Site & portfolio
+PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
+PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
 
+# Pointer freshness (optional but recommended)
+MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
+READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
+
+# Link appearance
+INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
+
+# Sending control
+SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
+SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
+MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
+
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
+
+# ---------- HTTP ----------
+UA = f"TrelloEmailer-Day0/4.0 (+{FROM_EMAIL or 'no-email'})"
+SESS = requests.Session()
+SESS.headers.update({"User-Agent": UA})
+
+# ---------- templates ----------
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
     SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
@@ -133,108 +158,11 @@ If it looks useful, just reply — I’d be happy to chat about handling edits s
 Best,
 Matthieu from Matly"""
 
-# Appearance / signature (no “Email me” line)
-EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
-SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
-SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
-SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
-SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
-
-# Link styles
-INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
-LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
-LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
-
-# Sending control
-SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
-SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
-MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
-
-# Site base + portfolio
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")  # e.g., https://matlycreative.com
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # fallback for NOT READY
-
-def _norm_base(u: str) -> str:
-    u = (u or "").strip()
-    if not re.match(r"^https?://", u or "", flags=re.I):
-        u = "https://" + (u or "")
-    return u.rstrip("/")
-
-PUBLIC_BASE   = _norm_base(PUBLIC_BASE)
-PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or (PUBLIC_BASE + "/portfolio")
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE}  |  PORTFOLIO_URL={PORTFOLIO_URL}")
-
-# HTTP session
-UA = f"TrelloEmailer-Day0/3.7 (+{FROM_EMAIL or 'no-email'})"
-SESS = requests.Session()
-SESS.headers.update({"User-Agent": UA})
-
-# Header parsing
+# ---------- parsing ----------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
-# ----------------- Trello helpers -----------------
-def _trello_call(method, url_path, **params):
-    for attempt in range(3):
-        try:
-            params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
-            url = f"https://api.trello.com/1/{url_path.lstrip('/')}"
-            r = (SESS.get if method == "GET" else SESS.post)(url, params=params, timeout=30)
-            if r.status_code in (429, 500, 502, 503, 504):
-                raise RuntimeError(f"Trello {r.status_code}")
-            r.raise_for_status()
-            return r.json()
-        except Exception:
-            if attempt == 2:
-                raise
-            time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError("Unreachable")
-
-def trello_get(url_path, **params):  return _trello_call("GET", url_path, **params)
-def trello_post(url_path, **params): return _trello_call("POST", url_path, **params)
-
-def already_marked(card_id: str, marker: str) -> bool:
-    try:
-        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
-    except Exception:
-        return False
-    marker_l = (marker or "").lower().strip()
-    for a in acts:
-        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
-        if txt.lower().startswith(marker_l):
-            return True
-    return False
-
-def mark_sent(card_id: str, marker: str, extra: str = ""):
-    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    text = f"{marker} — {ts}"
-    if extra:
-        text += f"\n{extra}"
-    try:
-        trello_post(f"cards/{card_id}/actions/comments", text=text)
-    except Exception:
-        pass
-
-# ----------------- Cache -----------------
-def load_sent_cache():
-    try:
-        with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except Exception:
-        return set()
-
-def save_sent_cache(ids):
-    d = os.path.dirname(SENT_CACHE_FILE)
-    if d: os.makedirs(d, exist_ok=True)
-    try:
-        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(sorted(ids), f)
-    except Exception:
-        pass
-
-# ----------------- Parsing -----------------
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
     d = (desc or "").replace("\r\n","\n").replace("\r","\n")
@@ -261,50 +189,110 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
 
-# ----------------- Robust readiness check -----------------
+# ---------- Trello ----------
+def _trello_call(method, url_path, **params):
+    for attempt in range(3):
+        try:
+            params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
+            url = f"https://api.trello.com/1/{url_path.lstrip('/')}"
+            r = (SESS.get if method == "GET" else SESS.post)(url, params=params, timeout=30)
+            if r.status_code in (429, 500, 502, 503, 504):
+                raise RuntimeError(f"Trello {r.status_code}")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            if attempt == 2: raise
+            time.sleep(1.2 * (attempt + 1))
+    raise RuntimeError("Unreachable")
+
+def trello_get(url_path, **params):  return _trello_call("GET", url_path, **params)
+def trello_post(url_path, **params): return _trello_call("POST", url_path, **params)
+
+def already_marked(card_id: str, marker: str) -> bool:
+    try:
+        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
+    except Exception:
+        return False
+    marker_l = (marker or "").lower().strip()
+    for a in acts:
+        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
+        if txt.lower().startswith(marker_l):
+            return True
+    return False
+
+def mark_sent(card_id: str, marker: str, extra: str = ""):
+    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    text = f"{marker} — {ts}"
+    if extra: text += f"\n{extra}"
+    try:
+        trello_post(f"cards/{card_id}/actions/comments", text=text)
+    except Exception:
+        pass
+
+# ---------- readiness checks ----------
 _CF_IFRAME = re.compile(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', re.I)
 _CF_PLAYID = re.compile(r'^[A-Za-z0-9_-]{12,40}$')
 _HTTP_MPX  = re.compile(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', re.I)
 
-def _sample_info(personal_id: str) -> Tuple[bool, str]:
-    """
-    Ping /api/sample?id=<personal_id> to decide readiness.
-      READY ONLY IF:
-        - HTTP 200 AND
-        - src is Cloudflare Stream (iframe/playbackId) OR
-        - src is .mp4/.m3u8 that returns 200 on HEAD
-    Returns (is_ready, page_link_placeholder)
-    """
-    page_link = f"{PUBLIC_BASE}/p/?id={personal_id}"
-    check_url = f"{PUBLIC_BASE}/api/sample?id={personal_id}"
-    log(f"[ready?] id={personal_id} -> GET {check_url}")
-
+def _pointer_ready_by_freshness(pid: str) -> bool:
+    """Use R2 pointer 'updatedAt' to decide readiness (fresh only)."""
+    base = MATLY_POINTER_BASE
+    if not base:
+        return False
+    url = f"{base}/{pid}.json" if not base.endswith("/pointers") and not base.endswith("/pointers/") \
+          else f"{base.rstrip('/')}/{pid}.json"
     try:
-        r = requests.get(check_url, timeout=12, headers={"Accept": "application/json"})
+        r = SESS.get(url, timeout=10, headers={"Accept":"application/json"})
         if r.status_code != 200:
-            return (False, page_link)
+            return False
+        data = r.json()
+        updated = (data.get("updatedAt") or "").strip()
+        if not updated:
+            return False
+        # handle ...Z
+        if updated.endswith("Z"): updated = updated[:-1]
+        dt = datetime.fromisoformat(updated).replace(tzinfo=timezone.utc)
+        fresh_after = datetime.now(timezone.utc) - timedelta(days=READY_MAX_AGE_DAYS)
+        return dt >= fresh_after
+    except Exception:
+        return False
 
+def _api_ready(pid: str) -> bool:
+    check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
+    try:
+        r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
+        if r.status_code != 200:
+            return False
         data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
-        if not isinstance(data, dict): return (False, page_link)
-        if str(data.get("error", "")).strip(): return (False, page_link)
-
+        if not isinstance(data, dict) or str(data.get("error","")).strip():
+            return False
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if _CF_IFRAME.search(src) or _CF_PLAYID.match(src):
-            return (True, page_link)
-
+            return True
         if _HTTP_MPX.match(src):
             try:
                 h = requests.head(src, timeout=6, allow_redirects=True)
-                if h.status_code == 200:
-                    return (True, page_link)
+                return h.status_code == 200
             except Exception:
-                pass
-
-        return (False, page_link)
+                return False
+        return False
     except Exception:
-        return (False, page_link)
+        return False
 
-# ----------------- Templating -----------------
+def is_sample_ready(pid: str) -> bool:
+    # Prefer pointer freshness if configured; else fall back to API probing.
+    if MATLY_POINTER_BASE:
+        ok = _pointer_ready_by_freshness(pid)
+        log(f"[ready by pointer] id={pid} -> {ok}")
+        if ok:
+            return True
+        # if pointer says not fresh, treat as NOT ready (don’t fall back to API)
+        return False
+    ok = _api_ready(pid)
+    log(f"[ready by api] id={pid} -> {ok}")
+    return ok
+
+# ---------- templating ----------
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
@@ -369,7 +357,14 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
-# --- signature (no contact “Email me” line) ---
+# ---------- signature (no “Email me” line) ----------
+EMAIL_FONT_PX         = int(os.getenv("EMAIL_FONT_PX", "16"))
+SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
+SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
+SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
+
 def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
@@ -383,25 +378,14 @@ def signature_html(logo_cid: str | None) -> str:
         )
     return "".join(parts)
 
-# ----------------- Email sender -----------------
-def send_email(
-    to_email: str,
-    subject: str,
-    body_text: str,
-    *,
-    link_url: str = "",
-    link_text: str = "",
-    link_color: str = "",
-):
+# ---------- send email (FORCE portfolio on portfolio label) ----------
+def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "", link_text: str = "", link_color: str = ""):
     from email.message import EmailMessage
     import smtplib
 
-    # Normalize label and URL
     label = (link_text or "See examples").strip() or "See examples"
 
-    # --- FORCE portfolio URL when using portfolio label ---
-    # If the label equals your portfolio CTA (e.g., "See examples" or "My portfolio"),
-    # always point it to PORTFOLIO_URL, no matter what link_url was passed.
+    # If we're using a portfolio label, hard-force the portfolio URL.
     if label.lower() in {"my portfolio", "see examples", os.getenv("LINK_TEXT", "See examples").strip().lower()}:
         link_url = PORTFOLIO_URL
 
@@ -413,7 +397,7 @@ def send_email(
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # ----- Plain text body -----
+    # Plain text
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -424,7 +408,7 @@ def send_email(
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # ----- HTML body -----
+    # HTML
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
@@ -441,16 +425,12 @@ def send_email(
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        if MARK in html_core:
-            html_core = html_core.replace(MARK, anchor)
-        else:
-            html_core += f"<p>{anchor}</p>"
+        html_core = html_core.replace(MARK, anchor) if MARK in html_core else (html_core + f"<p>{anchor}</p>")
 
-    # Append signature
+    # Signature
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
-    # Send
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
@@ -466,8 +446,7 @@ def send_email(
             r.raise_for_status()
             data = r.content
             ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
-            if not ctype.startswith("image/"):
-                ctype = "image/png"
+            if not ctype.startswith("image/"): ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
             msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid="siglogo@local")
         except Exception as e:
@@ -484,11 +463,27 @@ def send_email(
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
             if attempt == 2: raise
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(1.2 * (attempt + 1))
 
-# ----------------- Main flow -----------------
+# ---------- cache ----------
+def load_sent_cache():
+    try:
+        with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_sent_cache(ids):
+    d = os.path.dirname(SENT_CACHE_FILE)
+    if d: os.makedirs(d, exist_ok=True)
+    try:
+        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(ids), f)
+    except Exception:
+        pass
+
+# ---------- main ----------
 def main():
-    # sanity
     missing = []
     if not TRELLO_KEY:   missing.append("TRELLO_KEY")
     if not TRELLO_TOKEN: missing.append("TRELLO_TOKEN")
@@ -500,7 +495,6 @@ def main():
         raise SystemExit(f"Missing env: {', '.join(missing)}")
 
     sent_cache = load_sent_cache()
-
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
         log("No cards found or Trello error.")
@@ -521,7 +515,6 @@ def main():
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
-
         if not email_v:
             log(f"Skip: no valid Email on card '{title}'.")
             continue
@@ -531,27 +524,20 @@ def main():
             sent_cache.add(card_id)
             continue
 
-        # ---- Personalized ID & readiness ----
         pid = choose_id(company, email_v)
-        is_ready, _ = _sample_info(pid)  # only need readiness
+        ready = is_sample_ready(pid)
 
-        # Choose link based on readiness
-        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}"
-                       if is_ready
-                       else PORTFOLIO_URL)
+        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
 
-        # Choose template
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        # Subject/body
         subject = fill_template(
             subj_tpl,
             company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
-        # ---- Two-{extra} (no extra “here” link anywhere) ----
         extra_ready = "as well as a free sample made with your content"
         extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
 
@@ -561,24 +547,22 @@ def main():
             first=first,
             from_name=FROM_NAME,
             link=chosen_link,
-            is_ready=is_ready,
+            is_ready=ready,
             extra_ready=extra_ready,
             extra_wait=extra_wait
         )
 
-        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT  # e.g., “See examples”
+        link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
         try:
             send_email(
-                email_v,
-                subject,
-                body,
+                email_v, subject, body,
                 link_url=chosen_link,
                 link_text=link_label,
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' — id={pid} ready={is_ready} link={chosen_link}")
+            log(f"Sent to {email_v} — '{title}' — id={pid} ready={ready} link={chosen_link}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
@@ -586,7 +570,7 @@ def main():
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
-        time.sleep(1.0)
+        time.sleep(0.8)
 
     log(f"Done. Emails sent: {processed}")
 
