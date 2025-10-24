@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Day-0 — Poll a Trello list and send one email per card.
+Day-0 — Poll a Trello list and send one email per card (robust ID resolution).
 
-- Parse Company / First / Email from the card description.
-- Build the personalized ID from **Company slug** (fallback to email-safe id).
-- ALWAYS link to your personal page:  <PUBLIC_BASE>/p/?id=<id>
-  (We still ping /api/sample?id=<id> just to know if a sample is ready and tweak copy.)
-- Choose template A (no First) or B (has First).
-- Send via SMTP (plain + HTML, signature, optional inline logo).
-- Mark the card as "Sent" (cache + Trello comment).
+What’s new:
+- Personalized ID prefers Company slug; falls back to email.
+- Robust resolver tries several ID variants to find the existing pointer:
+    [company, company_sample, email, email_sample]
+  (so it works with your older uploads too)
+- Always links to /p/?id=<chosen_id> (the ID that actually exists).
+- Copy still changes depending on whether a sample is ready.
 
-Baked-in defaults:
+Baked-in defaults (overridable via env):
   FROM_NAME=Matthieu from Matly
   FROM_EMAIL=matthieu@matlycreative.com
   CONTACT_EMAIL=matthieu@matlycreative.com
@@ -22,7 +22,7 @@ Baked-in defaults:
 
 import os, re, time, json, html, unicodedata, mimetypes
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, List
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -52,9 +52,23 @@ def _slugify_company(name: str) -> str:
     s = re.sub(r"[\s-]+", "_", s).strip("_")
     return s or ""
 
-def choose_id(company: str, email: str) -> str:
-    sid = _slugify_company(company)
-    return sid if sid else _safe_id_from_email(email)
+def _id_variants(company: str, email: str) -> List[str]:
+    """Return candidate IDs in priority order to find existing pointers."""
+    out = []
+    c = _slugify_company(company)
+    e = _safe_id_from_email(email) if email else ""
+    if c:
+        out.append(c)
+        out.append(f"{c}_sample")
+    if e:
+        out.append(e)
+        out.append(f"{e}_sample")
+    # de-dup while preserving order
+    seen = set(); final = []
+    for x in out:
+        if x and x not in seen:
+            final.append(x); seen.add(x)
+    return final or ["unknown"]
 
 # ----------------- Config / Env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
@@ -163,9 +177,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 # Links
 PUBLIC_BASE   = _get_env("PUBLIC_BASE")       # e.g., https://matlycreative.com
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # fallback if API fails (not used for link)
-# We always link to the personal page; API only informs "ready" vs "wait".
-ALWAYS_USE_PAGE_LINK = True
+PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default="")  # fallback (not used for final link)
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
@@ -179,7 +191,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
 
 # HTTP session
-UA = f"TrelloEmailer-Day0/3.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/4.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -246,7 +258,7 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
     except Exception:
         pass
 
-# --------------- Parsing / email formatting ----------------
+# --------------- Cache helpers ----------------
 def load_sent_cache():
     try:
         with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -263,6 +275,7 @@ def save_sent_cache(ids):
     except Exception:
         pass
 
+# --------------- Parsing ----------------
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
     d = (desc or "").replace("\r\n","\n").replace("\r","\n")
@@ -289,6 +302,39 @@ def clean_email(raw: str) -> str:
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
 
+# --------------- Link & readiness ----------------
+def _check_sample_ready(id_: str) -> bool:
+    """Return True if /api/sample?id=<id_> exposes a playable src."""
+    try:
+        url = f"{PUBLIC_BASE}/api/sample?id={id_}"
+        r = SESS.get(url, timeout=12)
+        # Parse JSON even if status != 200 (some setups return 404 with JSON)
+        data = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+        src = (data.get("src") or data.get("streamUrl") or
+               data.get("signedUrl") or data.get("url"))
+        return bool(src)
+    except Exception:
+        return False
+
+def resolve_best_id_and_link(company: str, email: str) -> Tuple[str, bool, str]:
+    """
+    Try ID variants in order to find an existing pointer/sample.
+    Returns: (chosen_id, is_ready, page_link)
+    """
+    candidates = _id_variants(company, email)
+    log(f"[resolve] candidates: {candidates}")
+    for cand in candidates:
+        if _check_sample_ready(cand):
+            link = f"{PUBLIC_BASE}/p/?id={cand}"
+            log(f"[resolve] using READY id={cand} -> {link}")
+            return cand, True, link
+    # If none ready, still use first candidate for the personal link
+    chosen = candidates[0]
+    link = f"{PUBLIC_BASE}/p/?id={chosen}"
+    log(f"[resolve] none ready; using id={chosen} -> {link}")
+    return chosen, False, link
+
+# --------------- Templating ----------------
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
@@ -385,7 +431,6 @@ def send_email(
     from email.message import EmailMessage
     import smtplib
 
-    # Normalize link and label
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
     label = (link_text or "See examples").strip() or "See examples"
@@ -440,7 +485,6 @@ def send_email(
     msg["To"] = to_email
     if BCC_TO:
         msg["Bcc"] = BCC_TO
-    # Reply-To to your contact email
     if CONTACT_EMAIL or FROM_EMAIL:
         msg["Reply-To"] = f"{FROM_NAME} <{CONTACT_EMAIL or FROM_EMAIL}>"
     msg["Subject"] = sanitize_subject(subject)
@@ -461,7 +505,6 @@ def send_email(
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
     # Send with retries
-    import smtplib
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -477,40 +520,6 @@ def send_email(
             if attempt == 2:
                 raise
             time.sleep(1.5 * (attempt + 1))
-
-def _sample_info(safe_id: str) -> Tuple[bool, str]:
-    """
-    Ping /api/sample?id=<id> to detect readiness.
-    ALWAYS return the personal page link for the email button:
-      <PUBLIC_BASE>/p/?id=<id>
-    """
-    page_link = f"{PUBLIC_BASE}/p/?id={safe_id}"
-    if not PUBLIC_BASE:
-        return (False, page_link)
-
-    check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
-    log(f"[ready?] id={safe_id}")
-    log(f"[ready?] GET {check_url}")
-
-    try:
-        r = requests.get(check_url, timeout=15)
-        preview = (r.text or "")[:300]
-        log(f"[ready?] HTTP {r.status_code} :: {preview!r}")
-
-        try:
-            data = r.json()
-        except Exception:
-            log("[ready?] non-JSON response")
-            return (False, page_link)
-
-        # If API returns a playable src, we consider the sample "ready"
-        src = (data.get("src") or data.get("streamUrl") or
-               data.get("signedUrl") or data.get("url"))
-        return (bool(src), page_link)
-
-    except Exception as e:
-        log(f"[ready?] error: {e}")
-        return (False, page_link)
 
 # --------------- Main Flow ----------------
 def main():
@@ -549,21 +558,17 @@ def main():
             sent_cache.add(card_id)
             continue
 
-        # ---- Personalized ID from Company (fallback to email) ----
-        pid = choose_id(company, email_v)
-        is_ready, chosen_link = _sample_info(pid)  # link is always /p/?id=<pid>
+        # ---- Resolve the correct ID and link by probing pointer variants ----
+        chosen_id, is_ready, chosen_link = resolve_best_id_and_link(company, email_v)
 
         # Choose template
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        n_extra = len(EXTRA_TOKEN.findall(body_tpl or ""))
-        log(f"[compose] id={pid} template={'B' if use_b else 'A'} extras={n_extra} ready={is_ready} link={chosen_link}")
-
         subject = fill_template(
             subj_tpl,
-            company=company, first=first, from_name=FROM_EMAIL, link=chosen_link
+            company=company, first=first, from_name=FROM_NAME, link=chosen_link
         )
 
         extra_ready = "as well as a free sample made with your content"
@@ -592,7 +597,7 @@ def main():
                 link_color=LINK_COLOR
             )
             processed += 1
-            log(f"Sent to {email_v} — card '{title}' (type {'B' if use_b else 'A'}) — link={chosen_link} ready={is_ready}")
+            log(f"Sent to {email_v} — card '{title}' — id={chosen_id} ready={is_ready} link={chosen_link}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
