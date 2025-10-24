@@ -11,9 +11,7 @@ Day-0 — Poll a Trello list and send one email per card.
 - Send via SMTP (plain text + HTML; optional inline <signature logo).
 - Mark the card as "Sent" to avoid re-sending (local cache + Trello comment).
 
-ADDED:
-- Clickable “Email me” link (HTML + plain) and Reply-To header.
-- Controlled by CONTACT_* env vars.
+Includes a clickable “Email me” link (HTML + plain) and Reply-To header.
 """
 
 import os, re, time, json, html, mimetypes
@@ -43,22 +41,15 @@ TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
 LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
-FROM_NAME  = _get_env("FROM_NAME", default="Outreach")
-FROM_EMAIL = _get_env("FROM_EMAIL")
+# Your requested defaults baked in (still overridable via env)
+FROM_NAME  = _get_env("FROM_NAME",  default="Matthieu from Matly")
+FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
 SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
 SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
 SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
-
-CONTACT_EMAIL=you@matlycreative.com
-INCLUDE_CONTACT_LINK=1
-CONTACT_LINK_TEXT=Email me
-# CONTACT_LINK_COLOR=#1a73e8
-
-LINK_TEXT=See examples
-LINK_COLOR=#1a73e8
 
 # Diagnostics & delivery helpers
 SMTP_DEBUG = _env_bool("SMTP_DEBUG", "0")
@@ -137,16 +128,16 @@ SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
-# Link styles
+# Link styles (your defaults)
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
-LINK_TEXT     = _get_env("LINK_TEXT", default="My portfolio")
-LINK_COLOR    = _get_env("LINK_COLOR", default="")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
 
-# NEW: contact link controls
-CONTACT_EMAIL       = _get_env("CONTACT_EMAIL", "FROM_EMAIL") or FROM_EMAIL
-INCLUDE_CONTACT_LINK= _env_bool("INCLUDE_CONTACT_LINK", "1")
-CONTACT_LINK_TEXT   = _get_env("CONTACT_LINK_TEXT", default="Email me")
-CONTACT_LINK_COLOR  = _get_env("CONTACT_LINK_COLOR", default=LINK_COLOR)
+# NEW: contact link controls (your defaults)
+CONTACT_EMAIL        = _get_env("CONTACT_EMAIL", "FROM_EMAIL", default="matthieu@matlycreative.com")
+INCLUDE_CONTACT_LINK = _env_bool("INCLUDE_CONTACT_LINK", "1")
+CONTACT_LINK_TEXT    = _get_env("CONTACT_LINK_TEXT", default="Email me")
+CONTACT_LINK_COLOR   = _get_env("CONTACT_LINK_COLOR", default=LINK_COLOR)
 
 # Sending control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
@@ -344,7 +335,7 @@ def _autolink_html(escaped_html: str) -> str:
         return f'<a href="{escu}">{escu}</a>'
     return _URL_RE.sub(_wrap, escaped_html)
 
-# --- NEW: signature footer with mailto link ---
+# --- signature footer with mailto link ---
 def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
@@ -379,7 +370,7 @@ def send_email(
     # Normalize link and label
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
-    label = (link_text or "My portfolio").strip() or "My portfolio"
+    label = (link_text or "See examples").strip() or "See examples"
 
     full = link_url
     bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
@@ -396,7 +387,7 @@ def send_email(
         else:
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
-    # NEW: add "Email me" line in plain text
+    # Add "Email me" line in plain text
     if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
         contact_addr = (CONTACT_EMAIL or FROM_EMAIL)
         if contact_addr and f"Email me: {contact_addr}" not in body_pt:
@@ -416,7 +407,7 @@ def send_email(
             html_core = html_core.replace(pat, MARK)
 
     if full:
-        style_attr = f' style="color:{html.escape(link_color)};text-decoration:underline;"' if link_color else ""
+        style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
         if MARK in html_core:
             html_core = html_core.replace(MARK, anchor)
@@ -432,7 +423,7 @@ def send_email(
     msg["To"] = to_email
     if BCC_TO:
         msg["Bcc"] = BCC_TO
-    # NEW: set Reply-To to your contact email
+    # Set Reply-To to your contact email
     if CONTACT_EMAIL or FROM_EMAIL:
         msg["Reply-To"] = f"{FROM_NAME} <{CONTACT_EMAIL or FROM_EMAIL}>"
     msg["Subject"] = sanitize_subject(subject)
@@ -475,7 +466,7 @@ def _sample_info(safe_id: str) -> Tuple[bool, str]:
     Returns (is_ready, best_link_to_use).
     """
     check_url = f"{PUBLIC_BASE}/api/sample?id={safe_id}"
-    log(f("[ready?] id={safe_id}"))
+    log(f"[ready?] id={safe_id}")
     log(f"[ready?] GET {check_url}")
 
     try:
@@ -584,7 +575,7 @@ def main():
             extra_wait=extra_wait
         )
 
-        link_label = "Portfolio + Sample (free)" if is_ready else (LINK_TEXT or "My portfolio")
+        link_label = "Portfolio + Sample (free)" if is_ready else LINK_TEXT
 
         try:
             send_email(
