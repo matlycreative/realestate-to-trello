@@ -9,6 +9,9 @@ STRICT RULES:
 - NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
 - With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
 - No signature "Email me" line; no hidden overrides in send_email().
+
+NEW:
+- Add a clickable [here] link in the NOT READY path to UPLOAD_URL (default https://matlycreative.com/upload/).
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
@@ -72,6 +75,9 @@ BCC_TO       = _get_env("BCC_TO", default="").strip()
 PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
 PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
 
+# Upload page link for NOT READY path
+UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
+
 # Pointer readiness (recommended)
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
@@ -86,10 +92,10 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Da
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-Day0/5.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/6.1 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -225,11 +231,10 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
 
 # ----------------- readiness -----------------
 def _pointer_ready(pid: str) -> bool:
-    """Pointer must exist, be fresh, AND filename must include 'sample' (case-insensitive)."""
+    """Pointer must exist, be fresh, AND filename must include 'sample'."""
     base = MATLY_POINTER_BASE
     if not base:
         return False
-    # allow base to be .../pointers or the root; normalize:
     if not base.endswith("/pointers") and not base.endswith("/pointers/"):
         base = base.rstrip("/") + "/pointers"
     url = f"{base.rstrip('/')}/{pid}.json"
@@ -265,17 +270,9 @@ def _api_ready(pid: str) -> bool:
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if not src:
             return False
-        # Cloudflare Stream (iframe/playback id) or direct media URL both count:
-        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I):
-            return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src):
-            return True
-        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I):
-            try:
-                h = requests.head(src, timeout=6, allow_redirects=True)
-                return h.status_code == 200
-            except Exception:
-                return False
+        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
+        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
+        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
         return False
     except Exception:
         return False
@@ -380,8 +377,10 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text
+    # Plain text: also expand [here] → UPLOAD_URL
     body_pt = body_text
+    if "[here]" in body_pt:
+        body_pt = body_pt.replace("[here]", UPLOAD_URL)
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
@@ -391,7 +390,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML with explicit marker replacement
+    # HTML with explicit markers
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
@@ -402,10 +401,16 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     html_core = re.sub(re.escape(esc_full), MARK, html_core)
     html_core = re.sub(re.escape(esc_bare), MARK, html_core)
 
+    # Insert main anchor
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
         html_core = html_core.replace(MARK, anchor) if MARK in html_core else (html_core + f"<p>{anchor}</p>")
+
+    # Convert [here] into clickable upload link
+    if "[here]" in html_core:
+        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
+        html_core = html_core.replace("[here]", upload_anchor)
 
     # Signature
     logo_cid = "siglogo@local"
@@ -505,7 +510,8 @@ def main():
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
         extra_ready = "as well as a free sample made with your content"
-        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free)."
+        # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
+        extra_wait  = "If you can share 1–2 raw clips, I’ll cut a quick sample for you this week (free) — upload them [here]."
 
         body = fill_with_two_extras(
             body_tpl, company=company, first=first, from_name=FROM_NAME,
