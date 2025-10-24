@@ -13,14 +13,13 @@ FU1 — Poll a Trello list and send one email per card (company-based personal l
 - Sends via SMTP (plain + HTML, signature, optional inline logo).
 - Marks the card with "Sent: FU1" and caches it locally so it won’t resend.
 
-Baked-in defaults (override in .env):
+Baked-in defaults (override in .env if you want):
   FROM_NAME=Matthieu from Matly
   FROM_EMAIL=matthieu@matlycreative.com
-  CONTACT_EMAIL=matthieu@matlycreative.com
-  INCLUDE_CONTACT_LINK=1
-  CONTACT_LINK_TEXT=Email me
   LINK_TEXT=See examples
   LINK_COLOR=#1a73e8
+
+NOTE: No "Email me" contact line is inserted anywhere.
 """
 
 import os
@@ -129,15 +128,10 @@ SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
-# Link styles + contact
-INCLUDE_PLAIN_URL    = _env_bool("INCLUDE_PLAIN_URL", "0")
-LINK_TEXT            = _get_env("LINK_TEXT",  default="See examples")
-LINK_COLOR           = _get_env("LINK_COLOR", default="#1a73e8")
-
-CONTACT_EMAIL        = _get_env("CONTACT_EMAIL", "FROM_EMAIL", default="matthieu@matlycreative.com")
-INCLUDE_CONTACT_LINK = _env_bool("INCLUDE_CONTACT_LINK", "1")
-CONTACT_LINK_TEXT    = _get_env("CONTACT_LINK_TEXT", default="Email me")
-CONTACT_LINK_COLOR   = _get_env("CONTACT_LINK_COLOR", default=LINK_COLOR)
+# Link styles
+INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
 
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
@@ -158,7 +152,7 @@ PORTFOLIO_URL = _norm_base(PORTFOLIO_URL) or PUBLIC_BASE
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE}")
 
 # HTTP session
-UA = f"TrelloEmailer-FU1/3.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/3.2 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -348,11 +342,7 @@ def signature_html(logo_cid: str | None) -> str:
     if SIGNATURE_ADD_NAME:
         line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
         parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
-    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
-        addr = html.escape(CONTACT_EMAIL or FROM_EMAIL)
-        style = f' style="color:{html.escape(CONTACT_LINK_COLOR)};text-decoration:underline;"' if CONTACT_LINK_COLOR else ''
-        label = html.escape(CONTACT_LINK_TEXT or "Email me")
-        parts.append(f'<p style="margin:6px 0 0 0;"><a href="mailto:{addr}"{style}>{label}</a></p>')
+    # No contact line here by design
     if SIGNATURE_LOGO_URL:
         img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
         parts.append(
@@ -375,7 +365,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text body (optional contact line)
+    # Plain text body (no added "Email me" line)
     body_pt = body_text
     if full:
         if not INCLUDE_PLAIN_URL:
@@ -385,10 +375,6 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
-    if INCLUDE_CONTACT_LINK and (CONTACT_EMAIL or FROM_EMAIL):
-        contact_addr = (CONTACT_EMAIL or FROM_EMAIL)
-        if contact_addr and f"Email me: {contact_addr}" not in body_pt:
-            body_pt = (body_pt.rstrip() + f"\n\nEmail me: {contact_addr}").strip()
 
     # HTML body
     MARK = "__LINK_MARKER__"
@@ -411,7 +397,7 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
         else:
             html_core += f"<p>{anchor}</p>"
 
-    # finalize HTML + optional signature
+    # finalize HTML + optional signature (no contact link)
     logo_cid = "siglogo@local"
     html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
@@ -420,8 +406,8 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str = "
     msg["To"] = to_email
     if BCC_TO:
         msg["Bcc"] = BCC_TO
-    if CONTACT_EMAIL or FROM_EMAIL:
-        msg["Reply-To"] = f"{FROM_NAME} <{CONTACT_EMAIL or FROM_EMAIL}>"
+    # Optional: Reply-To can be left as default (omitted) or set to FROM_EMAIL
+    msg["Reply-To"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
