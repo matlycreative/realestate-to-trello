@@ -349,28 +349,51 @@ def sanitize_subject(s: str) -> str:
 
 def text_to_html(text: str) -> str:
     """
-    Turn plain text into paragraphs/br with Roboto, larger size, and good spacing.
-    Light background, dark text (email-client friendly).
+    Turn plain text into paragraphs/br with Matly dark style.
+    Returns inner HTML (card wrapper is added later).
     """
     esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
 
     p_style = (
         "margin:0 0 14px 0;"
-        "color:#111111 !important;"
+        "color:#f5f5f7 !important;"
         "font-size:17px !important;"
         "line-height:1.7;"
     )
 
-    wrap_style = (
+    esc = f'<p style="{p_style}">{esc}</p>'
+    esc = esc.replace("<p>", f'<p style=\"{p_style}\">')
+    return esc
+
+def wrap_html(inner: str) -> str:
+    """
+    Wrap inner HTML in a centered Matly-style dark card.
+    """
+    inner = inner or ""
+    wrapper_style = (
         'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
-        "font-size:17px;line-height:1.7;color:#111111 !important;"
+        "color:#f5f5f7 !important;"
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style=\"{p_style}\">')
-    return f'<div style="{wrap_style}">{esc}</div>'
+    return f"""
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#050609;padding:24px 16px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#0f1013,#0b0c10);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
+        <tr>
+          <td style="padding:24px 24px 18px 24px;">
+            <div style="{wrapper_style}font-size:17px;line-height:1.7;">
+              {inner}
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+""".strip()
 
 # ----------------- signature (no 'Email me' line) -----------------
 SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
@@ -386,7 +409,7 @@ def signature_html(logo_cid: str | None) -> str:
         parts.append(
             '<p style="margin:16px 0 0 0;'
             'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
-            'font-size:15px;line-height:1.6;color:#111111;">'
+            'font-size:15px;line-height:1.6;color:#f5f5f7;">'
             f'{html.escape(line)}</p>'
         )
     if SIGNATURE_LOGO_URL:
@@ -431,56 +454,67 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
         if pat:
             body_marked = body_marked.replace(pat, MARK)
 
-    html_core = text_to_html(body_marked)
-    html_core = re.sub(re.escape(esc_full), MARK, html_core)
-    html_core = re.sub(re.escape(esc_bare), MARK, html_core)
+    html_core_inner = text_to_html(body_marked)
+    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
+    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
 
     # Insert main anchor
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        html_core = html_core.replace(MARK, anchor) if MARK in html_core else (html_core + f"<p>{anchor}</p>")
+        html_core_inner = html_core_inner.replace(MARK, anchor) if MARK in html_core_inner else (html_core_inner + f"<p style=\"margin:0 0 14px 0;\">{anchor}</p>")
 
     # Convert [here] into clickable upload link
-    if "[here]" in html_core:
-        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
-        html_core = html_core.replace("[here]", upload_anchor)
+    if "[here]" in html_core_inner:
+        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}" style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;">here</a>'
+        html_core_inner = html_core_inner.replace("[here]", upload_anchor)
 
-    # Signature
+    # Signature (still inner)
     logo_cid = "siglogo@local"
-    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
+    # Wrap in Matly card
+    html_full = wrap_html(html_core_inner + sig_inner)
+
+    # ----- Build message -----
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
-    if BCC_TO: msg["Bcc"] = BCC_TO
+    if BCC_TO:
+        msg["Bcc"] = BCC_TO
 
+    # Inline logo embed (if configured)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
             r.raise_for_status()
             data = r.content
             ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
-            if not ctype.startswith("image/"): ctype = "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
             msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid="siglogo@local")
         except Exception as e:
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
+    # ----- Send via SMTP -----
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-                if SMTP_DEBUG: s.set_debuglevel(1)
-                if SMTP_USE_TLS: s.starttls()
+                if SMTP_DEBUG:
+                    s.set_debuglevel(1)
+                if SMTP_USE_TLS:
+                    s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
                 s.send_message(msg)
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
-            if attempt == 2: raise
+            if attempt == 2:
+                raise
             time.sleep(1.0 * (attempt + 1))
 
 # ----------------- cache -----------------
