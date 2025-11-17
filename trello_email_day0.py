@@ -370,7 +370,7 @@ def text_to_html(text: str) -> str:
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
     p_style = (
         "margin:0 0 14px 0;"
-        "color:#000000;"
+        "color:#ffffff;"
         "font-size:15px;"
         "line-height:1.7;"
     )
