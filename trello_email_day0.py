@@ -423,76 +423,98 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text: also expand [here] → UPLOAD_URL
+    # ----- Plain text version -----
     body_pt = body_text
+    # Expand [here] to the upload URL in plain text as well
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
+
     if full:
         if not INCLUDE_PLAIN_URL:
+            # Replace visible URL with the label in plain text
             for pat in (full, bare):
                 if pat:
                     body_pt = body_pt.replace(pat, label)
         else:
+            # Append the URL at the end if it's not already present
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML with explicit markers
+    # ----- HTML version with markers -----
     MARK = "__LINK_MARKER__"
     body_marked = body_text
     for pat in (full, bare):
         if pat:
             body_marked = body_marked.replace(pat, MARK)
 
-    html_core = text_to_html(body_marked)
-    html_core = re.sub(re.escape(esc_full), MARK, html_core)
-    html_core = re.sub(re.escape(esc_bare), MARK, html_core)
+    # Turn text into styled paragraphs (inner only)
+    html_core_inner = text_to_html(body_marked)
 
-    # Insert main anchor
+    # Replace full/bare URLs in case they appeared via escaping
+    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
+    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
+
+    # Insert main anchor into inner HTML
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        html_core = html_core.replace(MARK, anchor) if MARK in html_core else (html_core + f"<p>{anchor}</p>")
+        if MARK in html_core_inner:
+            html_core_inner = html_core_inner.replace(MARK, anchor)
+        else:
+            html_core_inner = html_core_inner + f'<p style="margin:0 0 14px 0;">{anchor}</p>'
 
-    # Convert [here] into clickable upload link
-    if "[here]" in html_core:
-        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}">here</a>'
-        html_core = html_core.replace("[here]", upload_anchor)
+    # Convert [here] into clickable upload link in HTML
+    if "[here]" in html_core_inner:
+        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}" style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;">here</a>'
+        html_core_inner = html_core_inner.replace("[here]", upload_anchor)
 
-    # Signature
+    # Signature (still inner)
     logo_cid = "siglogo@local"
-    html_full = html_core + signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
+    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
 
+    # Wrap everything in the luxury card layout
+    html_full = wrap_html(html_core_inner + sig_inner)
+
+    # ----- Build message -----
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
     msg.add_alternative(html_full, subtype="html")
-    if BCC_TO: msg["Bcc"] = BCC_TO
+    if BCC_TO:
+        msg["Bcc"] = BCC_TO
 
+    # Inline logo embed (if configured)
     if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
         try:
             r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
             r.raise_for_status()
             data = r.content
             ctype = r.headers.get("Content-Type") or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0] or "image/png"
-            if not ctype.startswith("image/"): ctype = "image/png"
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
             maintype, subtype = ctype.split("/", 1)
+            # Last payload part is the HTML alternative
             msg.get_payload()[-1].add_related(data, maintype=maintype, subtype=subtype, cid="siglogo@local")
         except Exception as e:
             log(f"Inline logo fetch failed, sending without embed: {e}")
 
+    # ----- Send via SMTP -----
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
-                if SMTP_DEBUG: s.set_debuglevel(1)
-                if SMTP_USE_TLS: s.starttls()
+                if SMTP_DEBUG:
+                    s.set_debuglevel(1)
+                if SMTP_USE_TLS:
+                    s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
                 s.send_message(msg)
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
-            if attempt == 2: raise
+            if attempt == 2:
+                raise
             time.sleep(1.0 * (attempt + 1))
 
 # ----------------- cache -----------------
