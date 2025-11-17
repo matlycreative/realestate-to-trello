@@ -19,6 +19,7 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: "1"
+      DEBUG: "1"    
 
       # App secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
