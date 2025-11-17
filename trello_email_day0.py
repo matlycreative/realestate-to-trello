@@ -359,9 +359,9 @@ def text_to_html(text: str) -> str:
     p_style = (
         "margin:0 0 16px 0;"
         "color:#f5f5f7 !important;"
-        "font-size:18px !important;"
-        "line-height:1.6;"
-        "font-weight:500;"
+        "font-size:16px !important;"
+        "line-height:2;"
+        "font-weight:400;"
     )
 
     esc = f'<p style="{p_style}">{esc}</p>'
