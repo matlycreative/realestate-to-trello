@@ -423,7 +423,7 @@ def signature_html(logo_cid: str | None) -> str:
     )
 
     # Optional logo under the text (use your actual URL)
-    logo_url = "https://drive.google.com/file/d/18UGKd-mcBHbMTMdEIfQc4jeAVlSHzTSO/view?usp=share_link"
+    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if logo_url:
         parts.append(
             f'<div style="margin-top:10px;">'
