@@ -411,17 +411,6 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 def signature_html(logo_cid: str | None) -> str:
     parts = []
 
-    # Custom text block
-    parts.append(
-        '<p style="margin:20px 0 0 0;'
-        'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
-        'font-size:16px;line-height:1.6;color:#f5f5f7;font-weight:500;">'
-        'Best,<br>'
-        'Matthieu<br>'
-        '<span style="opacity:0.75;">Matly Creative – Real Estate Video</span>'
-        '</p>'
-    )
-
     # Optional logo under the text (use your actual URL)
     logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if logo_url:
