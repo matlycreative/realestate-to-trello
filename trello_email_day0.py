@@ -391,7 +391,7 @@ def wrap_html(inner: str) -> str:
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#0f1013,#0b0c10);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
         <tr>
           <td style="padding:24px 24px 18px 24px;">
-            <div style="{wrapper_style}font-size:18px;line-height:1.7;">
+            <div style="{wrapper_style}font-size:18px;line-height:2;">
               {inner}
             </div>
           </td>
