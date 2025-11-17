@@ -348,15 +348,28 @@ def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 def text_to_html(text: str) -> str:
-    esc = html.escape(text or "").replace("\r\n","\n").replace("\r","\n")
+    """
+    Turn plain text into paragraphs/br with Roboto, larger size, and good spacing.
+    Light background, dark text (email-client friendly).
+    """
+    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    p_style = "margin:0 0 12px 0;color:#111111 !important;"
-    wrap_style = (
-        f"font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;"
-        "color:#111111 !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
+
+    p_style = (
+        "margin:0 0 14px 0;"
+        "color:#111111 !important;"
+        "font-size:17px !important;"
+        "line-height:1.7;"
     )
+
+    wrap_style = (
+        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+        "font-size:17px;line-height:1.7;color:#111111 !important;"
+        "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
+    )
+
     esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
+    esc = esc.replace("<p>", f'<p style=\"{p_style}\">')
     return f'<div style="{wrap_style}">{esc}</div>'
 
 # ----------------- signature (no 'Email me' line) -----------------
@@ -370,7 +383,12 @@ def signature_html(logo_cid: str | None) -> str:
     parts = []
     if SIGNATURE_ADD_NAME:
         line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
-        parts.append(f'<p style="margin:16px 0 0 0;">{html.escape(line)}</p>')
+        parts.append(
+            '<p style="margin:16px 0 0 0;'
+            'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
+            'font-size:15px;line-height:1.6;color:#111111;">'
+            f'{html.escape(line)}</p>'
+        )
     if SIGNATURE_LOGO_URL:
         img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
         parts.append(
