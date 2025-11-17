@@ -361,14 +361,20 @@ def sanitize_subject(s: str) -> str:
 
 def text_to_html(text: str) -> str:
     """
-    Turn plain text into paragraphs/br with white text.
+    Turn plain text into paragraphs/br with white text and bigger font.
     This returns ONLY the inner HTML; outer layout is handled by wrap_html().
     """
     esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    p_style = 'margin:0 0 12px 0;color:#f5f5f7 !important;'
+    p_style = (
+        "margin:0 0 16px 0;"
+        "color:#ffffff !important;"
+        "font-size:17px;"
+        "line-height:1.7;"
+        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+    )
     esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
+    esc = esc.replace("<p>", f'<p style=\"{p_style}\">')
     return esc
 
 def wrap_html(inner: str) -> str:
