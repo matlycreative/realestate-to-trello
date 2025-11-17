@@ -385,7 +385,7 @@ def wrap_html(inner: str) -> str:
     """
     inner = inner or ""
     wrapper_style = (
-        "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;"
+        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
         "-webkit-text-size-adjust:100%;"
         "-ms-text-size-adjust:100%;"
     )
