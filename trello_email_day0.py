@@ -355,16 +355,19 @@ def text_to_html(text: str) -> str:
     esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
     esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
 
+    # Bigger + bolder body text
     p_style = (
-        "margin:0 0 14px 0;"
+        "margin:0 0 16px 0;"
         "color:#f5f5f7 !important;"
-        "font-size:17px !important;"
-        "line-height:1.7;"
+        "font-size:18px !important;"
+        "line-height:1.6;"
+        "font-weight:500;"
     )
 
     esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style=\"{p_style}\">')
+    esc = esc.replace("<p>", f'<p style="{p_style}">')
     return esc
+
 
 def wrap_html(inner: str) -> str:
     """
@@ -374,6 +377,9 @@ def wrap_html(inner: str) -> str:
     wrapper_style = (
         'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
         "color:#f5f5f7 !important;"
+        "font-size:18px;"
+        "line-height:1.6;"
+        "font-weight:500;"
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
@@ -384,7 +390,7 @@ def wrap_html(inner: str) -> str:
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#0f1013,#0b0c10);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
         <tr>
           <td style="padding:24px 24px 18px 24px;">
-            <div style="{wrapper_style}font-size:17px;line-height:1.7;">
+            <div style="{wrapper_style}">
               {inner}
             </div>
           </td>
@@ -409,7 +415,7 @@ def signature_html(logo_cid: str | None) -> str:
         parts.append(
             '<p style="margin:16px 0 0 0;'
             'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
-            'font-size:15px;line-height:1.6;color:#f5f5f7;">'
+            'font-size:16px;line-height:1.6;color:#f5f5f7;font-weight:500;">'
             f'{html.escape(line)}</p>'
         )
     if SIGNATURE_LOGO_URL:
