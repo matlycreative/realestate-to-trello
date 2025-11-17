@@ -359,6 +359,25 @@ def fill_with_two_extras(
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
+def text_to_html(text: str) -> str:
+    """
+    Turn plain text into HTML paragraphs styled for a dark, premium look.
+    This returns only the INNER content; the outer email 'card' comes from wrap_html().
+    """
+    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    esc = esc.strip()
+    # Blank line => new paragraph, single newline => <br>
+    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
+    p_style = (
+        "margin:0 0 14px 0;"
+        "color:#f5f5f7;"
+        "font-size:15px;"
+        "line-height:1.7;"
+    )
+    esc = f'<p style="{p_style}">{esc}</p>'
+    esc = esc.replace("<p>", f'<p style="{p_style}">')
+    return esc
+
 def wrap_html(inner: str) -> str:
     """
     Wrap inner HTML in a centered, dark 'card' that matches the Matly vibe.
