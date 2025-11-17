@@ -360,7 +360,7 @@ def text_to_html(text: str) -> str:
         "margin:0 0 16px 0;"
         "color:#f5f5f7 !important;"
         "font-size:16px !important;"
-        "line-height:2;"
+        "line-height:1.8;"
         "font-weight:400;"
     )
 
@@ -378,7 +378,7 @@ def wrap_html(inner: str) -> str:
         'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
         "color:#f5f5f7 !important;"
         "font-size:16px;"
-        "line-height:2;"
+        "line-height:1.8;"
         "font-weight:400;"
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
@@ -410,20 +410,28 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
     parts = []
-    if SIGNATURE_ADD_NAME:
-        line = SIGNATURE_CUSTOM_TEXT if SIGNATURE_CUSTOM_TEXT else f"– {FROM_NAME}"
+
+    # Custom text block
+    parts.append(
+        '<p style="margin:20px 0 0 0;'
+        'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
+        'font-size:16px;line-height:1.6;color:#f5f5f7;font-weight:500;">'
+        'Best,<br>'
+        'Matthieu<br>'
+        '<span style="opacity:0.75;">Matly Creative – Real Estate Video</span>'
+        '</p>'
+    )
+
+    # Optional logo under the text (use your actual URL)
+    logo_url = "https://drive.google.com/file/d/18UGKd-mcBHbMTMdEIfQc4jeAVlSHzTSO/view?usp=share_link"
+    if logo_url:
         parts.append(
-            '<p style="margin:16px 0 0 0;'
-            'font-family:\'Roboto\',-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;'
-            'font-size:16px;line-height:1.6;color:#f5f5f7;font-weight:500;">'
-            f'{html.escape(line)}</p>'
+            f'<div style="margin-top:10px;">'
+            f'<img src="{html.escape(logo_url)}" alt="Matly Creative" '
+            f'style="max-width:160px;height:auto;border:0;display:block;">'
+            f'</div>'
         )
-    if SIGNATURE_LOGO_URL:
-        img_src = f"cid:{logo_cid}" if (SIGNATURE_INLINE and logo_cid) else html.escape(SIGNATURE_LOGO_URL)
-        parts.append(
-            f'<div style="margin-top:8px;"><img src="{img_src}" alt="" '
-            f'style="max-width:{SIGNATURE_MAX_W_PX}px;height:auto;border:0;display:block;"></div>'
-        )
+
     return "".join(parts)
 
 # ----------------- sender (uses the chosen_link exactly) -----------------
