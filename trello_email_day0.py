@@ -131,13 +131,16 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 I’m a video editor who works specifically with real estate agents and agencies: you send raw footage, I send back clean, polished listing videos that look high-end and are ready to post.
 
+
 Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
 
 {extra}
 
+
 If you ever feel that editing is slowing you down, I can handle that part so you can focus on getting more listings and viewings booked.
 
 Would you be open to testing this on one upcoming property?
+
 
 Best,
 Matthieu from Matly""")
@@ -150,13 +153,16 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 I’m a video editor who works specifically with real estate agents and agencies: you send raw footage, I send back clean, polished listing videos that look high-end and are ready to post.
 
+
 Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
 
 {extra}
 
+
 If you ever feel that editing is slowing you down, I can handle that part so you can focus on getting more listings and viewings booked.
 
 Would you be open to testing this on one upcoming property?
+
 
 Best,
 Matthieu from Matly"""
@@ -166,11 +172,14 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 I’m a video editor who works specifically with real estate agents and agencies: you send raw footage, I send back clean, polished listing videos that look high-end and are ready to post.
 
+
 Here’s my portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
 
 {extra}
 
+
 If you ever feel that editing is slowing you down, I can handle that part so you can focus on getting more listings and viewings booked.
+
 
 Would you be open to testing this on one upcoming property?
 
