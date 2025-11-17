@@ -415,7 +415,7 @@ def signature_html(logo_cid: str | None) -> str:
     logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if logo_url:
         parts.append(
-            f'<div style="margin-top:10px;">'
+            f'<div style="margin-top:22px;">'
             f'<img src="{html.escape(logo_url)}" alt="Matly Creative" '
             f'style="max-width:160px;height:auto;border:0;display:block;">'
             f'</div>'
