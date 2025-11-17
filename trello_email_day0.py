@@ -359,17 +359,35 @@ def fill_with_two_extras(
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
-def text_to_html(text: str) -> str:
-    esc = html.escape(text or "").replace("\r\n","\n").replace("\r","\n")
-    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    p_style = "margin:0 0 12px 0;color:#111111 !important;"
-    wrap_style = (
-        f"font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;"
-        "color:#111111 !important;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
+def wrap_html(inner: str) -> str:
+    """
+    Wrap inner HTML in a centered, dark 'card' that matches the Matly vibe.
+    Keeps email-client-safe table layout.
+    """
+    inner = inner or ""
+    wrapper_style = (
+        "font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;"
+        "-webkit-text-size-adjust:100%;"
+        "-ms-text-size-adjust:100%;"
     )
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
-    return f'<div style="{wrap_style}">{esc}</div>'
+
+    return f"""
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#050609;padding:24px 16px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:640px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#0f1013,#0b0c10);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
+        <tr>
+          <td style="padding:24px 24px 18px 24px;">
+            <div style="{wrapper_style}color:#f5f5f7;font-size:15px;line-height:1.7;">
+              {inner}
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+""".strip()
 
 # ----------------- signature (no 'Email me' line) -----------------
 SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
