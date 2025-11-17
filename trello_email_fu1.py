@@ -1,3 +1,4 @@
+"""
 STRICT RULES:
 - Personalized ID = Company slug (fallback email-safe).
 - READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
