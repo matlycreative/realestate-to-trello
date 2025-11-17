@@ -377,9 +377,9 @@ def wrap_html(inner: str) -> str:
     wrapper_style = (
         'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
         "color:#f5f5f7 !important;"
-        "font-size:18px;"
-        "line-height:1.6;"
-        "font-weight:500;"
+        "font-size:16px;"
+        "line-height:2;"
+        "font-weight:400;"
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
