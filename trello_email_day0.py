@@ -387,7 +387,7 @@ def wrap_html(inner: str) -> str:
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;padding:24px 16px;">
   <tr>
     <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#0f1013,#0b0c10);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#191919,#191919);border:1px solid #1d1f26;box-shadow:0 18px 45px rgba(0,0,0,.45);">
         <tr>
           <td style="padding:24px 24px 18px 24px;">
             <div style="{wrapper_style}">
