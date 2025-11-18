@@ -274,23 +274,41 @@ def _pointer_ready(pid: str) -> bool:
         return False
 
 def _api_ready(pid: str) -> bool:
-    """Fallback: /api/sample must 200 with a playable src."""
+    """Check /api/sample; treat any non-empty src/url as READY."""
     check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
     try:
-        r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
+        r = SESS.get(check_url, timeout=12, headers={"Accept": "application/json"})
         if r.status_code != 200:
+            log(f"[ready api] id={pid} -> HTTP {r.status_code}")
             return False
-        data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
-        if not isinstance(data, dict) or str(data.get("error","")).strip():
+
+        # Try to parse JSON
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        data = r.json() if "application/json" in ctype else {}
+        if not isinstance(data, dict):
+            log(f"[ready api] id={pid} -> non-dict JSON")
             return False
-        src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
+
+        # Look for any reasonable video field
+        src = (
+            (data.get("src")
+             or data.get("streamUrl")
+             or data.get("signedUrl")
+             or data.get("url")
+             or "")
+            .strip()
+        )
+
         if not src:
+            log(f"[ready api] id={pid} -> no src field")
             return False
-        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
-        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
-        return False
-    except Exception:
+
+        # At this point: endpoint returned something meaningful, so consider it READY
+        log(f"[ready api] id={pid} -> True (src={src[:80]}...)")
+        return True
+
+    except Exception as e:
+        log(f"[ready api] id={pid} -> error: {e}")
         return False
 
 def is_sample_ready(pid: str) -> bool:
