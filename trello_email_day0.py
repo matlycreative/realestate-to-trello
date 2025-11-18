@@ -599,13 +599,6 @@ def main():
 
         pid   = choose_id(company, email_v)
         ready = is_sample_ready(pid)
-
-        # ---- Manual override via Variant field in Trello ----
-        # Put "Variant: sample" or "Variant: ready" on the card to force READY.
-        if variant in ("sample", "ready", "sample_ready", "ready_sample"):
-            log(f"[override] Variant='{variant}' -> forcing ready=True for id={pid}")
-            ready = True
-
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
         log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
 
