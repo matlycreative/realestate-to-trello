@@ -384,8 +384,7 @@ def wrap_html(inner: str) -> str:
 
     # Logo URL (same for top and bottom)
     header_logo_url = (
-        SIGNATURE_LOGO_URL
-        or "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+        "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     )
 
     return f"""
