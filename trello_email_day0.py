@@ -394,7 +394,7 @@ def wrap_html(inner: str) -> str:
           <td style="padding:14px 24px;background:{bar_color_top};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:100px;display:inline-block;border:0;">
+                 style="max-height:80px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
