@@ -246,50 +246,26 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
         pass
 
 # ----------------- readiness -----------------
-def _pointer_ready(pid: str) -> bool:
-    """Pointer must exist, be fresh, AND filename must include 'sample'."""
-    base = MATLY_POINTER_BASE
-    if not base:
-        return False
-    if not base.endswith("/pointers") and not base.endswith("/pointers/"):
-        base = base.rstrip("/") + "/pointers"
-    url = f"{base.rstrip('/')}/{pid}.json"
-    try:
-        r = SESS.get(url, timeout=10, headers={"Accept":"application/json"})
-        if r.status_code != 200:
-            return False
-        data = r.json()
-        fname = (data.get("filename") or "").lower()
-        if "sample" not in fname:
-            return False
-        updated = (data.get("updatedAt") or "").strip()
-        if not updated:
-            return False
-        if updated.endswith("Z"):
-            updated = updated[:-1]
-        dt = datetime.fromisoformat(updated).replace(tzinfo=timezone.utc)
-        fresh_after = datetime.now(timezone.utc) - timedelta(days=READY_MAX_AGE_DAYS)
-        return dt >= fresh_after
-    except Exception:
-        return False
-
-def _api_ready(pid: str) -> bool:
-    """Check /api/sample; treat any non-empty src/url as READY."""
+def is_sample_ready(pid: str) -> bool:
+    """
+    A sample is READY if /api/sample?id=<pid> returns 200
+    and the JSON contains any non-empty src/streamUrl/signedUrl/url field.
+    No Trello flags, no pointers – fully automatic.
+    """
     check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
     try:
         r = SESS.get(check_url, timeout=12, headers={"Accept": "application/json"})
         if r.status_code != 200:
-            log(f"[ready api] id={pid} -> HTTP {r.status_code}")
+            log(f"[ready] id={pid} -> HTTP {r.status_code}")
             return False
 
-        # Try to parse JSON
         ctype = (r.headers.get("Content-Type") or "").lower()
         data = r.json() if "application/json" in ctype else {}
         if not isinstance(data, dict):
-            log(f"[ready api] id={pid} -> non-dict JSON")
+            log(f"[ready] id={pid} -> non-dict JSON")
             return False
 
-        # Look for any reasonable video field
+        # Any of these fields counts as “we have a playable sample”
         src = (
             (data.get("src")
              or data.get("streamUrl")
@@ -300,35 +276,24 @@ def _api_ready(pid: str) -> bool:
         )
 
         if not src:
-            log(f"[ready api] id={pid} -> no src field")
+            log(f"[ready] id={pid} -> no src/url field")
             return False
 
-        # At this point: endpoint returned something meaningful, so consider it READY
-        log(f"[ready api] id={pid} -> True (src={src[:80]}...)")
+        log(f"[ready] id={pid} -> True (src={src[:80]}...)")
         return True
 
     except Exception as e:
-        log(f"[ready api] id={pid} -> error: {e}")
+        log(f"[ready] id={pid} -> error: {e}")
         return False
 
-def is_sample_ready(pid: str) -> bool:
-    """Sample is READY if either:
-    - pointer says it's ready, OR
-    - /api/sample returns a non-empty src/url (fallback).
-    """
-    # 1) Prefer pointer if configured
-    if MATLY_POINTER_BASE:
-        ok_pointer = _pointer_ready(pid)
-        log(f"[ready pointer] id={pid} -> {ok_pointer}")
-        if ok_pointer:
-            return True
-        else:
-            log(f"[ready pointer] id={pid} not ready, falling back to /api/sample")
 
-    # 2) Fallback: /api/sample
-    ok_api = _api_ready(pid)
-    log(f"[ready api] id={pid} -> {ok_api}")
-    return ok_api
+# ----------------- templating -----------------
+def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
+    def repl(m):
+        key = m.group(1).strip().lower()
+        if key == "company":   return company or ""
+        if key == "first":     return first or ""
+        if key == "from_name": return from_name or ""
 # ----------------- templating -----------------
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
