@@ -394,7 +394,7 @@ def wrap_html(inner: str) -> str:
           <td style="padding:14px 24px;background:{bar_color_top};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:32px;display:inline-block;border:0;">
+                 style="max-height:36px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
@@ -424,7 +424,7 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
     # Logo URL used for the signature
-    logo_url = SIGNATURE_LOGO_URL or "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+    logo_url = "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if not logo_url:
         return ""
 
