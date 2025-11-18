@@ -420,30 +420,25 @@ SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in 
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
-    parts = []
-
-    # Boxed, centered logo at the bottom
+    # Same logo as before
     logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
-    if logo_url:
-        parts.append(
-            f'''
-<div style="margin-top:26px;width:100%;text-align:center;">
-  <div style="
-      display:inline-block;
-      padding:10px 18px;
-      background:#292929;
-      border-radius:999px;
-      border:1px solid #000000;
-  ">
-    <img src="{html.escape(logo_url)}"
-         alt="Matly Creative"
-         style="max-height:22px;height:auto;border:0;display:inline-block;vertical-align:middle;">
-  </div>
-</div>
-'''.strip()
-        )
+    if not logo_url:
+        return ""
 
-    return "".join(parts)
+    # This creates a full-width bar inside the card, visually like the top bar
+    # The -30px side margins cancel the td padding (30px) so it "bleeds" to the card edges
+    return (
+        f'<div style="'
+        f'margin:26px -30px 0 -30px;'
+        f'background:#292929;'
+        f'text-align:center;'
+        f'padding:12px 24px;'
+        f'">'
+        f'<img src="{html.escape(logo_url)}" '
+        f'alt="Matly Creative" '
+        f'style="max-height:24px;height:auto;border:0;display:inline-block;vertical-align:middle;">'
+        f'</div>'
+    )
 
 # ----------------- sender (uses the chosen_link exactly) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, link_text: str, link_color: str):
