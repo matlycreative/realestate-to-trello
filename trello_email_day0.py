@@ -381,7 +381,7 @@ def wrap_html(inner: str) -> str:
     bar_color_bottom = "#292929"
 
     header_logo_url = (
-        "http://matlycreative.com/wp-content/uploads/2025/11/matly_creative_logo_white_email_signature.png"
+        "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
     )
 
     return f"""
@@ -394,7 +394,7 @@ def wrap_html(inner: str) -> str:
           <td style="padding:14px 24px;background:{bar_color_top};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:80px;display:inline-block;border:0;">
+                 style="max-height:100px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
@@ -416,7 +416,7 @@ def wrap_html(inner: str) -> str:
 """.strip()
 
 # ----------------- signature (no 'Email me' line) -----------------
-SIGNATURE_LOGO_URL    = "http://matlycreative.com/wp-content/uploads/2025/11/matly_creative_logo_white_email_signature.png"
+SIGNATURE_LOGO_URL    = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
 SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
 SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "100"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
@@ -424,7 +424,7 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
     # Logo URL used for the signature
-    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/matly_creative_logo_white_email_signature.png"
+    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
     if not logo_url:
         return ""
 
