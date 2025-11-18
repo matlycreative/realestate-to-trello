@@ -45,7 +45,7 @@ jobs:
       # Links (use your domain)
       PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.com
       PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}                         # force fallback to PUBLIC_BASE
-      LINK_TEXT: "our portfolio"
+      LINK_TEXT: "Our Portfolio"
       LINK_COLOR: "#858585"
       # DAY0 templates (read by the script)
       SUBJECT_A: ${{ secrets.SUBJECT_A_DAY0 }}
@@ -69,7 +69,7 @@ jobs:
       # Marker/cache
       SENT_MARKER_TEXT: "Sent: DAY0"
       SENT_CACHE_FILE: ".data/.sent_DAY0.json"
-
+      
       # Template + link behavior
       USE_ENV_TEMPLATES: "1"
       USE_API_LINK: "0"
