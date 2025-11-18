@@ -381,8 +381,7 @@ def wrap_html(inner: str) -> str:
     bar_color_bottom = "#292929"
 
     header_logo_url = (
-        SIGNATURE_LOGO_URL
-        or "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+        "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     )
 
     return f"""
@@ -395,7 +394,7 @@ def wrap_html(inner: str) -> str:
           <td style="padding:14px 24px;background:{bar_color_top};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:28px;display:inline-block;border:0;">
+                 style="max-height:32px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
@@ -408,7 +407,7 @@ def wrap_html(inner: str) -> str:
         </tr>
         <!-- Bottom bar (no logo) -->
         <tr>
-          <td style="padding:0;background:{bar_color_bottom};height:18px;line-height:0;font-size:0;">&nbsp;</td>
+          <td style="padding:0;background:{bar_color_bottom};height:24px;line-height:0;font-size:0;">&nbsp;</td>
         </tr>
       </table>
     </td>
