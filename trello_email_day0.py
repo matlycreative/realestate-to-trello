@@ -436,7 +436,7 @@ def signature_html(logo_cid: str | None) -> str:
     <td align="left" style="padding:0;">
       <img src="%s"
            alt="Matly Creative"
-           style="max-width:160px;height:auto;border:0;display:block;vertical-align:middle;">
+           style="max-width:100px;height:auto;border:0;display:block;vertical-align:middle;">
     </td>
   </tr>
 </table>
