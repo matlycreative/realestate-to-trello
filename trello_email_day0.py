@@ -431,7 +431,7 @@ def signature_html(logo_cid: str | None) -> str:
     # Use a table row so email clients respect left alignment
     return (
         """
-<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;">
+<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
   <tr>
     <td align="left" style="padding:0;">
       <img src="%s"
