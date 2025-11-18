@@ -428,13 +428,19 @@ def signature_html(logo_cid: str | None) -> str:
     if not logo_url:
         return ""
 
-    # Force a full-width row and left alignment, same as the body text
+    # Use a table row so email clients respect left alignment
     return (
-        f'<div style="margin-top:26px;width:100%;text-align:left;">'
-        f'  <img src="{html.escape(logo_url)}" '
-        f'       alt="Matly Creative" '
-        f'       style="max-width:160px;height:auto;border:0;display:inline-block;vertical-align:middle;">'
-        f'</div>'
+        """
+<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;">
+  <tr>
+    <td align="left" style="padding:0;">
+      <img src="%s"
+           alt="Matly Creative"
+           style="max-width:160px;height:auto;border:0;display:block;vertical-align:middle;">
+    </td>
+  </tr>
+</table>
+""" % html.escape(logo_url)
     )
 
 # ----------------- sender (uses the chosen_link exactly) -----------------
