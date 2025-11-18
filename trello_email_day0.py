@@ -377,7 +377,7 @@ def wrap_html(inner: str) -> str:
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
-    bar_color_top = (ACCENT_COLOR or LINK_COLOR or "#676767")
+    bar_color_top = "#292929"
     bar_color_bottom = "#292929"
 
     header_logo_url = (
