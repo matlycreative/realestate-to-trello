@@ -122,7 +122,7 @@ Would you be open to testing this on one upcoming property?
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi {first}
+"""Hi {first},
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
@@ -157,7 +157,7 @@ Would you be open to testing this on one upcoming property?
 
 Best,
 Matthieu from Matly"""
-    BODY_B = """Hi {first}
+    BODY_B = """Hi {first},
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
