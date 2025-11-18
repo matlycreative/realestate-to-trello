@@ -412,7 +412,7 @@ def wrap_html(inner: str) -> str:
         <!-- Bottom bar with logo -->
         <tr>
           <td style="padding:0;background:{bar_color_bottom};text-align:center;">
-            <div style="padding:12px 24px;">
+            <div style="padding:14px 24px;">
               <img src="{html.escape(header_logo_url)}"
                    alt="Matly Creative"
                    style="max-height:24px;height:auto;border:0;display:inline-block;vertical-align:middle;">
