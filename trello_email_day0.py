@@ -429,6 +429,7 @@ def signature_html(logo_cid: str | None) -> str:
     # The -30px side margins cancel the td padding (30px) so it "bleeds" to the card edges
     return (
         f'<div style="'
+        f'margin:26px -30px 0 -30px;'
         f'background:#292929;'
         f'text-align:center;'
         f'padding:12px 24px;'
@@ -490,10 +491,9 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
 
     # Signature (still inner)
     logo_cid = "siglogo@local"
-    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE and SIGNATURE_LOGO_URL else None)
-
-    # Wrap in Matly card
-    html_full = wrap_html(html_core_inner + sig_inner)
+    
+    # Bottom bar is handled inside wrap_html
+    html_full = wrap_html(html_core_inner)
 
     # ----- Build message -----
     msg = EmailMessage()
