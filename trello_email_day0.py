@@ -377,7 +377,7 @@ def wrap_html(inner: str) -> str:
     )
 
     # Header bar color: accent > link > fallback
-    bar_color = LINK_COLOR or "#676767"
+    bar_color = "#858585"
 
     # Use the same logo as signature if set, otherwise default
     header_logo_url = (
@@ -392,10 +392,10 @@ def wrap_html(inner: str) -> str:
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:760px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
         <!-- Top colored box with logo -->
         <tr>
-          <td style="padding:14px 24px;background:{bar_color};text-align:center;">
+          <td style="padding:24px 24px;background:{bar_color};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:28px;display:inline-block;border:0;">
+                 style="max-height:60px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
