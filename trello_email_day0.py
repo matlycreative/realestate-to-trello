@@ -365,7 +365,7 @@ def text_to_html(text: str) -> str:
 def wrap_html(inner: str) -> str:
     """
     Wrap inner HTML in a centered Matly-style dark card,
-    with a colored header box (logo) at the top and a bar with the logo at the bottom.
+    with a colored header box (logo) at the top and a plain bar at the bottom.
     """
     inner = inner or ""
     wrapper_style = (
@@ -377,14 +377,12 @@ def wrap_html(inner: str) -> str:
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
-    # Header bar color: accent > link > fallback
-    bar_color_top = "#292929"
-    # Bottom bar color
+    bar_color_top = (ACCENT_COLOR or LINK_COLOR or "#676767")
     bar_color_bottom = "#292929"
 
-    # Logo URL (same for top and bottom)
     header_logo_url = (
-        "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+        SIGNATURE_LOGO_URL
+        or "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     )
 
     return f"""
@@ -408,15 +406,9 @@ def wrap_html(inner: str) -> str:
             </div>
           </td>
         </tr>
-        <!-- Bottom bar with logo -->
+        <!-- Bottom bar (no logo) -->
         <tr>
-          <td style="padding:0;background:{bar_color_bottom};text-align:center;">
-            <div style="padding:14px 24px;">
-              <img src="{html.escape(header_logo_url)}"
-                   alt="Matly Creative"
-                   style="max-height:24px;height:auto;border:0;display:inline-block;vertical-align:middle;">
-            </div>
-          </td>
+          <td style="padding:0;background:{bar_color_bottom};height:18px;line-height:0;font-size:0;">&nbsp;</td>
         </tr>
       </table>
     </td>
@@ -432,23 +424,17 @@ SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in 
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
-    # Same logo as before
-    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+    # Logo URL used for the signature
+    logo_url = SIGNATURE_LOGO_URL or "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if not logo_url:
         return ""
 
-    # This creates a full-width bar inside the card, visually like the top bar
-    # The -30px side margins cancel the td padding (30px) so it "bleeds" to the card edges
+    # Left-aligned logo, same width as text column
     return (
-        f'<div style="'
-        f'margin:26px -30px 0 -30px;'
-        f'background:#292929;'
-        f'text-align:center;'
-        f'padding:12px 24px;'
-        f'">'
+        f'<div style="margin-top:26px;">'
         f'<img src="{html.escape(logo_url)}" '
         f'alt="Matly Creative" '
-        f'style="max-height:24px;height:auto;border:0;display:inline-block;vertical-align:middle;">'
+        f'style="max-width:160px;height:auto;border:0;display:block;vertical-align:middle;">'
         f'</div>'
     )
 
