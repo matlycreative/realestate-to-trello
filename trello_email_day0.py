@@ -363,7 +363,8 @@ def text_to_html(text: str) -> str:
 
 def wrap_html(inner: str) -> str:
     """
-    Wrap inner HTML in a centered Matly-style dark card.
+    Wrap inner HTML in a centered Matly-style dark card,
+    with a colored header box containing the logo.
     """
     inner = inner or ""
     wrapper_style = (
@@ -375,11 +376,29 @@ def wrap_html(inner: str) -> str:
         "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
     )
 
+    # Header bar color: accent > link > fallback
+    bar_color = ACCENT_COLOR or LINK_COLOR or "#676767"
+
+    # Use the same logo as signature if set, otherwise default
+    header_logo_url = (
+        SIGNATURE_LOGO_URL
+        or "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
+    )
+
     return f"""
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FCFCFC;padding:24px 24px;">
   <tr>
     <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:760px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#1e1e1e,#1e1e1e);border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:760px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
+        <!-- Top colored box with logo -->
+        <tr>
+          <td style="padding:14px 24px;background:{bar_color};text-align:center;">
+            <img src="{html.escape(header_logo_url)}"
+                 alt="Matly Creative"
+                 style="max-height:28px;display:inline-block;border:0;">
+          </td>
+        </tr>
+        <!-- Main content -->
         <tr>
           <td style="padding:30px 30px 30px 30px;">
             <div style="{wrapper_style}">
