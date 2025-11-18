@@ -377,7 +377,7 @@ def wrap_html(inner: str) -> str:
     )
 
     # Header bar color: accent > link > fallback
-    bar_color = "#858585"
+    bar_color = "#292929"
 
     # Use the same logo as signature if set, otherwise default
     header_logo_url = (
