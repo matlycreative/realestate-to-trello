@@ -87,6 +87,7 @@ INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
 
+
 # Send control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
@@ -364,7 +365,7 @@ def text_to_html(text: str) -> str:
 def wrap_html(inner: str) -> str:
     """
     Wrap inner HTML in a centered Matly-style dark card,
-    with a colored header box containing the logo.
+    with a colored header box (logo) at the top and a bar with the logo at the bottom.
     """
     inner = inner or ""
     wrapper_style = (
@@ -377,9 +378,11 @@ def wrap_html(inner: str) -> str:
     )
 
     # Header bar color: accent > link > fallback
-    bar_color = "#292929"
+    bar_color_top = "#292929"
+    # Bottom bar color
+    bar_color_bottom = "#292929"
 
-    # Use the same logo as signature if set, otherwise default
+    # Logo URL (same for top and bottom)
     header_logo_url = (
         SIGNATURE_LOGO_URL
         or "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
@@ -392,10 +395,10 @@ def wrap_html(inner: str) -> str:
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:760px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
         <!-- Top colored box with logo -->
         <tr>
-          <td style="padding:24px 24px;background:{bar_color};text-align:center;">
+          <td style="padding:14px 24px;background:{bar_color_top};text-align:center;">
             <img src="{html.escape(header_logo_url)}"
                  alt="Matly Creative"
-                 style="max-height:120px;display:inline-block;border:0;">
+                 style="max-height:28px;display:inline-block;border:0;">
           </td>
         </tr>
         <!-- Main content -->
@@ -403,6 +406,16 @@ def wrap_html(inner: str) -> str:
           <td style="padding:30px 30px 30px 30px;">
             <div style="{wrapper_style}">
               {inner}
+            </div>
+          </td>
+        </tr>
+        <!-- Bottom bar with logo -->
+        <tr>
+          <td style="padding:0;background:{bar_color_bottom};text-align:center;">
+            <div style="padding:12px 24px;">
+              <img src="{html.escape(header_logo_url)}"
+                   alt="Matly Creative"
+                   style="max-height:24px;height:auto;border:0;display:inline-block;vertical-align:middle;">
             </div>
           </td>
         </tr>
