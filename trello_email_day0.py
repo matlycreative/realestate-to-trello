@@ -418,7 +418,7 @@ def wrap_html(inner: str) -> str:
 # ----------------- signature (no 'Email me' line) -----------------
 SIGNATURE_LOGO_URL    = "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
 SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
+SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "100"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
 SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
@@ -428,12 +428,12 @@ def signature_html(logo_cid: str | None) -> str:
     if not logo_url:
         return ""
 
-    # Left-aligned logo, same width as text column
+    # Force a full-width row and left alignment, same as the body text
     return (
-        f'<div style="margin-top:26px;">'
-        f'<img src="{html.escape(logo_url)}" '
-        f'alt="Matly Creative" '
-        f'style="max-width:160px;height:auto;border:0;display:block;vertical-align:middle;">'
+        f'<div style="margin-top:26px;width:100%;text-align:left;">'
+        f'  <img src="{html.escape(logo_url)}" '
+        f'       alt="Matly Creative" '
+        f'       style="max-width:160px;height:auto;border:0;display:inline-block;vertical-align:middle;">'
         f'</div>'
     )
 
