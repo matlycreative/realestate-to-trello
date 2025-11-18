@@ -111,7 +111,7 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients : {extra} : {link}.
 
 {extra}
 
@@ -128,7 +128,7 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients : {extra} : {link}.
 
 {extra}
 
@@ -147,7 +147,7 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients : {extra} : {link}.
 
 {extra}
 
@@ -163,7 +163,7 @@ I’ve been looking at {company}’s listings and you’re working with some rea
 
 We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients : {extra} : {link}.
 
 {extra}
 
