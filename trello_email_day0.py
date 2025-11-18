@@ -109,9 +109,9 @@ if USE_ENV_TEMPLATES:
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
-we are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
 
 {extra}
 
@@ -126,9 +126,9 @@ Matthieu from Matly""")
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
-we are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
 
 {extra}
 
@@ -145,9 +145,9 @@ else:
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
-we are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
 
 {extra}
 
@@ -161,9 +161,9 @@ Matthieu from Matly"""
 
 I’ve been looking at {company}’s listings and you’re working with some really strong properties.
 
-we are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+We are a video editing company who works specifically with real estate agents and agencies: you send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}
+Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
 
 {extra}
 
