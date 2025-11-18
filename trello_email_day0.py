@@ -486,11 +486,12 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
         upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}" style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;">here</a>'
         html_core_inner = html_core_inner.replace("[here]", upload_anchor)
 
-    # Signature (still inner)
+    # Signature inside the content
     logo_cid = "siglogo@local"
-    
-    # Bottom bar is handled inside wrap_html
-    html_full = wrap_html(html_core_inner)
+    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE else None)
+
+    # Wrap in Matly card (top logo + bottom bar)
+    html_full = wrap_html(html_core_inner + sig_inner)
 
     # ----- Build message -----
     msg = EmailMessage()
