@@ -422,14 +422,25 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 def signature_html(logo_cid: str | None) -> str:
     parts = []
 
-    # Optional logo under the text (use your actual URL)
+    # Boxed, centered logo at the bottom
     logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
     if logo_url:
         parts.append(
-            f'<div style="margin-top:22px;">'
-            f'<img src="{html.escape(logo_url)}" alt="Matly Creative" '
-            f'style="max-width:160px;height:auto;border:0;display:block;">'
-            f'</div>'
+            f'''
+<div style="margin-top:26px;width:100%;text-align:center;">
+  <div style="
+      display:inline-block;
+      padding:10px 18px;
+      background:#292929;
+      border-radius:999px;
+      border:1px solid #000000;
+  ">
+    <img src="{html.escape(logo_url)}"
+         alt="Matly Creative"
+         style="max-height:22px;height:auto;border:0;display:inline-block;vertical-align:middle;">
+  </div>
+</div>
+'''.strip()
         )
 
     return "".join(parts)
