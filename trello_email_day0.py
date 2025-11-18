@@ -416,7 +416,7 @@ def wrap_html(inner: str) -> str:
 """.strip()
 
 # ----------------- signature (no 'Email me' line) -----------------
-SIGNATURE_LOGO_URL    = os.getenv("SIGNATURE_LOGO_URL", "").strip()
+SIGNATURE_LOGO_URL    = "https://matlycreative.com/wp-content/uploads/2025/11/email-signature.png"
 SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
 SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "200"))
 SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
