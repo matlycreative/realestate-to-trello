@@ -429,7 +429,6 @@ def signature_html(logo_cid: str | None) -> str:
     # The -30px side margins cancel the td padding (30px) so it "bleeds" to the card edges
     return (
         f'<div style="'
-        f'margin:26px -30px 0 -30px;'
         f'background:#292929;'
         f'text-align:center;'
         f'padding:12px 24px;'
