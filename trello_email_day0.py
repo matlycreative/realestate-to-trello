@@ -85,7 +85,7 @@ READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 # Link look
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
-LINK_COLOR        = _get_env("LINK_COLOR", default="#1a73e8")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#CECECF")
 
 # Send control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
