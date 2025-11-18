@@ -312,14 +312,23 @@ def _api_ready(pid: str) -> bool:
         return False
 
 def is_sample_ready(pid: str) -> bool:
+    """Sample is READY if either:
+    - pointer says it's ready, OR
+    - /api/sample returns a non-empty src/url (fallback).
+    """
+    # 1) Prefer pointer if configured
     if MATLY_POINTER_BASE:
-        ok = _pointer_ready(pid)
-        log(f"[ready pointer] id={pid} -> {ok}")
-        return ok
-    ok = _api_ready(pid)
-    log(f"[ready api] id={pid} -> {ok}")
-    return ok
+        ok_pointer = _pointer_ready(pid)
+        log(f"[ready pointer] id={pid} -> {ok_pointer}")
+        if ok_pointer:
+            return True
+        else:
+            log(f"[ready pointer] id={pid} not ready, falling back to /api/sample")
 
+    # 2) Fallback: /api/sample
+    ok_api = _api_ready(pid)
+    log(f"[ready api] id={pid} -> {ok_api}")
+    return ok_api
 # ----------------- templating -----------------
 def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
     def repl(m):
