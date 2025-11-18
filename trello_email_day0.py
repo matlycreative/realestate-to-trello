@@ -376,10 +376,10 @@ def wrap_html(inner: str) -> str:
     )
 
     return f"""
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;padding:24px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#D1D1D1;padding:24px 16px;">
   <tr>
     <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#191919,#191919);border:2px solid #000000;box-shadow:0 18px 45px rgba(0,0,0,.45);">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:680px;border-radius:18px;overflow:hidden;background:linear-gradient(180deg,#535353,#535353);border:4px solid #000000;box-shadow:0 18px 45px rgba(0,0,0,.45);">
         <tr>
           <td style="padding:24px 24px 18px 24px;">
             <div style="{wrapper_style}">
