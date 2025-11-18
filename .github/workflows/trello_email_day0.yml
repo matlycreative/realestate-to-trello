@@ -45,7 +45,7 @@ jobs:
       # Links (use your domain)
       PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}   # e.g. https://matlycreative.com
       PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}                         # force fallback to PUBLIC_BASE
-      LINK_TEXT: "My portfolio"
+      LINK_TEXT: "Our Portfolio"
       LINK_COLOR: ${{ secrets.LINK_COLOR }}
 
       # DAY0 templates (read by the script)
