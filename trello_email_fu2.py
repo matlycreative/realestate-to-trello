@@ -370,7 +370,7 @@ def wrap_html(inner: str) -> str:
     """
     Wrap inner HTML in a centered Matly-style dark card,
     with a colored header box (logo) at the top and a plain bar at the bottom.
-    (Identical visual to Day-0 & FU1.)
+    (Identical visual to Day-0 & FU1, with clickable top logo.)
     """
     inner = inner or ""
     wrapper_style = (
@@ -397,9 +397,11 @@ def wrap_html(inner: str) -> str:
         <!-- Top colored box with logo -->
         <tr>
           <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
-            <img src="{html.escape(header_logo_url)}"
-                 alt="Matly Creative"
-                 style="max-height:90px;display:inline-block;border:0;">
+            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+              <img src="{html.escape(header_logo_url)}"
+                   alt="Matly Creative"
+                   style="max-height:90px;display:inline-block;border:0;">
+            </a>
           </td>
         </tr>
         <!-- Main content -->
@@ -429,19 +431,22 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
     # Logo URL used for the signature
-    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
+    logo_url = SIGNATURE_LOGO_URL or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
     if not logo_url:
         return ""
 
-    # Use a table row so email clients respect left alignment (same as Day-0/FU1)
+    # Use a table row so email clients respect left alignment (same as Day-0/FU1),
+    # with clickable logo to matlycreative.com
     return (
         """
 <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
   <tr>
     <td align="left" style="padding:0;">
-      <img src="%s"
-           alt="Matly Creative"
-           style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
+      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+        <img src="%s"
+             alt="Matly Creative"
+             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
+      </a>
     </td>
   </tr>
 </table>
