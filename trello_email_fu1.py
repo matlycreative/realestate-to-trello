@@ -120,7 +120,7 @@ Would you be open to testing this on one upcoming property?
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi there,
+"""Hi {first},
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
