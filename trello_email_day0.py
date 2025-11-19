@@ -289,14 +289,8 @@ def is_sample_ready(pid: str) -> bool:
 
 
 # ----------------- templating -----------------
-def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
-    def repl(m):
-        key = m.group(1).strip().lower()
-        if key == "company":   return company or ""
-        if key == "first":     return first or ""
-        if key == "from_name": return from_name or ""
-# ----------------- templating -----------------
-def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: str = "", extra: str = "") -> str:
+def fill_template(tpl: str, *, company: str, first: str, from_name: str,
+                  link: str = "", extra: str = "") -> str:
     def repl(m):
         key = m.group(1).strip().lower()
         if key == "company":   return company or ""
@@ -307,7 +301,8 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str, link: s
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
-def fill_template_skip_extra(tpl: str, *, company: str, first: str, from_name: str, link: str) -> str:
+def fill_template_skip_extra(tpl: str, *, company: str, first: str,
+                             from_name: str, link: str) -> str:
     def repl(m):
         key = m.group(1).strip().lower()
         if key == "company":   return company or ""
@@ -391,11 +386,12 @@ def wrap_html(inner: str) -> str:
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:720px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
         <!-- Top colored box with logo -->
         <tr>
-         <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-          <img src="{html.escape(header_logo_url)}"
-           alt="Matly Creative"
-           style="max-height:90px;display:inline-block;border:0;">
-        </a>
+          <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
+            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+              <img src="{html.escape(header_logo_url)}"
+                   alt="Matly Creative"
+                   style="max-height:90px;display:inline-block;border:0;">
+            </a>
           </td>
         </tr>
         <!-- Main content -->
@@ -425,7 +421,7 @@ SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
 
 def signature_html(logo_cid: str | None) -> str:
     # Logo URL used for the signature
-    logo_url = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
+    logo_url = SIGNATURE_LOGO_URL or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
     if not logo_url:
         return ""
 
@@ -435,9 +431,11 @@ def signature_html(logo_cid: str | None) -> str:
 <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
   <tr>
     <td align="left" style="padding:0;">
-      <img src="%s"
-           alt="Matly Creative"
-           style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
+      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+        <img src="%s"
+             alt="Matly Creative"
+             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
+      </a>
     </td>
   </tr>
 </table>
@@ -486,11 +484,18 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     if full:
         style_attr = f' style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;"'
         anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        html_core_inner = html_core_inner.replace(MARK, anchor) if MARK in html_core_inner else (html_core_inner + f"<p style=\"margin:0 0 14px 0;\">{anchor}</p>")
+        html_core_inner = (
+            html_core_inner.replace(MARK, anchor)
+            if MARK in html_core_inner
+            else (html_core_inner + f"<p style=\"margin:0 0 14px 0;\">{anchor}</p>")
+        )
 
     # Convert [here] into clickable upload link
     if "[here]" in html_core_inner:
-        upload_anchor = f'<a href="{html.escape(UPLOAD_URL, quote=True)}" style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;">here</a>'
+        upload_anchor = (
+            f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
+            f'style="color:{html.escape(link_color or LINK_COLOR)};text-decoration:underline;">here</a>'
+        )
         html_core_inner = html_core_inner.replace("[here]", upload_anchor)
 
     # Signature inside the content
