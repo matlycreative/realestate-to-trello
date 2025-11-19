@@ -111,7 +111,7 @@ if USE_ENV_TEMPLATES:
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
 
 {extra}
 
@@ -124,7 +124,7 @@ Matthieu from Matly""")
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live: {extra}: {link}
 
 {extra}
 
@@ -137,7 +137,9 @@ else:
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
     BODY_A = """Hi there,
 
-Just following up in case you didn’t get a chance to look at our portfolio yet — we handle the editing for your listing videos so you can focus on getting more properties live {extra}: {link}
+Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+
+We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
 
 {extra}
 
@@ -145,7 +147,9 @@ Best,
 Matthieu from Matly"""
     BODY_B = """Hi {first},
 
-Just following up in case you didn’t get a chance to look at our portfolio yet — we handle the editing for your listing videos so you can focus on getting more properties live{extra}: {link}
+Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+
+We handle the editing for your listing videos so you can focus on getting more properties live: {extra}: {link}
 
 {extra}
 
