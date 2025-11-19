@@ -113,7 +113,7 @@ Just following up in case you didn’t get a chance to review the listing video 
 
 We handle the editing for your listing videos so you can focus on getting more properties live.
 
-You can see your sample and portfolio here: {extra}: {link}
+You can see your free sample and our portfolio here: {extra}: {link}
 
 {extra}
 
@@ -128,7 +128,7 @@ Just following up on the portfolio I shared with you.
 
 We handle the editing for your listing videos so you can focus on getting more properties live.
 
-You can see your sample and portfolio here: {extra}: {link}
+You can see your free sample and our portfolio here: {extra}: {link}
 
 {extra}
 
