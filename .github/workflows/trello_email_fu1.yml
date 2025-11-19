@@ -47,8 +47,8 @@ jobs:
       PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
       # Force fallback to PUBLIC_BASE by leaving this empty
       PORTFOLIO_URL: ""
-      LINK_TEXT: "My portfolio"
-      LINK_COLOR: ${{ secrets.LINK_COLOR }}
+      LINK_TEXT: "Our Portfolio"
+      LINK_COLOR: "#858585"
 
       # FU1 templates (the script reads these)
       SUBJECT_A: ${{ secrets.SUBJECT_A_FU1 }}
