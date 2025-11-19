@@ -109,9 +109,9 @@ if USE_ENV_TEMPLATES:
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
 
-{extra3}
+Just following up in case you didn’t get a chance to look at what I sent over.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -122,11 +122,9 @@ Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
 """Hi {first},
 
-Just following up on the portfolio I shared with you.
+Just following up in case you didn’t get a chance to look at what I sent over.
 
-We handle the editing for your listing videos so you can focus on getting more properties live.
-
-You can see your free sample and our portfolio here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -139,13 +137,13 @@ else:
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
     BODY_A = """Hi there,
 
-Just following up on the portfolio I shared with you.
+Just following up in case you didn’t get a chance to look at what I sent over.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. 
-
-You can see a few examples here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
+
+Would you be open to testing this on one upcoming property?
 
 Best,
 Matthieu from Matly"""
@@ -153,9 +151,9 @@ Matthieu from Matly"""
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. 
+Just following up in case you didn’t get a chance to look at what I sent over.
 
-You can see a few examples here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -627,11 +625,11 @@ def main():
         )
 
         # FU1 wording:
-        extra_ready = "You can see your free sample and our portfolio here:"
+        extra_ready = "There’s also a free sample made with your content."
         # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
         extra_wait  = (
-            "if you can send me 2–3 raw clips, I can make you a sample at no cost "
-            "(free) — upload them [here]."
+            "If you can send over 2–3 raw clips, I can cut a free sample so you can see how it "
+               "would look on one of your own listings — you can upload them [here]."
         )
 
         body = fill_with_four_extras(
