@@ -632,7 +632,7 @@ def main():
                "would look on one of your own listings — you can upload them [here]."
         )
 
-        body = fill_with_four_extras(
+        body = fill_with_two_extras(
             body_tpl, company=company, first=first, from_name=FROM_NAME,
             link=chosen_link, is_ready=ready,
             extra_ready=extra_ready, extra_wait=extra_wait_ready,
