@@ -111,7 +111,7 @@ if USE_ENV_TEMPLATES:
 
 I know your inbox is busy, so I’ll keep this short.
 
-I shared some examples of listing videos recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -126,7 +126,7 @@ Matthieu from Matly""")
 
 I know your inbox is busy, so I’ll keep this short.
 
-I shared some examples of listing videos recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -143,7 +143,7 @@ else:
 
 I know your inbox is busy, so I’ll keep this short.
 
-I shared some examples of listing videos recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -157,7 +157,7 @@ Matthieu from Matly"""
 
 I know your inbox is busy, so I’ll keep this short.
 
-I shared some examples of listing videos recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
 
 {extra}
 
@@ -633,7 +633,7 @@ def main():
         )
 
         # FU2 wording:
-        extra_ready = "There’s already a free sample live using your own content."
+        extra_ready = "There’s already a free sample live using your own footage."
         # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
         extra_wait  = (
             "If you’d like to see how this would look on one of your own listings, "
