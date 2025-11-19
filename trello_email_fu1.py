@@ -109,7 +109,7 @@ if USE_ENV_TEMPLATES:
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
 
-{extra2} {extra3}
+{extra3}
 
 We handle the editing for your listing videos so you can focus on getting more properties live. {extra}: {link}
 
@@ -320,17 +320,17 @@ EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
 def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
-    link: str, is_ready: bool, extra_ready extra2_ready: str, extra_wait extra2_wait: str
+    link: str, is_ready: bool, extra_ready: str, extra_wait: str
 ) -> str:
     base = fill_template_skip_extra(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready extra2_reay, base, count=1)
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
         step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
         step1 = EXTRA_TOKEN.sub("",         base, count=1)
-        step2 = EXTRA_TOKEN.sub(extra_wait extra2_wait, step1, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
     final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
@@ -633,13 +633,11 @@ def main():
             "if you can send me 2–3 raw clips, I can make you a sample at no cost "
             "(free) — upload them [here]."
         )
-        extra2_wait = (
-            "Just following up on the portfolio I shared with you."
 
         body = fill_with_four_extras(
             body_tpl, company=company, first=first, from_name=FROM_NAME,
             link=chosen_link, is_ready=ready,
-            extra_ready=extra_ready extra2_ready=extra2_ready, extra_wait=extra_wait_ready, extra2_wait=extra2_reay
+            extra_ready=extra_ready, extra_wait=extra_wait_ready,
         )
 
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
