@@ -109,9 +109,11 @@ if USE_ENV_TEMPLATES:
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
 
-Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+Just following up in case you didn’t get a chance to review the listing video sample I put together for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live.
+
+You can see your sample and portfolio here: {extra}: {link}
 
 {extra}
 
@@ -122,9 +124,11 @@ Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
 """Hi {first},
 
-Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+Just following up on the portfolio I shared with you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live.
+
+You can see your sample and portfolio here: {extra}: {link}
 
 {extra}
 
@@ -137,9 +141,11 @@ else:
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
     BODY_A = """Hi there,
 
-Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+Just following up on the portfolio I shared with you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. 
+
+You can see a few examples here: {extra}: {link}
 
 {extra}
 
@@ -149,7 +155,9 @@ Matthieu from Matly"""
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live. 
+
+You can see a few examples here: {extra}: {link}
 
 {extra}
 
