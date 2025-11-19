@@ -109,7 +109,9 @@ if USE_ENV_TEMPLATES:
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
 
-Just following up in case you didn’t get a chance to look yet {extra}: {link}
+Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+
+We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
 
 {extra}
 
