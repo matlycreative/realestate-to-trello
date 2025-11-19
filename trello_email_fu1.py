@@ -111,18 +111,24 @@ if USE_ENV_TEMPLATES:
 
 Just following up in case you didn’t get a chance to review the listing video sample I made for you.
 
-We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here: {extra}: {link}
+We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here {extra}: {link}
 
 {extra}
+
+Would you be open to testing this on one upcoming property?
 
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi {first},
+"""Hi there,
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+
+We handle the editing for your listing videos so you can focus on getting more properties live — you can see your sample and portfolio here {extra}: {link}
 
 {extra}
+
+Would you be open to testing this on one upcoming property?
 
 Best,
 Matthieu from Matly""")
@@ -131,7 +137,7 @@ else:
     SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
     BODY_A = """Hi there,
 
-Just following up in case you didn’t get a chance to look yet {extra}: {link}
+Just following up in case you didn’t get a chance to look at our portfolio yet — we handle the editing for your listing videos so you can focus on getting more properties live {extra}: {link}
 
 {extra}
 
@@ -139,9 +145,11 @@ Best,
 Matthieu from Matly"""
     BODY_B = """Hi {first},
 
-Just following up on the portfolio I shared {extra}: {link}
+Just following up in case you didn’t get a chance to look at our portfolio yet — we handle the editing for your listing videos so you can focus on getting more properties live{extra}: {link}
 
 {extra}
+
+Would you be open to testing this on one upcoming property?
 
 Best,
 Matthieu from Matly"""
@@ -609,7 +617,7 @@ def main():
         )
 
         # FU1 wording:
-        extra_ready = "there’s also a free sample made with your content"
+        extra_ready = ""
         # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
         extra_wait  = (
             "if you can send me 2–3 raw clips, I can make you a sample at no cost "
