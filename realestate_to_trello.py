@@ -53,7 +53,7 @@ def env_on(name, default=False):
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 60)     # 1/min
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
-QUALITY_MIN      = env_float("QUALITY_MIN", 3.0)
+QUALITY_MIN      = env_float("QUALITY_MIN", 2.0)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
