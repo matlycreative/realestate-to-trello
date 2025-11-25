@@ -86,6 +86,7 @@ STATS.setdefault("website_direct", 0)
 STATS.setdefault("website_overpass_name", 0)
 STATS.setdefault("website_nominatim", 0)
 STATS.setdefault("website_fsq", 0)
+STATS.setdefault("website_wikidata", 0)
 
 def dbg(msg):
     if DEBUG: print(msg)
@@ -549,6 +550,7 @@ def overpass_estate_agents(bbox):
         name = tags.get("name")
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
         email = tags.get("email") or tags.get("contact:email")
+        wikidata = tags.get("wikidata")
 
         lat = el.get("lat")
         lon = el.get("lon")
@@ -561,6 +563,7 @@ def overpass_estate_agents(bbox):
                 "business_name": name.strip(),
                 "website": normalize_url(website) if website else None,
                 "email": email,
+                "wikidata": wikidata, 
                 "lat": lat,
                 "lon": lon,
             })
@@ -742,14 +745,20 @@ def nominatim_lookup_website(name: str, city: str, country: str, limit: int = 5)
     except Exception:
         return None
     return None
-
-def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: float, direct: str | None) -> str | None:
+    
+def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: float, direct: str | None, wikidata_qid: str | None = None) -> str | None:
     """
     Multi-step resolver. Returns website or None.
     """
     w = normalize_url(direct)
     if w:
         STATS["website_direct"] += 1
+        return w
+
+    # Wikidata (if we have a QID from OSM tags)
+    w = wikidata_website_from_qid(wikidata_qid)
+    if w:
+        STATS["website_wikidata"] += 1
         return w
 
     w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
@@ -768,6 +777,30 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
         STATS["website_fsq"] += 1
         return w
 
+    return None
+
+
+@lru_cache(maxsize=4096)
+def wikidata_website_from_qid(qid: str) -> str | None:
+    # expects something like "Q12345"
+    if not qid or not qid.startswith("Q"):
+        return None
+    try:
+        r = SESS.get(f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json", timeout=20)
+        if r.status_code != 200:
+            return None
+        js = r.json()
+        ent = (js.get("entities") or {}).get(qid) or {}
+        claims = ent.get("claims") or {}
+
+        # P856 = official website
+        for cl in claims.get("P856", []):
+            dv = (((cl.get("mainsnak") or {}).get("datavalue") or {}).get("value") or "")
+            w = normalize_url(dv)
+            if w:
+                return w
+    except Exception:
+        return None
     return None
     
 # ---------- contact crawl ----------
@@ -1394,6 +1427,7 @@ def main():
                 lat=lat,
                 lon=lon,
                 direct=biz.get("website"),
+                wikidata_qid=biz.get("wikidata"),
             )
             if not website:
                 STATS["skip_no_website"] += 1
@@ -1482,10 +1516,11 @@ def main():
                 website = resolve_website(
                     biz_name=biz["business_name"],
                     city=city,
-                    country=country,
+                    country=country,   
                     lat=lat0,
                     lon=lon0,
                     direct=biz.get("website"),
+                    wikidata_qid=biz.get("wikidata"),
                 )
 
                 # keep your “email -> website” fallback if you want, but only if resolver failed
