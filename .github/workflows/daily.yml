@@ -3,7 +3,7 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * 1-5"   # 07:00 UTC daily
+    - cron: "0 4 * * 1-5" # 04:00 UTC Mon–Fri
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: "1"
-      DEBUG: "1"    
+      DEBUG: "1"
 
       # App secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
@@ -60,6 +60,9 @@ jobs:
       PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
 
+      # Optional: helps reduce website blocks
+      # USER_AGENT: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+
       # Force the script + commit step to use the same file path
       SEEN_FILE: .data/seen_domains.txt
 
@@ -70,7 +73,6 @@ jobs:
           persist-credentials: true
 
       - name: Set up Python
-        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -89,8 +91,7 @@ jobs:
 
       - name: Jitter start (scheduled runs only)
         if: ${{ github.event_name == 'schedule' }}
-        run: |
-          sleep $((RANDOM % 60 + 5))
+        run: sleep $((RANDOM % 60 + 5))
 
       - name: Preflight
         run: |
@@ -106,9 +107,8 @@ jobs:
               sys.exit(1)
           PY
 
-    - name: Show effective config (non-secret)
-      shell: bash
-      run: |
+      - name: Show effective config (non-secret)
+        run: |
           echo "REQUIRE_EXPLICIT_EMAIL=${REQUIRE_EXPLICIT_EMAIL:-unset}"
           echo "SKIP_GENERIC_EMAILS=${SKIP_GENERIC_EMAILS:-unset}"
           echo "REQUIRE_BUSINESS_DOMAIN=${REQUIRE_BUSINESS_DOMAIN:-unset}"
@@ -116,6 +116,7 @@ jobs:
           echo "QUALITY_MIN=${QUALITY_MIN:-unset}"
           echo "FOURSQUARE_API_KEY_SET=$([ -n "${FOURSQUARE_API_KEY:-}" ] && echo yes || echo no)"
           echo "USER_AGENT=${USER_AGENT:-unset}"
+
       - name: Run pipeline
         run: |
           set -euo pipefail
