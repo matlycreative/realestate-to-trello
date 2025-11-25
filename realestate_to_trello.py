@@ -57,7 +57,7 @@ QUALITY_MIN      = env_float("QUALITY_MIN", 2.0)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
-BUTLER_GRACE_S   = 20
+BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 20)
 
 # behavior / quality
 REQUIRE_EXPLICIT_EMAIL  = env_on("REQUIRE_EXPLICIT_EMAIL", False)
@@ -96,7 +96,7 @@ COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").s
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS = env_int("CITY_HOPS", 20)
+CITY_HOPS = env_int("CITY_HOPS", 8)
 OSM_RADIUS_M = env_int("OSM_RADIUS_M", 5000)  # 15km default
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
@@ -1622,75 +1622,88 @@ def main():
     if leads and last_city and last_country:
         append_csv(leads, last_city, last_country)
 
-    def push_one_lead(lead, seen: set) -> bool:
-    """
-    Push a single lead into the next blank Trello template card.
-    Returns True if pushed, False if not (e.g. no blank cards).
-    """
-    # Skip generic mailbox if configured
-    if SKIP_GENERIC_EMAILS and "@" in (lead.get("Email") or ""):
-        local = lead["Email"].split("@", 1)[0]
-        if is_generic_mailbox_local(local):
-            print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
+        # ---------- push helpers ----------
+    def push_one_lead(lead: dict, seen: set) -> bool:
+        """
+        Push a single lead into the next blank Trello template card.
+        Returns True if pushed, False if not (e.g. no blank cards).
+        """
+        # Skip generic mailbox if configured
+        if SKIP_GENERIC_EMAILS and "@" in (lead.get("Email") or ""):
+            local = lead["Email"].split("@", 1)[0]
+            if is_generic_mailbox_local(local):
+                print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}")
+                return False
+
+        empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
+        if not empties:
+            print("No empty template card available; skipping push.")
             return False
 
-    empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
-    if not empties:
-        print("No empty template card available; skipping push.")
-        return False
+        card_id = empties[0]
+        changed = update_card_header(
+            card_id=card_id,
+            company=lead["Company"],
+            email=lead["Email"],
+            website=lead["Website"],
+            new_name=lead["Company"],
+        )
 
-    card_id = empties[0]
-    changed = update_card_header(
-        card_id=card_id,
-        company=lead["Company"],
-        email=lead["Email"],
-        website=lead["Website"],
-        new_name=lead["Company"],
-    )
+        # Always persist domain (prefer what's on the card after update)
+        cur = trello_get_card(card_id)
+        website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
+        website_on_card = normalize_url(website_on_card)
+        site_dom = etld1_from_url(website_on_card)
 
-    # Always persist domain (from card Website if possible)
-    cur = trello_get_card(card_id)
-    website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
-    website_on_card = normalize_url(website_on_card)
-    site_dom = etld1_from_url(website_on_card)
+        if not site_dom:
+            em_dom = email_domain(lead.get("Email") or "")
+            if em_dom and not is_freemail(em_dom):
+                site_dom = em_dom
 
-    if not site_dom:
-        em_dom = email_domain(lead.get("Email") or "")
-        if em_dom and not is_freemail(em_dom):
-            site_dom = em_dom
+        if site_dom:
+            seen_domains(site_dom)
+            seen.add(site_dom)
 
-    if site_dom:
-        seen_domains(site_dom)
-        seen.add(site_dom)
+        if changed:
+            print(f"PUSHED ✅ q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
+            if ADD_SIGNALS_NOTE:
+                append_note(card_id, lead.get("signals", ""))
+        else:
+            print(f"UNCHANGED ℹ️ (still recorded domain) — {lead['Company']}")
 
-    if changed:
-        print(f"PUSHED ✅ q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
-        if ADD_SIGNALS_NOTE:
-            append_note(card_id, lead.get("signals",""))
-    else:
-        print(f"UNCHANGED ℹ️ (still recorded domain) — {lead['Company']}")
+        return True
 
-    return True
+    # ---------- push: paced ----------
+    pushed = 0
 
+    if leads:
+        leads.sort(key=lambda x: x.get("q", 0), reverse=True)
 
-# ---- Replace your existing "push: one per minute + grace" block with this ----
-pushed = 0
+    for lead in leads:
+        if pushed >= DAILY_LIMIT:
+            break
 
-# If you want: sort best-first before pushing
-if leads:
-    leads.sort(key=lambda x: x.get("q", 0), reverse=True)
+        ok = push_one_lead(lead, seen)
+        if ok:
+            pushed += 1
+            time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
 
-for lead in leads:
-    if pushed >= DAILY_LIMIT:
-        break
+    if DEBUG:
+        print("Skip summary:", json.dumps(STATS, indent=2))
 
-    ok = push_one_lead(lead, seen)
-    if ok:
-        pushed += 1
-        # Respect Trello pacing (this is your ~1/min rule)
-        time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
+    # --- once-a-day backfill from a Trello list (optional) ---
+    list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
+    try:
+        added = backfill_seen_from_list(list_for_backfill, seen)
+        print(f"Backfill: added {added} domain(s) from list {list_for_backfill}")
+    except Exception as e:
+        print(f"Backfill skipped due to error: {e}")
 
-print(f"Done. Leads pushed: {pushed}/{min(len(leads), DAILY_LIMIT)}")
+    # Canonicalize seen file (dedupe/sort) at the end
+    save_seen(seen)
+
+    print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}")
+    print(f"Done. Leads pushed: {pushed}/{min(len(leads), DAILY_LIMIT)}")
 
         # --- Always persist the domain to seen file (source = card Website) ---
         cur = trello_get_card(card_id)
