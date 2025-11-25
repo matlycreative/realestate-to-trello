@@ -286,8 +286,8 @@ def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
 OBFUSCATIONS = [
-    (r"\s*\[at\]\s*", "@"), (r"\s*\(at\)\s*", "@"), (r"\s+at\s+", "@"),
-    (r"\s*\[dot\]\s*", "."), (r"\s*\(dot\)\s*", "."), (r"\s+dot\s+", "."),
+    (r"\s*\[?\s*at\s*\]?\s*", "@"),  (r"\s*\(at\)\s*", "@"),  (r"\s+at\s+", "@"),
+    (r"\s*\[?\s*dot\s*\]?\s*", "."), (r"\s*\(dot\)\s*", "."), (r"\s+dot\s+", "."),
 ]
 
 def extract_emails_loose(text: str):
@@ -592,7 +592,8 @@ def gather_candidate_pages(base):
     pages = [base]
     common = ["/contact","/contact-us","/about","/about-us","/who-we-are","/our-story",
               "/team","/our-team","/agents","/our-agents","/brokers","/staff",
-              "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo"]
+              "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo",
+              "/legal","/privacy","/datenschutz","/mentions-legales"]
     for p in common: pages.append(urljoin(base, p))
     return pages
 
