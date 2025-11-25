@@ -59,27 +59,27 @@ def env_on(name, default=False):
 
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 15)
-PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 40)     # base pace (you also add BUTLER_GRACE_S)
-REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 1.0)
-QUALITY_MIN      = env_float("QUALITY_MIN", 2.0)
+PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 15)     # base pace (you also add BUTLER_GRACE_S)
+REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
+QUALITY_MIN      = env_float("QUALITY_MIN", 1.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
-BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 20)
+BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 10)
 
 # behavior / quality
-REQUIRE_EXPLICIT_EMAIL  = env_on("REQUIRE_EXPLICIT_EMAIL", False)
+REQUIRE_EXPLICIT_EMAIL  = env_on("REQUIRE_EXPLICIT_EMAIL", 0)
 ADD_SIGNALS_NOTE        = env_on("ADD_SIGNALS_NOTE", False)
-SKIP_GENERIC_EMAILS     = env_on("SKIP_GENERIC_EMAILS", False)
-REQUIRE_BUSINESS_DOMAIN = env_on("REQUIRE_BUSINESS_DOMAIN", False)
-ALLOW_FREEMAIL          = env_on("ALLOW_FREEMAIL", True)
+SKIP_GENERIC_EMAILS     = env_on("SKIP_GENERIC_EMAILS", 0)
+REQUIRE_BUSINESS_DOMAIN = env_on("REQUIRE_BUSINESS_DOMAIN", 0)
+ALLOW_FREEMAIL          = env_on("ALLOW_FREEMAIL", 1)
 FREEMAIL_EXTRA_Q        = env_float("FREEMAIL_EXTRA_Q", 0.3)
 
 # debug / performance
 DEBUG      = env_on("DEBUG", False)
-USE_WHOIS  = env_on("USE_WHOIS", False)
+USE_WHOIS  = env_on("USE_WHOIS", 0)
 
-VERIFY_MX  = env_on("VERIFY_MX", False)  # default OFF for volume
+VERIFY_MX  = env_on("VERIFY_MX", 0)  # default OFF for volume
 
 # pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
@@ -106,7 +106,7 @@ CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
 CITY_HOPS = env_int("CITY_HOPS", 8)
-OSM_RADIUS_M = env_int("OSM_RADIUS_M", 5000)
+OSM_RADIUS_M = env_int("OSM_RADIUS_M", 2500)
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -130,7 +130,7 @@ USE_ZEFIX           = env_on("USE_ZEFIX", False)
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
 
-MAX_CONTACT_PAGES = env_int("MAX_CONTACT_PAGES", 2)
+MAX_CONTACT_PAGES = env_int("MAX_CONTACT_PAGES", 1)
 
 # add retries for robustness — GET only (avoid retrying POST to Trello)
 try:
