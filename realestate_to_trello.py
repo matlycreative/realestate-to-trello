@@ -1622,7 +1622,7 @@ def main():
     if leads and last_city and last_country:
         append_csv(leads, last_city, last_country)
 
-        # ---------- push helpers ----------
+    # ---------- push helpers ----------
     def push_one_lead(lead: dict, seen: set) -> bool:
         """
         Push a single lead into the next blank Trello template card.
@@ -1704,53 +1704,6 @@ def main():
 
     print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}")
     print(f"Done. Leads pushed: {pushed}/{min(len(leads), DAILY_LIMIT)}")
-
-        # --- Always persist the domain to seen file (source = card Website) ---
-        cur = trello_get_card(card_id)
-        website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
-        website_on_card = normalize_url(website_on_card)
-        site_dom = etld1_from_url(website_on_card)
-
-        # Fallback to email's domain if it looks like a business domain
-        if not site_dom:
-            em_dom = email_domain(lead.get("Email") or "")
-            if em_dom and not is_freemail(em_dom):
-                site_dom = em_dom
-
-        if site_dom:
-            # Always append to file and ensure in-memory set
-            seen_domains(site_dom)
-            if site_dom not in seen:
-                seen.add(site_dom)
-            dbg(f"Ensured in seen + file: {site_dom}")
-
-        if changed:
-            pushed += 1
-            print(f"[{pushed}/{DAILY_LIMIT}] q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}")
-            if ADD_SIGNALS_NOTE:
-                append_note(card_id, lead.get("signals",""))
-            time.sleep(PUSH_INTERVAL_S + BUTLER_GRACE_S)
-        else:
-            print("Card unchanged; domain still added to seen (from card Website).")
-
-    if DEBUG:
-        print("Skip summary:", json.dumps(STATS, indent=2))
-
-    # --- once-a-day backfill from a Trello list (optional) ---
-    # If you have a separate “To Prospects” list, set TRELLO_LIST_ID_SEENSYNC as a secret.
-    list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
-    try:
-        added = backfill_seen_from_list(list_for_backfill, seen)
-        print(f"Backfill: added {added} domain(s) from list {list_for_backfill}")
-    except Exception as e:
-        print(f"Backfill skipped due to error: {e}")
-
-    # Canonicalize seen file (dedupe/sort) at the end
-    save_seen(seen)
-
-    # Helpful path heads-up
-    print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}")
-    print(f"Done. Leads pushed: {pushed}/{len(leads)}")
 
 if __name__ == "__main__":
     main()
