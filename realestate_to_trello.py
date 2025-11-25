@@ -10,7 +10,7 @@
 #   3) always persist domain to seen file (even if card unchanged)
 #   4) immediate append to seen_domains.txt when a lead is discovered and when pushed
 
-import os, re, json, time, random, csv, pathlib
+import os, re, json, time, random, csv, pathlib, html
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 import requests
@@ -51,7 +51,7 @@ def env_on(name, default=False):
 
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
-PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)     # 1/min
+PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 40)     # 1/min
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 4.0)
 QUALITY_MIN      = env_float("QUALITY_MIN", 2.0)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
@@ -111,6 +111,8 @@ USE_ZEFIX           = env_on("USE_ZEFIX", False)
 # ---------- HTTP ----------
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
+
+MAX_CONTACT_PAGES = env_int("MAX_CONTACT_PAGES", 8)
 
 # add retries for robustness — GET only (avoid retrying POST to Trello)
 try:
@@ -221,7 +223,7 @@ def iter_cities():
         for c in pool[:CITY_HOPS]:
             yield c
     else:
-        start = date.today().toordinal() % len(pool)
+        start = random.randint(0, len(pool) - 1)
         hops = min(CITY_HOPS, len(pool))
         for i in range(hops):
             yield pool[(start + i) % len(pool)]
@@ -253,20 +255,25 @@ def email_domain(email: str) -> str:
 
 @lru_cache(maxsize=4096)
 def _allowed_by_robots_cached(base: str, path: str, ua: str) -> bool:
-    # Fetch robots.txt with timeout and parse lines to avoid rp.read() blocking
     rp = robotparser.RobotFileParser()
     try:
         resp = SESS.get(urljoin(base, "/robots.txt"), timeout=10)
+        if resp.status_code != 200:
+            return True  # allow if robots.txt missing/blocked
         rp.parse(resp.text.splitlines())
     except Exception:
         return True  # default allow on failure
+
     return rp.can_fetch(ua, urljoin(base, path))
 
 def allowed_by_robots(base_url, path="/"):
     try:
         p = urlparse(base_url)
         base = f"{p.scheme}://{p.netloc}"
-        return _allowed_by_robots_cached(base, path or "/", UA)
+        path0 = path or "/"
+        if not path0.startswith("/"):
+            path0 = "/" + path0
+        return _allowed_by_robots_cached(base, path0, UA)
     except Exception:
         return True
 
@@ -284,9 +291,10 @@ OBFUSCATIONS = [
 ]
 
 def extract_emails_loose(text: str):
-    t2 = (text or "")
+    t2 = html.unescape(text or "")
     for pat, rep in OBFUSCATIONS:
         t2 = re.sub(pat, rep, t2, flags=re.I)
+    t2 = t2.replace("&#64;", "@").replace("&#46;", ".").replace("&#x40;", "@").replace("&#x2e;", ".")
     return list(set(m.group(0) for m in EMAIL_RE.finditer(t2)))
 
 # ---------- quality helpers ----------
@@ -349,6 +357,8 @@ def domain_has_dmarc(domain: str):
                 return True
     except Exception:
         return False
+
+    return False  # <- IMPORTANT (was missing)
 
 def domain_age_years(domain: str) -> float:
     if not domain or not USE_WHOIS or not pywhois:
@@ -523,10 +533,21 @@ def overpass_estate_agents(bbox):
         name = tags.get("name")
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
         email = tags.get("email") or tags.get("contact:email")
+
+        lat = el.get("lat")
+        lon = el.get("lon")
+        if (lat is None or lon is None) and isinstance(el.get("center"), dict):
+            lat = el["center"].get("lat")
+            lon = el["center"].get("lon")
+
         if name:
-            rows.append({"business_name": name.strip(),
-                         "website": normalize_url(website) if website else None,
-                         "email": email})
+            rows.append({
+                "business_name": name.strip(),
+                "website": normalize_url(website) if website else None,
+                "email": email,
+                "lat": lat,
+                "lon": lon,
+            })
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
@@ -575,12 +596,126 @@ def gather_candidate_pages(base):
     for p in common: pages.append(urljoin(base, p))
     return pages
 
-def crawl_contact(site_url):
+CONTACT_KEYWORDS = [
+    "contact", "kontakt", "impressum", "about", "ueber", "uber", "who-we-are",
+    "team", "agents", "brokers", "staff", "agency", "company", "legal", "privacy",
+    "mentions-legales", "equipe", "equipo"
+]
+
+def _same_host(url_a: str, url_b: str) -> bool:
+    try:
+        return urlparse(url_a).netloc.lower() == urlparse(url_b).netloc.lower()
+    except Exception:
+        return False
+
+def _score_contact_link(href: str, text: str) -> int:
+    h = (href or "").lower()
+    t = (text or "").lower()
+    score = 0
+    for kw in CONTACT_KEYWORDS:
+        if kw in h: score += 8
+        if kw in t: score += 5
+    score += max(0, 6 - h.count("/"))
+    if any(bad in h for bad in ["javascript:", "#", "tel:", "mailto:", ".jpg", ".png", ".pdf"]):
+        score -= 50
+    return score
+
+def discover_contact_urls_from_home(base_url: str, home_html: str, limit: int = 10) -> list:
+    if not home_html:
+        return []
+    soup = BeautifulSoup(home_html, "html.parser")
+    cand = {}
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "").strip()
+        if not href:
+            continue
+        abs_url = urljoin(base_url, href)
+        if not abs_url.lower().startswith(("http://", "https://")):
+            continue
+        if not _same_host(abs_url, base_url):
+            continue
+        text = a.get_text(" ", strip=True)
+        s = _score_contact_link(abs_url, text)
+        if s <= 0:
+            continue
+        cand[abs_url] = max(cand.get(abs_url, -10**9), s)
+
+    ranked = sorted(cand.items(), key=lambda kv: kv[1], reverse=True)
+    return [u for (u, _) in ranked[:limit]]
+
+def discover_sitemap_urls(base_url: str, limit: int = 10) -> list:
+    out = []
+    try:
+        p = urlparse(base_url)
+        root = f"{p.scheme}://{p.netloc}"
+        rob = SESS.get(urljoin(root, "/robots.txt"), timeout=10)
+        if rob.status_code == 200:
+            for line in rob.text.splitlines():
+                if line.lower().startswith("sitemap:"):
+                    sm = line.split(":", 1)[1].strip()
+                    if sm:
+                        out.append(sm)
+    except Exception:
+        pass
+
+    try:
+        p = urlparse(base_url)
+        root = f"{p.scheme}://{p.netloc}"
+        out.append(urljoin(root, "/sitemap.xml"))
+    except Exception:
+        pass
+
+    picked, seen = [], set()
+    for sm_url in out:
+        try:
+            r = SESS.get(sm_url, timeout=15)
+            if r.status_code != 200:
+                continue
+            urls = re.findall(r"<loc>\s*(https?://[^<\s]+)\s*</loc>", r.text, flags=re.I)
+            for u in urls:
+                ul = u.lower()
+                if any(k in ul for k in CONTACT_KEYWORDS):
+                    if _same_host(u, base_url) and u not in seen:
+                        picked.append(u); seen.add(u)
+                        if len(picked) >= limit:
+                            return picked
+        except Exception:
+            continue
+    return picked
+    
+def crawl_contact(site_url, home_html=None):
     out = {"email": ""}
     if not site_url:
         return out
 
-    for url in gather_candidate_pages(site_url):
+    candidates = []
+
+    # 0) links discovered from homepage
+    try:
+        if not home_html:
+            home_html = fetch(site_url).text
+        candidates += discover_contact_urls_from_home(site_url, home_html, limit=10)
+    except Exception:
+        pass
+
+    # 1) sitemap hints
+    try:
+        candidates += discover_sitemap_urls(site_url, limit=8)
+    except Exception:
+        pass
+
+    # 2) fallback: your static common paths
+    candidates += gather_candidate_pages(site_url)
+
+    # de-dup preserve order
+    seen_u, ordered = set(), []
+    for u in candidates:
+        if u and u not in seen_u:
+            ordered.append(u); seen_u.add(u)
+
+    for idx, url in enumerate(ordered):
+        if idx >= MAX_CONTACT_PAGES:
+            break
         base = f"{urlparse(url).scheme}://{urlparse(url).netloc}/"
         path = urlparse(url).path or "/"
         if not allowed_by_robots(base, path):
@@ -593,7 +728,13 @@ def crawl_contact(site_url):
             continue
 
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # start with emails from raw HTML (loose)
         emails = set(extract_emails_loose(resp.text))
+
+        # JSON-LD sometimes contains emails too
+        for sc in soup.find_all("script", type=lambda x: (x or "").lower() == "application/ld+json"):
+            emails.update(extract_emails_loose(sc.get_text(" ") or ""))
 
         # mailto: links
         for a in soup.select('a[href^="mailto:"]'):
@@ -837,9 +978,9 @@ def update_card_header(card_id, company, email, website, new_name=None):
     desc_old = cur["desc"]
     name_old = cur["name"]
 
-    # If email domain != site domain, normalize to info@site (when allowed)
+    # Only fallback to info@site if we have NO email at all (avoid overwriting real found emails)
     site_dom = etld1_from_url(website)
-    if site_dom and (not email_domain(email) or email_domain(email) != site_dom):
+    if site_dom and (not email or "@" not in email):
         if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
             email = f"info@{site_dom}"
 
@@ -860,7 +1001,8 @@ def update_card_header(card_id, company, email, website, new_name=None):
 
     r = SESS.put(
         f"https://api.trello.com/1/cards/{card_id}",
-        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, **payload},
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN},
+        data=payload,  # <-- send fields in request body, not URL
         timeout=30,
     )
     r.raise_for_status()
@@ -874,7 +1016,8 @@ def append_note(card_id, note):
     new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
     SESS.put(
         f"https://api.trello.com/1/cards/{card_id}",
-        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "desc": new_desc},
+        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN},
+        data={"desc": new_desc},
         timeout=30
     ).raise_for_status()
 
@@ -1054,6 +1197,7 @@ def main():
         for biz in off:
             if len(leads) >= DAILY_LIMIT: break
             website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+            website = normalize_url(website)
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
@@ -1061,7 +1205,9 @@ def main():
             if site_dom in seen:
                 STATS["skip_dupe_domain"] += 1
                 continue
-            if not allowed_by_robots(website, "/"):
+            p = urlparse(website)
+            base = f"{p.scheme}://{p.netloc}/"
+            if not allowed_by_robots(base, "/"):
                 STATS["skip_robots"] += 1
                 continue
             try:
@@ -1071,7 +1217,7 @@ def main():
                 continue
 
             soup_home = BeautifulSoup(home.text, "html.parser")
-            contact = crawl_contact(website)
+            contact = crawl_contact(website, home.text)
             email = (contact.get("email") or "").strip()
 
             # freemail / domain rules
@@ -1131,10 +1277,15 @@ def main():
 
             for biz in cands:
                 if len(leads) >= DAILY_LIMIT: break
-                website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
+                lat0 = biz.get("lat") or lat
+                lon0 = biz.get("lon") or lon
+                website = biz.get("website") or fsq_find_website(biz["business_name"], lat0, lon0)
+                website = normalize_url(website)
                 if not website and biz.get("email"):
                     dom0 = email_domain(biz["email"])
-                    if dom0 and not is_freemail(dom0): website = f"https://{dom0}"
+                    if dom0 and not is_freemail(dom0): 
+                        website = f"https://{dom0}"
+                website = normalize_url(website)
                 if not website:
                     STATS["skip_no_website"] += 1
                     continue
@@ -1142,7 +1293,9 @@ def main():
                 if site_dom in seen:
                     STATS["skip_dupe_domain"] += 1
                     continue
-                if not allowed_by_robots(website, "/"):
+                p = urlparse(website)
+                base = f"{p.scheme}://{p.netloc}/"
+                if not allowed_by_robots(base, "/"):
                     STATS["skip_robots"] += 1
                     continue
                 try:
@@ -1152,7 +1305,7 @@ def main():
                     continue
 
                 soup_home = BeautifulSoup(home.text, "html.parser")
-                contact = crawl_contact(website)
+                contact = crawl_contact(website, home.text)
                 email = (contact.get("email") or "").strip()
 
                 if is_freemail(email_domain(email)):
@@ -1178,7 +1331,7 @@ def main():
                     else:
                         STATS["skip_mx"] += 1
                         email = ""
-                if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+                if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
                     STATS["skip_explicit_required"] += 1
                     email = ""
                 if not email or "@" not in email:
