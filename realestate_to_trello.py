@@ -96,7 +96,8 @@ COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").s
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS     = 20  # try up to N cities per run
+CITY_HOPS = env_int("CITY_HOPS", 20)
+OSM_RADIUS_M = env_int("OSM_RADIUS_M", 10000)  # 15km default
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -523,12 +524,12 @@ def geocode_city(city, country):
     south, north, west, east = map(float, data[0]["boundingbox"])
     return south, west, north, east
 
-def overpass_estate_agents(bbox):
-    south, west, north, east = bbox
+def overpass_estate_agents(lat: float, lon: float, radius_m: int):
     parts = []
-    for k,v in OSM_FILTERS:
-        for t in ("node","way","relation"):
-            parts.append(f'{t}["{k}"="{v}"]({south},{west},{north},{east});')
+    for k, v in OSM_FILTERS:
+        for t in ("node", "way", "relation"):
+            parts.append(f'{t}(around:{radius_m},{lat},{lon})["{k}"="{v}"];')
+
     q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
 
     js = None
@@ -552,26 +553,29 @@ def overpass_estate_agents(bbox):
         email = tags.get("email") or tags.get("contact:email")
         wikidata = tags.get("wikidata")
 
-        lat = el.get("lat")
-        lon = el.get("lon")
-        if (lat is None or lon is None) and isinstance(el.get("center"), dict):
-            lat = el["center"].get("lat")
-            lon = el["center"].get("lon")
+        lat2 = el.get("lat")
+        lon2 = el.get("lon")
+        if (lat2 is None or lon2 is None) and isinstance(el.get("center"), dict):
+            lat2 = el["center"].get("lat")
+            lon2 = el["center"].get("lon")
 
         if name:
             rows.append({
                 "business_name": name.strip(),
                 "website": normalize_url(website) if website else None,
                 "email": email,
-                "wikidata": wikidata, 
-                "lat": lat,
-                "lon": lon,
+                "wikidata": wikidata,
+                "lat": lat2,
+                "lon": lon2,
             })
+
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
-        if key not in dedup: dedup[key] = r0
-    out = list(dedup.values()); random.shuffle(out)
+        if key not in dedup:
+            dedup[key] = r0
+    out = list(dedup.values())
+    random.shuffle(out)
     return out
 
 # ---------- Foursquare website finder (v3) ----------
@@ -1505,7 +1509,7 @@ def main():
 
         # 1) OSM fallback
         if len(leads) < DAILY_LIMIT:
-            cands = overpass_estate_agents((south, west, north, east))
+            cands = overpass_estate_agents(lat, lon, OSM_RADIUS_M)
             dbg(f"[{city}, {country}] OSM candidates: {len(cands)}")
             STATS["osm_candidates"] += len(cands)
 
