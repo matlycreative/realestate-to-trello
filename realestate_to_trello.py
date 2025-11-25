@@ -71,6 +71,8 @@ FREEMAIL_EXTRA_Q        = env_float("FREEMAIL_EXTRA_Q", 0.3)
 DEBUG      = env_on("DEBUG", False)
 USE_WHOIS  = env_on("USE_WHOIS", False)
 
+VERIFY_MX  = env_on("VERIFY_MX", False)  # <--- NEW (default OFF for volume)
+
 # pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
 
@@ -88,7 +90,7 @@ COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").s
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS     = 5  # try up to N cities per run
+CITY_HOPS     = 20  # try up to N cities per run
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -493,6 +495,8 @@ def summarize_signals(q, website, email, soup):
 
 # helper for MX decision (gates on DNS availability)
 def _mx_ok(domain: str) -> bool:
+    if not VERIFY_MX:
+        return True
     return True if not HAS_DNS else (domain_has_mx(domain) is True)
 
 # ---------- geo & OSM ----------
@@ -1250,8 +1254,11 @@ def main():
                 STATS["skip_explicit_required"] += 1
                 email = ""
             if not email or "@" not in email:
-                STATS["skip_no_email"] += 1
-                continue
+                if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
+                    email = f"info@{site_dom}"
+                else:
+                    STATS["skip_no_email"] += 1
+                    continue
 
             q = quality_score(website, home.text, soup_home, email)
             if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
