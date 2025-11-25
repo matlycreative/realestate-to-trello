@@ -106,6 +106,16 @@ jobs:
               sys.exit(1)
           PY
 
+    - name: Show effective config (non-secret)
+      shell: bash
+      run: |
+          echo "REQUIRE_EXPLICIT_EMAIL=${REQUIRE_EXPLICIT_EMAIL:-unset}"
+          echo "SKIP_GENERIC_EMAILS=${SKIP_GENERIC_EMAILS:-unset}"
+          echo "REQUIRE_BUSINESS_DOMAIN=${REQUIRE_BUSINESS_DOMAIN:-unset}"
+          echo "ALLOW_FREEMAIL=${ALLOW_FREEMAIL:-unset}"
+          echo "QUALITY_MIN=${QUALITY_MIN:-unset}"
+          echo "FOURSQUARE_API_KEY_SET=$([ -n "${FOURSQUARE_API_KEY:-}" ] && echo yes || echo no)"
+          echo "USER_AGENT=${USER_AGENT:-unset}"
       - name: Run pipeline
         run: |
           set -euo pipefail
