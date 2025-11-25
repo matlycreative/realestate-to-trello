@@ -278,6 +278,17 @@ def fetch(url):
 def extract_emails(text):
     return list(set(m.group(0) for m in EMAIL_RE.finditer(text or "")))
 
+OBFUSCATIONS = [
+    (r"\s*\[at\]\s*", "@"), (r"\s*\(at\)\s*", "@"), (r"\s+at\s+", "@"),
+    (r"\s*\[dot\]\s*", "."), (r"\s*\(dot\)\s*", "."), (r"\s+dot\s+", "."),
+]
+
+def extract_emails_loose(text: str):
+    t2 = (text or "")
+    for pat, rep in OBFUSCATIONS:
+        t2 = re.sub(pat, rep, t2, flags=re.I)
+    return list(set(m.group(0) for m in EMAIL_RE.finditer(t2)))
+
 # ---------- quality helpers ----------
 try:
     import dns.resolver as _dnsresolver
@@ -582,7 +593,7 @@ def crawl_contact(site_url):
             continue
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        emails = set(extract_emails(resp.text))
+        emails = set(extract_emails_loose(resp.text))
 
         # mailto: links
         for a in soup.select('a[href^="mailto:"]'):
@@ -1088,7 +1099,7 @@ def main():
                 else:
                     STATS["skip_mx"] += 1
                     email = ""
-            if REQUIRE_EXPLICIT_EMAIL and (not email or 'info@' in (email or '').lower()):
+            if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
                 STATS["skip_explicit_required"] += 1
                 email = ""
             if not email or "@" not in email:
