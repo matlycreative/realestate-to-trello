@@ -60,6 +60,11 @@ jobs:
       PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
 
+      MAX_CONTACT_PAGES: "2"
+      CITY_HOPS: "8"
+      OSM_RADIUS_M: "5000"
+      BUTLER_GRACE_S: "10"
+
       # Optional: helps reduce website blocks
       # USER_AGENT: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 
@@ -141,7 +146,7 @@ jobs:
           print("=== Computed effective config (after defaults) ===")
           print("DAILY_LIMIT =", env_int("DAILY_LIMIT", 15))
           print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 40))
-          print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 2.0))
+          print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 1.0))
           print("QUALITY_MIN =", env_float("QUALITY_MIN", 2.0))
 
           print("REQUIRE_EXPLICIT_EMAIL =", env_on("REQUIRE_EXPLICIT_EMAIL", False))
