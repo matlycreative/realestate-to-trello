@@ -10,7 +10,7 @@
 #   3) always persist domain to seen file (even if card unchanged)
 #   4) immediate append to seen_domains.txt when a lead is discovered and when pushed
 
-import os, re, json, time, random, csv, pathlib, html
+import os, re, json, time, random, csv, pathlib, html, math
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 import requests
@@ -82,6 +82,11 @@ STATS = {
     "skip_no_email": 0, "skip_freemail_reject": 0, "skip_generic_local": 0,
     "skip_mx": 0, "skip_explicit_required": 0, "skip_quality": 0
 }
+STATS.setdefault("website_direct", 0)
+STATS.setdefault("website_overpass_name", 0)
+STATS.setdefault("website_nominatim", 0)
+STATS.setdefault("website_fsq", 0)
+
 def dbg(msg):
     if DEBUG: print(msg)
 
@@ -136,7 +141,14 @@ except TypeError:
 SESS.mount("https://", HTTPAdapter(max_retries=_retries))
 SESS.mount("http://", HTTPAdapter(max_retries=_retries))
 
-OSM_FILTERS = [('office','estate_agent'), ('shop','estate_agent')]
+OSM_FILTERS = [
+    ("office","estate_agent"),
+    ("office","real_estate"),
+    ("office","property_management"),
+
+    ("shop","estate_agent"),
+    ("shop","real_estate"),
+]
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
 # freemail detection
@@ -584,6 +596,180 @@ def fsq_find_website(name, lat, lon):
         return None
     return None
 
+LEGAL_SUFFIXES = [
+    "ag","gmbh","sa","sarl","sàrl","llc","ltd","limited","inc","corp","s.p.a","spa","bv","nv",
+    "kg","ohg","ug","gbr","kft","sro","s.r.o","oy","ab","as","aps"
+]
+
+def _norm_name(s: str) -> str:
+    s = (s or "").strip().lower()
+    # remove punctuation-ish
+    s = re.sub(r"[\u2019'`\".,:;()\-_/\\]+", " ", s)
+    parts = [p for p in s.split() if p and p not in LEGAL_SUFFIXES]
+    # collapse whitespace
+    return " ".join(parts)
+
+def _escape_overpass_regex(s: str) -> str:
+    # escape regex meta chars for Overpass ["name"~"...",i]
+    return re.sub(r"([.\^\$\*\+\?\{\}\[\]\\\|()])", r"\\\1", s)
+
+def _haversine_km(lat1, lon1, lat2, lon2) -> float:
+    if None in (lat1, lon1, lat2, lon2):
+        return 999999.0
+    R = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2-lat1)
+    dl   = math.radians(lon2-lon1)
+    a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 2*R*math.asin(math.sqrt(a))
+
+def overpass_lookup_website_by_name(name: str, lat: float, lon: float, radius_m: int = 20000) -> str | None:
+    """
+    Search OSM near (lat,lon) for objects whose name matches, and return website/contact:website/url.
+    Uses Overpass regex match and scores candidates.
+    """
+    if not name or lat is None or lon is None:
+        return None
+
+    n = _norm_name(name)
+    if not n:
+        return None
+
+    # Build regex that allows small variations: "alpha beta" -> "alpha.*beta"
+    tokens = n.split()
+    tokens = [t for t in tokens if len(t) >= 3]  # drop tiny tokens
+    if not tokens:
+        tokens = n.split()
+
+    # limit tokens so query doesn't get huge
+    tokens = tokens[:5]
+    pattern = ".*".join(_escape_overpass_regex(t) for t in tokens)
+
+    q = f"""
+[out:json][timeout:25];
+(
+  node(around:{radius_m},{lat},{lon})["name"~"{pattern}",i];
+  way(around:{radius_m},{lat},{lon})["name"~"{pattern}",i];
+  relation(around:{radius_m},{lat},{lon})["name"~"{pattern}",i];
+);
+out tags center;
+"""
+
+    js = None
+    for url in ("https://overpass-api.de/api/interpreter",
+                "https://overpass.kumi.systems/api/interpreter"):
+        try:
+            r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
+            if r.status_code == 200:
+                js = r.json()
+                break
+        except Exception:
+            continue
+    if not js:
+        return None
+
+    best = None
+    best_score = -1e9
+
+    for el in js.get("elements", []):
+        tags = el.get("tags", {}) or {}
+        nm = (tags.get("name") or "").strip()
+        w  = tags.get("website") or tags.get("contact:website") or tags.get("url")
+        if not w:
+            continue
+
+        # get element coords
+        lat2 = el.get("lat")
+        lon2 = el.get("lon")
+        if (lat2 is None or lon2 is None) and isinstance(el.get("center"), dict):
+            lat2 = el["center"].get("lat")
+            lon2 = el["center"].get("lon")
+
+        dist = _haversine_km(lat, lon, lat2, lon2)
+
+        # scoring: name similarity + distance + having website
+        nm_norm = _norm_name(nm)
+        score = 0.0
+        if nm_norm == n:
+            score += 50
+        elif n and n in nm_norm:
+            score += 30
+        else:
+            # token overlap
+            overlap = len(set(n.split()) & set(nm_norm.split()))
+            score += overlap * 6
+
+        # nearer is better
+        score += max(0.0, 20.0 - dist)  # within 20km gets positive boost
+
+        # small bonus if it looks like a real website domain
+        w0 = normalize_url(w)
+        dom = etld1_from_url(w0 or "")
+        if dom:
+            score += 5
+
+        if score > best_score:
+            best_score = score
+            best = w
+
+    return normalize_url(best) if best else None
+
+def nominatim_lookup_website(name: str, city: str, country: str, limit: int = 5) -> str | None:
+    """
+    Uses Nominatim search with extratags to sometimes extract website.
+    """
+    if not name:
+        return None
+
+    try:
+        # Keep it specific to reduce wrong matches
+        q = f"{name}, {city}, {country}".strip(", ")
+        r = SESS.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format":"jsonv2", "limit": limit, "extratags": 1},
+            headers={"Referer":"https://nominatim.org"},
+            timeout=30
+        )
+        if r.status_code != 200:
+            return None
+        items = r.json() or []
+        for it in items:
+            xt = it.get("extratags") or {}
+            w = xt.get("website") or xt.get("contact:website") or xt.get("url")
+            w = normalize_url(w)
+            if w:
+                return w
+    except Exception:
+        return None
+    return None
+
+def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: float, direct: str | None) -> str | None:
+    """
+    Multi-step resolver. Returns website or None.
+    """
+    w = normalize_url(direct)
+    if w:
+        STATS["website_direct"] += 1
+        return w
+
+    w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
+    if w:
+        STATS["website_overpass_name"] += 1
+        return w
+
+    w = nominatim_lookup_website(biz_name, city, country, limit=5)
+    if w:
+        STATS["website_nominatim"] += 1
+        return w
+
+    w = fsq_find_website(biz_name, lat, lon)
+    w = normalize_url(w)
+    if w:
+        STATS["website_fsq"] += 1
+        return w
+
+    return None
+    
 # ---------- contact crawl ----------
 def cf_decode(hexstr: str) -> str:
     try:
@@ -1201,8 +1387,14 @@ def main():
 
         for biz in off:
             if len(leads) >= DAILY_LIMIT: break
-            website = biz.get("website") or fsq_find_website(biz["business_name"], lat, lon)
-            website = normalize_url(website)
+            website = resolve_website(
+                biz_name=biz["business_name"],
+                city=city,
+                country=country,
+                lat=lat,
+                lon=lon,
+                direct=biz.get("website"),
+            )
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
@@ -1287,13 +1479,21 @@ def main():
                 if len(leads) >= DAILY_LIMIT: break
                 lat0 = biz.get("lat") or lat
                 lon0 = biz.get("lon") or lon
-                website = biz.get("website") or fsq_find_website(biz["business_name"], lat0, lon0)
-                website = normalize_url(website)
+                website = resolve_website(
+                    biz_name=biz["business_name"],
+                    city=city,
+                    country=country,
+                    lat=lat0,
+                    lon=lon0,
+                    direct=biz.get("website"),
+                )
+
+                # keep your “email -> website” fallback if you want, but only if resolver failed
                 if not website and biz.get("email"):
                     dom0 = email_domain(biz["email"])
-                    if dom0 and not is_freemail(dom0): 
-                        website = f"https://{dom0}"
-                website = normalize_url(website)
+                    if dom0 and not is_freemail(dom0):
+                        website = normalize_url(f"https://{dom0}")
+
                 if not website:
                     STATS["skip_no_website"] += 1
                     continue
@@ -1343,8 +1543,11 @@ def main():
                     STATS["skip_explicit_required"] += 1
                     email = ""
                 if not email or "@" not in email:
-                    STATS["skip_no_email"] += 1
-                    continue
+                    if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
+                        email = f"info@{site_dom}"
+                    else:
+                        STATS["skip_no_email"] += 1
+                        continue
 
                 q = quality_score(website, home.text, soup_home, email)
                 if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
