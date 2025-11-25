@@ -60,9 +60,9 @@ jobs:
       PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
 
-      MAX_CONTACT_PAGES: "2"
+      MAX_CONTACT_PAGES: "1"
       CITY_HOPS: "8"
-      OSM_RADIUS_M: "5000"
+      OSM_RADIUS_M: "2500"
       BUTLER_GRACE_S: "10"
 
       # Optional: helps reduce website blocks
@@ -145,9 +145,9 @@ jobs:
 
           print("=== Computed effective config (after defaults) ===")
           print("DAILY_LIMIT =", env_int("DAILY_LIMIT", 15))
-          print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 40))
-          print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 1.0))
-          print("QUALITY_MIN =", env_float("QUALITY_MIN", 2.0))
+          print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 15))
+          print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 0.2))
+          print("QUALITY_MIN =", env_float("QUALITY_MIN", 1.2))
 
           print("REQUIRE_EXPLICIT_EMAIL =", env_on("REQUIRE_EXPLICIT_EMAIL", False))
           print("ADD_SIGNALS_NOTE =", env_on("ADD_SIGNALS_NOTE", False))
