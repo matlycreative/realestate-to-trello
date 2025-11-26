@@ -145,7 +145,7 @@ jobs:
 
           print("=== Computed effective config (after defaults) ===")
           print("DAILY_LIMIT =", env_int("DAILY_LIMIT", 20))
-          print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 15))
+          print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 5))
           print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 0.2))
           print("QUALITY_MIN =", env_float("QUALITY_MIN", 1.2))
 
