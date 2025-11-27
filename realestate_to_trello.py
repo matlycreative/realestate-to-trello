@@ -61,7 +61,7 @@ def env_on(name, default=False):
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 25)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)     # base pace (you also add BUTLER_GRACE_S)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
-QUALITY_MIN      = env_float("QUALITY_MIN", 1.2)
+QUALITY_MIN      = env_float("QUALITY_MIN", 1.0)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
 
 # extra grace so Butler can move/duplicate after each push
@@ -1633,44 +1633,6 @@ def main():
 
                 soup_home = BeautifulSoup(home.text, "html.parser")
                 email = ""
-
-                if is_freemail(email_domain(email)):
-                    if REQUIRE_BUSINESS_DOMAIN:
-                        STATS["skip_freemail_reject"] += 1
-                        email = ""
-                    elif not ALLOW_FREEMAIL:
-                        if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
-                            email = f"info@{site_dom}"
-                        else:
-                            STATS["skip_freemail_reject"] += 1
-                            email = ""
-
-                if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
-                    STATS["skip_generic_local"] += 1
-                    email = ""
-
-                if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
-                    STATS["skip_freemail_reject"] += 1
-                    email = ""
-
-                if email and "@" in email and not _mx_ok(email_domain(email)):
-                    fallback_ok = (site_dom and _mx_ok(site_dom))
-                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_mx"] += 1
-                        email = ""
-
-                if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
-                    STATS["skip_explicit_required"] += 1
-                    email = ""
-
-                if not email or "@" not in email:
-                    if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_no_email"] += 1
-                        continue
 
                 q = quality_score(website, home.text, soup_home, email)
                 if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
