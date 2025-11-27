@@ -1,22 +1,16 @@
 # realestate_to_trello.py
-# Fills Trello template cards with Company / Email / Website (paced).
-# Header order is enforced and other fields are preserved:
-# Company, First, Email, Hook, Variant, Website
+# Fills Trello template cards with ONLY:
+#   - Company (card title + header field)
+#   - Website (header field)
 #
-# Also renames the card TITLE to the Company value.
+# It preserves other fields already on the card:
+#   First, Email, Hook, Variant
 #
-# BIG FIX (to "make it work" on GitHub Actions):
-# - Overpass is often overloaded / times out (especially from Actions IPs).
-# - This version keeps Overpass, BUT adds a strong fallback:
-#     ✅ Nominatim "POI keyword search" inside the city bounding box
-#   so you still get candidates even when Overpass is down.
+# Big reliability fix (GitHub Actions friendly):
+# - Overpass often times out. We keep it, but add a strong fallback:
+#   ✅ Nominatim POI keyword search inside the city bounding box
 #
-# Other hardening:
-#   - safer timeouts + retries for Overpass POST
-#   - smaller-radius fallback attempts (Overpass) before switching to Nominatim
-#   - improved name parsing from Nominatim jsonv2 payloads
-#
-# No venv instructions; just run in GitHub Actions.
+# No email crawling. No email extraction. No MX/DMARC. No contact pages.
 
 import os, re, json, time, random, csv, pathlib, html, math
 from datetime import date, datetime
@@ -61,26 +55,13 @@ def env_on(name, default=False):
 
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 15)
-PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 15)     # base pace (you also add BUTLER_GRACE_S)
+PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 15)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
-QUALITY_MIN      = env_float("QUALITY_MIN", 1.2)
-SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by default
+SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
-# extra grace so Butler can move/duplicate after each push
 BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 10)
 
-# behavior / quality
-REQUIRE_EXPLICIT_EMAIL  = env_on("REQUIRE_EXPLICIT_EMAIL", 0)
-ADD_SIGNALS_NOTE        = env_on("ADD_SIGNALS_NOTE", False)
-SKIP_GENERIC_EMAILS     = env_on("SKIP_GENERIC_EMAILS", 0)
-REQUIRE_BUSINESS_DOMAIN = env_on("REQUIRE_BUSINESS_DOMAIN", 0)
-ALLOW_FREEMAIL          = env_on("ALLOW_FREEMAIL", 1)
-FREEMAIL_EXTRA_Q        = env_float("FREEMAIL_EXTRA_Q", 0.3)
-
-# debug / performance
 DEBUG      = env_on("DEBUG", False)
-USE_WHOIS  = env_on("USE_WHOIS", 0)
-VERIFY_MX  = env_on("VERIFY_MX", 0)  # default OFF for volume
 
 # pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
@@ -96,35 +77,10 @@ OVERPASS_RETRIES = env_int("OVERPASS_RETRIES", 2)                # per endpoint
 OVERPASS_MIN_INTERVAL_S = env_float("OVERPASS_MIN_INTERVAL_S", 2.0)
 
 # Nominatim POI fallback tuning
-NOMINATIM_LIMIT = env_int("NOMINATIM_LIMIT", 60)                 # results per query
+NOMINATIM_LIMIT = env_int("NOMINATIM_LIMIT", 60)
 NOMINATIM_POI_QUERIES_PER_CITY = env_int("NOMINATIM_POI_QUERIES_PER_CITY", 3)
 
-STATS = {
-    "off_candidates": 0, "osm_candidates": 0,
-    "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
-    "skip_no_email": 0, "skip_freemail_reject": 0, "skip_generic_local": 0,
-    "skip_mx": 0, "skip_explicit_required": 0, "skip_quality": 0,
-    "cand_overpass": 0,
-    "cand_nominatim_poi": 0,
-}
-STATS.setdefault("website_direct", 0)
-STATS.setdefault("website_overpass_name", 0)
-STATS.setdefault("website_nominatim", 0)
-STATS.setdefault("website_fsq", 0)
-STATS.setdefault("website_wikidata", 0)
-
-def dbg(msg):
-    if DEBUG:
-        print(msg, flush=True)
-
-# country / city
-COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
-CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
-FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
-FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS = env_int("CITY_HOPS", 8)
-OSM_RADIUS_M = env_int("OSM_RADIUS_M", 2500)
-
+# Nominatim + UA
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
 
@@ -134,22 +90,44 @@ TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
 TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
 TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # used only if PRECLONE=1
 
-# Discovery (Foursquare v3 = single API Key)
+# Discovery (Foursquare v3 = single API Key) — optional
 FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
 
-# Official sources
+# Official sources (optional)
 USE_COMPANIES_HOUSE = env_on("USE_COMPANIES_HOUSE", False); CH_API_KEY = os.getenv("CH_API_KEY")
 USE_SIRENE          = env_on("USE_SIRENE", False); SIRENE_KEY = os.getenv("SIRENE_KEY"); SIRENE_SECRET = os.getenv("SIRENE_SECRET")
 USE_OPENCORP        = env_on("USE_OPENCORP", False); OPENCORP_API_KEY = os.getenv("OPENCORP_API_KEY")
 USE_ZEFIX           = env_on("USE_ZEFIX", False)
 
+STATS = {
+    "off_candidates": 0, "osm_candidates": 0,
+    "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
+    "cand_overpass": 0, "cand_nominatim_poi": 0,
+    "website_direct": 0, "website_overpass_name": 0, "website_nominatim": 0, "website_fsq": 0, "website_wikidata": 0,
+}
+
+def dbg(msg):
+    if DEBUG:
+        print(msg, flush=True)
+
+# ---------- threading-free throttling ----------
+_LAST_CALL = {}
+def throttle(key: str, min_interval_s: float):
+    now = time.monotonic()
+    last = _LAST_CALL.get(key, 0.0)
+    wait = (min_interval_s - (now - last))
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_CALL[key] = time.monotonic()
+
+def _sleep():
+    time.sleep(REQUEST_DELAY_S)
+
 # ---------- HTTP ----------
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
 
-MAX_CONTACT_PAGES = env_int("MAX_CONTACT_PAGES", 1)
-
-# add retries for robustness — GET only (avoid retrying POST to Trello / Overpass)
+# retries for GET only
 try:
     _retries = Retry(
         total=3,
@@ -168,43 +146,14 @@ except TypeError:
 SESS.mount("https://", HTTPAdapter(max_retries=_retries))
 SESS.mount("http://", HTTPAdapter(max_retries=_retries))
 
-# ---------- per-service throttling ----------
-_LAST_CALL = {}
-def throttle(key: str, min_interval_s: float):
-    now = time.monotonic()
-    last = _LAST_CALL.get(key, 0.0)
-    wait = (min_interval_s - (now - last))
-    if wait > 0:
-        time.sleep(wait)
-    _LAST_CALL[key] = time.monotonic()
+# ---------- geo / city ----------
+COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
+CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
+FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
+FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
+CITY_HOPS = env_int("CITY_HOPS", 8)
+OSM_RADIUS_M = env_int("OSM_RADIUS_M", 2500)
 
-def _sleep():
-    time.sleep(REQUEST_DELAY_S)
-
-OSM_FILTERS = [
-    ("office","estate_agent"),
-    ("office","real_estate"),
-    ("office","property_management"),
-    ("shop","estate_agent"),
-    ("shop","real_estate"),
-]
-EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-
-# freemail detection
-FREEMAIL_PATTERNS = [
-    r"gmail\.com$", r"googlemail\.com$",
-    r"outlook\.com$", r"hotmail\.com$", r"live\.com$",
-    r"outlook\.[a-z]{2,}$", r"hotmail\.[a-z]{2,}$", r"live\.[a-z]{2,}$",
-    r"yahoo\.com$", r"yahoo\.[a-z]{2,}$",
-    r"icloud\.com$", r"proton\.me$", r"protonmail\.com$",
-    r"aol\.com$", r"gmx\.(?:com|net|de|at|ch)$",
-    r"web\.de$", r"yandex\.(?:ru|com|ua|kz|by)$", r"mail\.ru$"
-]
-def is_freemail(domain: str) -> bool:
-    d = (domain or "").lower()
-    return any(re.search(p, d) for p in FREEMAIL_PATTERNS)
-
-# cities
 CITY_ROTATION = [
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
     ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
@@ -226,20 +175,6 @@ CITY_ROTATION = [
     ("Jakarta","Indonesia"), ("Surabaya","Indonesia"), ("Bandung","Indonesia"), ("Denpasar","Indonesia"),
     ("Toronto","Canada"), ("Vancouver","Canada"), ("Montreal","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
 ]
-
-GENERIC_MAILBOX_PREFIXES = {
-    "info","contact","hello","support","service","sales","office","admin",
-    "enquiries","inquiries","booking","mail","team","general","kundenservice"
-}
-def is_generic_mailbox_local(local: str) -> bool:
-    if not local:
-        return True
-    L = local.lower()
-    if L in ("noreply","no-reply","donotreply","do-not-reply"):
-        return True
-    return any(L.startswith(p) for p in GENERIC_MAILBOX_PREFIXES)
-
-EDITORIAL_PREFS = ["marketing","content","editor","editorial","press","media","owner","ceo","md","sales","hello","contact"]
 
 def iter_cities():
     pool = CITY_ROTATION[:]
@@ -283,11 +218,10 @@ def etld1_from_url(u: str) -> str:
         pass
     return ""
 
-def email_domain(email: str) -> str:
-    try:
-        return email.split("@", 1)[1].lower().strip()
-    except Exception:
-        return ""
+def fetch(url):
+    r = SESS.get(url, timeout=30)
+    r.raise_for_status()
+    return r
 
 # ---------- robots (cached per-base) ----------
 @lru_cache(maxsize=2048)
@@ -316,238 +250,6 @@ def allowed_by_robots(base_url: str, path: str = "/") -> bool:
     except Exception:
         return True
 
-def fetch(url):
-    r = SESS.get(url, timeout=30)
-    r.raise_for_status()
-    return r
-
-OBFUSCATIONS = [
-    (r"\s*\[?\s*at\s*\]?\s*", "@"),  (r"\s*\(at\)\s*", "@"),  (r"\s+at\s+", "@"),
-    (r"\s*\[?\s*dot\s*\]?\s*", "."), (r"\s*\(dot\)\s*", "."), (r"\s+dot\s+", "."),
-]
-def extract_emails_loose(text: str):
-    t2 = html.unescape(text or "")
-    for pat, rep in OBFUSCATIONS:
-        t2 = re.sub(pat, rep, t2, flags=re.I)
-    t2 = t2.replace("&#64;", "@").replace("&#46;", ".").replace("&#x40;", "@").replace("&#x2e;", ".")
-    return list(set(m.group(0) for m in EMAIL_RE.finditer(t2)))
-
-# ---------- quality helpers ----------
-try:
-    import dns.resolver as _dnsresolver
-except Exception:
-    _dnsresolver = None
-
-HAS_DNS = _dnsresolver is not None
-
-try:
-    import whois as pywhois
-except Exception:
-    pywhois = None
-
-def looks_parked(html_text: str) -> bool:
-    hay = (html_text or "").lower()
-    red_flags = ["this domain is for sale","coming soon","sedo","godaddy","namecheap","parked domain"]
-    return any(p in hay for p in red_flags)
-
-def _idna(domain: str) -> str:
-    try:
-        return (domain or "").encode("idna").decode("ascii")
-    except Exception:
-        return domain or ""
-
-@lru_cache(maxsize=4096)
-def domain_has_mx(domain: str):
-    if not HAS_DNS:
-        return None
-    d = _idna(domain)
-    if not d:
-        return False
-    try:
-        _dnsresolver.resolve(d, 'MX', lifetime=5.0)
-        return True
-    except Exception:
-        return False
-
-@lru_cache(maxsize=4096)
-def domain_has_dmarc(domain: str):
-    if not HAS_DNS:
-        return None
-    d = _idna(domain)
-    if not d:
-        return False
-    try:
-        for r in _dnsresolver.resolve(f"_dmarc.{d}", "TXT", lifetime=5.0):
-            txts = getattr(r, "strings", None)
-            if txts:
-                txt = b"".join(txts).decode("utf-8", "ignore").lower()
-            else:
-                t = r.to_text()
-                if t.startswith('"') and t.endswith('"'):
-                    t = t[1:-1]
-                txt = t.replace('" "', "").replace('"', "").lower()
-            if txt.strip().startswith("v=dmarc"):
-                return True
-    except Exception:
-        return False
-    return False
-
-def domain_age_years(domain: str) -> float:
-    if not domain or not USE_WHOIS or not pywhois:
-        return 0.0
-    try:
-        w = pywhois.whois(domain)
-        cd = w.creation_date
-        if isinstance(cd, list): cd = cd[0]
-        if not cd: return 0.0
-        if isinstance(cd, str):
-            for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%b-%Y", "%Y.%m.%d %H:%M:%S"):
-                try:
-                    cd = datetime.strptime(cd, fmt)
-                    break
-                except Exception:
-                    pass
-            if isinstance(cd, str):
-                return 0.0
-        from datetime import date as _date
-        if isinstance(cd, _date) and not isinstance(cd, datetime):
-            cd = datetime(cd.year, cd.month, cd.day)
-        return max(0.0, (time.time() - cd.timestamp()) / (365.25*24*3600))
-    except Exception:
-        return 0.0
-
-def has_listings_signals(soup: BeautifulSoup) -> bool:
-    needles = ["for sale","for rent","to let","buy","sell","rent","listings","properties",
-               "our properties","immobili","immobilier","angebote","objekte"]
-    txt = soup.get_text(" ").lower()
-    if any(n in txt for n in needles):
-        return True
-    for a in soup.find_all("a", href=True):
-        h = a.get("href","").lower()
-        if any(x in h for x in ["/listings","/properties","/property","/immobili","/angebote"]):
-            return True
-    return False
-
-def has_recent_content(soup: BeautifulSoup, max_days=365) -> bool:
-    import datetime as dt
-    text = soup.get_text(" ")
-    patterns = [
-        r"(20[2-9][0-9])",
-        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}",
-        r"\b\d{1,2}[/-]\d{1,2}[/-](20[2-9][0-9])"
-    ]
-    now = dt.datetime.utcnow()
-    for pat in patterns:
-        for m in re.finditer(pat, text, flags=re.I):
-            s = m.group(0)
-            try:
-                if re.fullmatch(r"20[2-9][0-9]", s):
-                    d = dt.datetime(int(s), 12, 31)
-                elif re.match(r"[A-Za-z]{3,}\s+\d{4}", s):
-                    parts = s.split()
-                    y = int(parts[-1])
-                    mon = parts[0][:3].title()
-                    month_num = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].index(mon)+1
-                    d = dt.datetime(y, month_num, 1)
-                else:
-                    y = int(re.findall(r"\d+", s)[-1])
-                    d = dt.datetime(y, 1, 1)
-                if (now - d).days <= max_days:
-                    return True
-            except Exception:
-                continue
-    return False
-
-def count_team_members(soup: BeautifulSoup) -> int:
-    blocks = soup.select("[class*='team'],[class*='agent'],[class*='member'],[class*='broker']")
-    return sum(
-        1 for b in blocks
-        if any(k in b.get_text(" ").lower() for k in ["agent","broker","team","associate","advisor"])
-    )
-
-def choose_best_email(emails):
-    if not emails:
-        return None
-    cleaned = []
-    for e in emails:
-        if "@" not in e:
-            continue
-        local, dom = e.split("@", 1)
-        dom = dom.lower()
-        if not ALLOW_FREEMAIL and is_freemail(dom):
-            continue
-        if SKIP_GENERIC_EMAILS and is_generic_mailbox_local(local):
-            continue
-        cleaned.append(f"{local}@{dom}")
-
-    if SKIP_GENERIC_EMAILS and not cleaned:
-        return None
-
-    pool = cleaned or emails
-    bad = ("noreply","no-reply","donotreply","do-not-reply")
-
-    def score(e):
-        local = e.split("@",1)[0].lower()
-        pref = 0
-        for i, p in enumerate(EDITORIAL_PREFS):
-            if local.startswith(p):
-                pref = 100 - i
-                break
-        penalty = 10 if local.startswith("info") else 0
-        person_bonus = 1 if (("." in local) or ("-" in local)) else 0
-        if any(b in local for b in bad):
-            return (999, 1, 0)
-        return (-(pref), penalty, -person_bonus, len(local))
-
-    return sorted(pool, key=score)[0]
-
-def uses_https(url: str) -> bool:
-    return (urlparse(url or "").scheme == "https")
-
-def rss_recent(soup: BeautifulSoup, max_days=365) -> bool:
-    for l in soup.find_all("link"):
-        if (l.get("type") or "").lower() in ("application/rss+xml","application/atom+xml"):
-            return True
-    return has_recent_content(soup, max_days=max_days)
-
-def quality_score(website: str, html_text: str, soup: BeautifulSoup, email: str) -> float:
-    score = 0.0
-    if not looks_parked(html_text): score += 1.0
-    if has_listings_signals(soup): score += 1.0
-    if has_recent_content(soup, 365): score += 0.7
-
-    site_dom = etld1_from_url(website)
-    mail_dom = email_domain(email)
-
-    mx_signal    = (domain_has_mx(mail_dom or site_dom) is True) if HAS_DNS else False
-    dmarc_signal = (domain_has_dmarc(mail_dom or site_dom) is True) if HAS_DNS else False
-
-    if site_dom and mail_dom == site_dom: score += 0.7
-    if mx_signal: score += 0.6
-    if domain_age_years(site_dom) >= 1.0: score += 0.4
-    if count_team_members(soup) >= 3: score += 0.3
-    if dmarc_signal: score += 0.3
-    if uses_https(website): score += 0.2
-    if rss_recent(soup, 365): score += 0.3
-    return min(score, 5.0)
-
-def summarize_signals(q, website, email, soup):
-    bits = []
-    if has_listings_signals(soup): bits.append("listings")
-    if has_recent_content(soup, 365): bits.append("recent-content")
-    dom = email_domain(email) or etld1_from_url(website)
-    if HAS_DNS and (domain_has_mx(dom) is True): bits.append("mx")
-    if HAS_DNS and (domain_has_dmarc(dom) is True): bits.append("dmarc")
-    if uses_https(website): bits.append("https")
-    tm = count_team_members(soup)
-    if tm >= 3: bits.append(f"team~{tm}")
-    return f"Signals: q={q:.2f}; " + ", ".join(bits)
-
-def _mx_ok(domain: str) -> bool:
-    if not VERIFY_MX:
-        return True
-    return True if not HAS_DNS else (domain_has_mx(domain) is True)
-
 # ---------- geo ----------
 def geocode_city(city, country) -> Tuple[float,float,float,float]:
     throttle("nominatim", 1.1)
@@ -565,13 +267,19 @@ def geocode_city(city, country) -> Tuple[float,float,float,float]:
     return south, west, north, east
 
 # ---------- OSM candidates (Overpass + Nominatim POI fallback) ----------
+OSM_FILTERS = [
+    ("office","estate_agent"),
+    ("office","real_estate"),
+    ("office","property_management"),
+    ("shop","estate_agent"),
+    ("shop","real_estate"),
+]
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
 
 def _overpass_post(query: str) -> Optional[dict]:
-    # Manual retry loop; SESS retries only GET.
     body = (query or "").encode("utf-8")
     for base_url in OVERPASS_ENDPOINTS:
         for attempt in range(1, OVERPASS_RETRIES + 1):
@@ -580,7 +288,6 @@ def _overpass_post(query: str) -> Optional[dict]:
                 r = SESS.post(base_url, data=body, timeout=OVERPASS_TIMEOUT_S)
                 if r.status_code == 200:
                     return r.json()
-                # common from overloaded servers
                 dbg(f"[overpass] HTTP {r.status_code} via {base_url} attempt={attempt}")
             except Exception as e:
                 dbg(f"[overpass] error via {base_url} attempt={attempt}: {e}")
@@ -602,10 +309,11 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
 
     rows = []
     for el in js.get("elements", []):
-        tags = el.get("tags", {})
-        name = tags.get("name")
+        tags = el.get("tags", {}) or {}
+        name = (tags.get("name") or "").strip()
+        if not name:
+            continue
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
-        email = tags.get("email") or tags.get("contact:email")
         wikidata = tags.get("wikidata")
 
         lat2 = el.get("lat")
@@ -614,17 +322,14 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
             lat2 = el["center"].get("lat")
             lon2 = el["center"].get("lon")
 
-        if name:
-            rows.append({
-                "business_name": name.strip(),
-                "website": normalize_url(website) if website else None,
-                "email": email,
-                "wikidata": wikidata,
-                "lat": lat2,
-                "lon": lon2,
-            })
+        rows.append({
+            "business_name": name,
+            "website": normalize_url(website) if website else None,
+            "wikidata": wikidata,
+            "lat": lat2,
+            "lon": lon2,
+        })
 
-    # dedupe
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
@@ -641,12 +346,10 @@ def _viewbox_param(south: float, west: float, north: float, east: float) -> str:
     return f"{west},{north},{east},{south}"
 
 def _guess_name_from_nominatim(item: dict) -> str:
-    # jsonv2 sometimes has name + namedetails
     nd = item.get("namedetails") or {}
     nm = (nd.get("name") or item.get("name") or "").strip()
     if nm:
         return nm
-    # fallback: first token of display_name
     dn = (item.get("display_name") or "").strip()
     if dn and "," in dn:
         return dn.split(",", 1)[0].strip()
@@ -698,7 +401,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
                     "dedupe": 1,
                     "extratags": 1,
                     "namedetails": 1,
-                    "addressdetails": 0,
                 },
                 headers={"Referer":"https://nominatim.org"},
                 timeout=30,
@@ -715,7 +417,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             if not nm:
                 continue
 
-            # Reduce garbage: require plausible POI type/class
             klass = (it.get("class") or "").lower()
             typ = (it.get("type") or "").lower()
             if klass and klass not in ("office", "shop", "amenity", "tourism"):
@@ -725,7 +426,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
 
             xt = it.get("extratags") or {}
             website = xt.get("website") or xt.get("contact:website") or xt.get("url")
-            email = xt.get("email") or xt.get("contact:email")
 
             lat2 = None
             lon2 = None
@@ -744,7 +444,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             out.append({
                 "business_name": nm,
                 "website": website,
-                "email": email,
                 "wikidata": xt.get("wikidata"),
                 "lat": lat2,
                 "lon": lon2,
@@ -755,57 +454,23 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     return out
 
 def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> List[dict]:
-    # Try Overpass in decreasing radii first; then fallback to Nominatim POI search.
     cands: List[dict] = []
-
     if OVERPASS_ENABLED:
         for rad in (OSM_RADIUS_M, max(800, OSM_RADIUS_M // 2), max(500, OSM_RADIUS_M // 3)):
             cands = overpass_estate_agents(lat, lon, rad)
             if cands:
                 return cands
-
     if NOMINATIM_POI_ENABLED:
         cands = nominatim_poi_candidates(city, country, south, west, north, east)
         if cands:
             return cands
-
     return []
 
-# ---------- Foursquare website finder (v3) ----------
-def fsq_find_website(name, lat, lon):
-    if not FOURSQUARE_API_KEY:
-        return None
-    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
-    try:
-        throttle("foursquare", 0.6)
-        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
-        r = SESS.get("https://api.foursquare.com/v3/places/search",
-                     headers=headers, params=params, timeout=20)
-        if r.status_code == 200:
-            results = (r.json().get("results") or [])
-            if results:
-                first = results[0]
-                website = first.get("website")
-                if website:
-                    return normalize_url(website)
-                fsq_id = first.get("fsq_id")
-                if fsq_id:
-                    throttle("foursquare", 0.6)
-                    d = SESS.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
-                                 headers=headers, params={"fields":"website"}, timeout=20)
-                    if d.status_code == 200:
-                        w = d.json().get("website")
-                        if w:
-                            return normalize_url(w)
-    except Exception:
-        return None
-    return None
-
+# ---------- website resolution helpers ----------
 LEGAL_SUFFIXES = [
     "ag","gmbh","sa","sarl","sàrl","llc","ltd","limited","inc","corp","s.p.a","spa","bv","nv",
     "kg","ohg","ug","gbr","kft","sro","s.r.o","oy","ab","as","aps"
 ]
-
 def _norm_name(s: str) -> str:
     s = (s or "").strip().lower()
     s = re.sub(r"[\u2019'`\".,:;()\-_/\\]+", " ", s)
@@ -938,6 +603,35 @@ def wikidata_website_from_qid(qid: str) -> Optional[str]:
         return None
     return None
 
+def fsq_find_website(name, lat, lon):
+    if not FOURSQUARE_API_KEY:
+        return None
+    headers = {"Authorization": FOURSQUARE_API_KEY, "Accept":"application/json"}
+    try:
+        throttle("foursquare", 0.6)
+        params = {"query": name, "ll": f"{lat},{lon}", "limit": 1, "radius": 50000}
+        r = SESS.get("https://api.foursquare.com/v3/places/search",
+                     headers=headers, params=params, timeout=20)
+        if r.status_code == 200:
+            results = (r.json().get("results") or [])
+            if results:
+                first = results[0]
+                website = first.get("website")
+                if website:
+                    return normalize_url(website)
+                fsq_id = first.get("fsq_id")
+                if fsq_id:
+                    throttle("foursquare", 0.6)
+                    d = SESS.get(f"https://api.foursquare.com/v3/places/{fsq_id}",
+                                 headers=headers, params={"fields":"website"}, timeout=20)
+                    if d.status_code == 200:
+                        w = d.json().get("website")
+                        if w:
+                            return normalize_url(w)
+    except Exception:
+        return None
+    return None
+
 def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: float,
                     direct: Optional[str], wikidata_qid: Optional[str] = None) -> Optional[str]:
     w = normalize_url(direct)
@@ -950,7 +644,6 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
         STATS["website_wikidata"] += 1
         return w
 
-    # Overpass name lookup only if Overpass enabled
     w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
     if w:
         STATS["website_overpass_name"] += 1
@@ -968,190 +661,7 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
 
     return None
 
-# ---------- contact crawl ----------
-def cf_decode(hexstr: str) -> str:
-    try:
-        b = bytes.fromhex(hexstr); key = b[0]
-        return ''.join(chr(c ^ key) for c in b[1:])
-    except Exception:
-        return ""
-
-def gather_candidate_pages(base):
-    pages = [base]
-    common = ["/contact","/contact-us","/about","/about-us","/who-we-are","/our-story",
-              "/team","/our-team","/agents","/our-agents","/brokers","/staff",
-              "/impressum","/kontakt","/ueber-uns","/uber-uns","/equipe","/equipo",
-              "/legal","/privacy","/datenschutz","/mentions-legales"]
-    for p in common:
-        pages.append(urljoin(base, p))
-    return pages
-
-CONTACT_KEYWORDS = [
-    "contact", "kontakt", "impressum", "about", "ueber", "uber", "who-we-are",
-    "team", "agents", "brokers", "staff", "agency", "company", "legal", "privacy",
-    "mentions-legales", "equipe", "equipo"
-]
-
-def _same_host(url_a: str, url_b: str) -> bool:
-    try:
-        dom_a = etld1_from_url(url_a)
-        dom_b = etld1_from_url(url_b)
-        if dom_a and dom_b:
-            return dom_a.lower() == dom_b.lower()
-        return urlparse(url_a).netloc.lower() == urlparse(url_b).netloc.lower()
-    except Exception:
-        return False
-
-def _score_contact_link(href: str, text: str) -> int:
-    h = (href or "").lower()
-    t = (text or "").lower()
-    score = 0
-    for kw in CONTACT_KEYWORDS:
-        if kw in h: score += 8
-        if kw in t: score += 5
-    score += max(0, 6 - h.count("/"))
-    if any(bad in h for bad in ["javascript:", "#", "tel:", "mailto:", ".jpg", ".png", ".pdf"]):
-        score -= 50
-    return score
-
-def discover_contact_urls_from_home(base_url: str, home_html: str, limit: int = 10) -> list:
-    if not home_html:
-        return []
-    soup = BeautifulSoup(home_html, "html.parser")
-    cand = {}
-    for a in soup.find_all("a", href=True):
-        href = (a.get("href", "") or "").strip()
-        if not href:
-            continue
-        abs_url = urljoin(base_url, href)
-        if not abs_url.lower().startswith(("http://", "https://")):
-            continue
-        if not _same_host(abs_url, base_url):
-            continue
-        text = a.get_text(" ", strip=True)
-        s = _score_contact_link(abs_url, text)
-        if s <= 0:
-            continue
-        cand[abs_url] = max(cand.get(abs_url, -10**9), s)
-
-    ranked = sorted(cand.items(), key=lambda kv: kv[1], reverse=True)
-    return [u for (u, _) in ranked[:limit]]
-
-def discover_sitemap_urls(base_url: str, limit: int = 10) -> list:
-    out = []
-    try:
-        p = urlparse(base_url)
-        root = f"{p.scheme}://{p.netloc}"
-        rob = SESS.get(urljoin(root, "/robots.txt"), timeout=10)
-        if rob.status_code == 200:
-            for line in rob.text.splitlines():
-                if line.lower().startswith("sitemap:"):
-                    sm = line.split(":", 1)[1].strip()
-                    if sm:
-                        out.append(sm)
-    except Exception:
-        pass
-
-    try:
-        p = urlparse(base_url)
-        root = f"{p.scheme}://{p.netloc}"
-        out.append(urljoin(root, "/sitemap.xml"))
-    except Exception:
-        pass
-
-    picked, seen = [], set()
-    for sm_url in out:
-        try:
-            r = SESS.get(sm_url, timeout=15)
-            if r.status_code != 200:
-                continue
-            urls = re.findall(r"<loc>\s*(https?://[^<\s]+)\s*</loc>", r.text, flags=re.I)
-            for u in urls:
-                ul = u.lower()
-                if any(k in ul for k in CONTACT_KEYWORDS):
-                    if _same_host(u, base_url) and u not in seen:
-                        picked.append(u); seen.add(u)
-                        if len(picked) >= limit:
-                            return picked
-        except Exception:
-            continue
-    return picked
-
-def crawl_contact(site_url, home_html=None):
-    out = {"email": ""}
-    if not site_url:
-        return out
-
-    candidates = []
-
-    try:
-        if not home_html:
-            home_html = fetch(site_url).text
-        candidates += discover_contact_urls_from_home(site_url, home_html, limit=10)
-    except Exception:
-        pass
-
-    try:
-        candidates += discover_sitemap_urls(site_url, limit=8)
-    except Exception:
-        pass
-
-    candidates += gather_candidate_pages(site_url)
-
-    seen_u, ordered = set(), []
-    for u in candidates:
-        if u and u not in seen_u:
-            ordered.append(u); seen_u.add(u)
-
-    for idx, url in enumerate(ordered):
-        if idx >= MAX_CONTACT_PAGES:
-            break
-
-        base = f"{urlparse(url).scheme}://{urlparse(url).netloc}/"
-        path = urlparse(url).path or "/"
-        if not allowed_by_robots(base, path):
-            continue
-
-        try:
-            resp = fetch(url)
-        except Exception:
-            STATS["skip_fetch"] += 1
-            continue
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        emails = set(extract_emails_loose(resp.text))
-
-        for sc in soup.find_all("script", type=lambda x: (x or "").lower() == "application/ld+json"):
-            emails.update(extract_emails_loose(sc.get_text(" ") or ""))
-
-        for a in soup.select('a[href^="mailto:"]'):
-            href = a.get("href", "")
-            m = EMAIL_RE.search(href)
-            if m:
-                emails.add(m.group(0))
-
-        for sp in soup.select("span.__cf_email__, [data-cfemail]"):
-            enc = sp.get("data-cfemail")
-            dec = cf_decode(enc) if enc else ""
-            if dec and EMAIL_RE.search(dec):
-                emails.add(dec)
-
-        if emails:
-            chosen = choose_best_email(list(emails))
-            if chosen:
-                out["email"] = chosen
-                break
-
-        _sleep()
-
-    if not out["email"] and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-        dom = etld1_from_url(site_url)
-        if dom:
-            out["email"] = f"info@{dom}"
-
-    return out
-
-# ---------- official / registry ----------
+# ---------- official / registry (optional) ----------
 def uk_companies_house():
     if not (USE_COMPANIES_HOUSE and CH_API_KEY):
         return []
@@ -1162,11 +672,8 @@ def uk_companies_house():
         if r.status_code != 200:
             return []
         items = r.json().get("items") or []
-        out = []
-        for it in items:
-            nm = (it.get("company_name") or "").strip()
-            if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
+        out = [{"business_name": (it.get("company_name") or "").strip(), "website": None, "wikidata": None} for it in items]
+        out = [x for x in out if x["business_name"]]
         random.shuffle(out)
         return out
     except Exception:
@@ -1215,7 +722,7 @@ def fr_sirene(city=None):
                 nm = (e.get("periodesEtablissement") or [{}])[-1].get("enseigne1Etablissement") or ""
                 nm = nm.strip()
             if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
+                out.append({"business_name": nm, "website": None, "wikidata": None})
         random.shuffle(out)
         return out
     except Exception:
@@ -1247,7 +754,7 @@ def opencorp_search(country_code):
             nm = (c.get("company") or {}).get("name") or ""
             nm = nm.strip()
             if nm:
-                out.append({"business_name": nm, "website": None, "email": None})
+                out.append({"business_name": nm, "website": None, "wikidata": None})
         seen, uniq = set(), []
         for x in out:
             k = x["business_name"].lower()
@@ -1288,7 +795,7 @@ def ch_zefix():
                     for it in items:
                         nm = (it.get("name") or it.get("companyName") or it.get("firmName") or "").strip()
                         if nm:
-                            out.append({"business_name": nm, "website": None, "email": None})
+                            out.append({"business_name": nm, "website": None, "wikidata": None})
                     if len(out) >= 50:
                         break
                 except Exception:
@@ -1423,11 +930,12 @@ def _split_header_rest(desc: str):
     rest = lines[i:]
     return header, rest
 
-def normalize_header_block(desc, company, email, website):
+def normalize_header_block(desc: str, company: str, website: str):
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-
     header_lines, rest_lines = _split_header_rest(desc)
-    preserved = {"First": "", "Hook": "", "Variant": ""}
+
+    # Preserve existing data for these fields (including Email, but we don't touch it)
+    preserved = {"First": "", "Email": "", "Hook": "", "Variant": ""}
 
     i = 0
     while i < len(header_lines):
@@ -1453,7 +961,7 @@ def normalize_header_block(desc, company, email, website):
     new_header = [
         hard(f"Company: {company or ''}"),
         hard(f"First: {preserved['First']}"),
-        hard(f"Email: {email or ''}"),
+        hard(f"Email: {preserved['Email']}"),
         hard(f"Hook: {preserved['Hook']}"),
         hard(f"Variant: {preserved['Variant']}"),
         hard(f"Website: {website or ''}"),
@@ -1461,17 +969,12 @@ def normalize_header_block(desc, company, email, website):
     ]
     return "\n".join(new_header + rest_lines)
 
-def update_card_header(card_id, company, email, website, new_name=None):
+def update_card_header(card_id: str, company: str, website: str, new_name: Optional[str] = None) -> bool:
     cur = trello_get_card(card_id)
     desc_old = cur["desc"]
     name_old = cur["name"]
 
-    site_dom = etld1_from_url(website)
-    if site_dom and (not email or "@" not in email):
-        if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-            email = f"info@{site_dom}"
-
-    desc_new = normalize_header_block(desc_old, company, email, website)
+    desc_new = normalize_header_block(desc_old, company, website)
 
     payload = {}
     if desc_new != desc_old:
@@ -1493,39 +996,19 @@ def update_card_header(card_id, company, email, website, new_name=None):
     r.raise_for_status()
     return True
 
-def append_note(card_id, note):
-    if not note:
-        return
-    cur = trello_get_card(card_id)
-    desc = cur["desc"]
-    if "signals:" in desc.lower():
-        return
-    new_desc = desc + ("\n\n" if not desc.endswith("\n") else "\n") + note
-    SESS.put(
-        f"https://api.trello.com/1/cards/{card_id}",
-        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN},
-        data={"desc": new_desc},
-        timeout=30
-    ).raise_for_status()
-
 def is_template_blank(desc: str) -> bool:
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-
-    if re.search(r"(?mi)^\s*Company\s*:\s*$", d):
+    company = extract_label_value(d, "Company").strip()
+    website = extract_label_value(d, "Website").strip()
+    # consider blank if both are empty (email doesn't matter)
+    if company == "" and website == "":
         return True
-
-    for m in LABEL_RE["Email"].finditer(d):
-        val = (m.group(1) or "").strip()
-        if "@" not in val:
-            return True
-
-    dl = d.lower()
-    if ("company:" in dl and "email:" in dl and "website:" in dl and "@" not in dl):
+    # also treat explicit empty Company line as blank
+    if re.search(r"(?mi)^\s*Company\s*:\s*$", d) and re.search(r"(?mi)^\s*Website\s*:\s*$", d):
         return True
-
     return False
 
-def find_empty_template_cards(list_id, max_needed=1):
+def find_empty_template_cards(list_id: str, max_needed: int = 1) -> List[str]:
     r = SESS.get(
         f"https://api.trello.com/1/lists/{list_id}/cards",
         params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "id,name,desc"},
@@ -1540,7 +1023,7 @@ def find_empty_template_cards(list_id, max_needed=1):
             break
     return empties
 
-def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
+def clone_template_into_list(template_card_id: str, list_id: str, name: str="Lead (auto)"):
     if not template_card_id:
         return None
     r = SESS.post(
@@ -1552,7 +1035,7 @@ def clone_template_into_list(template_card_id, list_id, name="Lead (auto)"):
     r.raise_for_status()
     return r.json()["id"]
 
-def ensure_min_blank_templates(list_id, template_id, need):
+def ensure_min_blank_templates(list_id: str, template_id: str, need: int):
     if need <= 0 or not template_id:
         return
     empties = find_empty_template_cards(list_id, max_needed=need)
@@ -1561,57 +1044,7 @@ def ensure_min_blank_templates(list_id, template_id, need):
         clone_template_into_list(template_id, list_id, name=f"Lead (auto) {int(time.time())%100000}-{i+1}")
         time.sleep(1.0)
 
-# --- seen_domains backfill helpers ---
-URL_RE = re.compile(r"https?://[^\s)>\]]+", re.I)
-
-def any_url_in_text(text: str) -> str:
-    m = URL_RE.search(text or "")
-    return m.group(0) if m else ""
-
-def email_domain_from_text(text: str) -> str:
-    m = EMAIL_RE.search(text or "")
-    if not m:
-        return ""
-    dom = (m.group(0).split("@",1)[1] or "").lower().strip()
-    return "" if is_freemail(dom) else dom
-
-def trello_list_cards_full(list_id: str) -> list:
-    r = SESS.get(
-        f"https://api.trello.com/1/lists/{list_id}/cards",
-        params={"key": TRELLO_KEY, "token": TRELLO_TOKEN, "fields": "id,name,desc"},
-        timeout=30
-    )
-    r.raise_for_status()
-    js = r.json()
-    return js if isinstance(js, list) else []
-
-def domain_from_card_desc(desc: str) -> str:
-    website = extract_label_value(desc, "Website")
-    if website:
-        if not website.lower().startswith(("http://","https://")):
-            website = "https://" + website.strip()
-        d = etld1_from_url(website)
-        if d:
-            return d
-    url = any_url_in_text(desc)
-    if url:
-        d = etld1_from_url(url)
-        if d:
-            return d
-    dom = email_domain_from_text(extract_label_value(desc, "Email") or desc)
-    return dom
-
-def backfill_seen_from_list(list_id: str, seen: set) -> int:
-    added = 0
-    for c in trello_list_cards_full(list_id):
-        dom = domain_from_card_desc(c.get("desc") or "")
-        if dom and dom not in seen:
-            seen_domains(dom)
-            seen.add(dom)
-            added += 1
-    return added
-
-# ---------- dedupe + CSV ----------
+# ---------- seen + CSV ----------
 def load_seen():
     try:
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
@@ -1619,7 +1052,7 @@ def load_seen():
     except Exception:
         return set()
 
-def seen_domains(domain: str):
+def seen_domain_write(domain: str):
     if not domain:
         return
     d = domain.strip().lower()
@@ -1630,7 +1063,7 @@ def seen_domains(domain: str):
     except Exception:
         pass
 
-def save_seen(seen):
+def save_seen(seen: set):
     try:
         os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
         with open(SEEN_FILE, "w", encoding="utf-8") as f:
@@ -1647,10 +1080,10 @@ def append_csv(leads, city, country):
     with open(fname, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not file_exists:
-            w.writerow(["timestamp","city","country","company","email","website","q"])
+            w.writerow(["timestamp","city","country","company","website"])
         ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
         for L in leads:
-            w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
+            w.writerow([ts, city, country, L["Company"], L["Website"]])
 
 # ---------- main ----------
 def main():
@@ -1659,9 +1092,9 @@ def main():
         raise SystemExit(f"Missing env: {', '.join(missing)}")
 
     if not OVERPASS_ENABLED and not NOMINATIM_POI_ENABLED:
-        raise SystemExit("Both OVERPASS_ENABLED and NOMINATIM_POI_ENABLED are disabled; no way to fetch OSM candidates.")
+        raise SystemExit("Both OVERPASS_ENABLED and NOMINATIM_POI_ENABLED are disabled; no way to fetch candidates.")
 
-    leads = []
+    leads: List[dict] = []
     seen = load_seen()
     last_city = ""
     last_country = ""
@@ -1682,7 +1115,7 @@ def main():
             print(f"[{city}, {country}] geocode FAILED: {e}", flush=True)
             continue
 
-        # --- official sources ---
+        # --- official sources (optional) ---
         t_off = time.time()
         off = official_sources(city, country, lat, lon)
         STATS["off_candidates"] += len(off)
@@ -1690,12 +1123,10 @@ def main():
 
         leads_before_city = len(leads)
 
-        for i, biz in enumerate(off, start=1):
+        # Process official candidates
+        for biz in off:
             if len(leads) >= DAILY_LIMIT:
                 break
-
-            if i % 5 == 0:
-                print(f"[{city}] official progress: {i}/{len(off)} | leads={len(leads)}/{DAILY_LIMIT}", flush=True)
 
             website = resolve_website(
                 biz_name=biz["business_name"],
@@ -1711,108 +1142,47 @@ def main():
                 continue
 
             site_dom = etld1_from_url(website)
-            if site_dom in seen:
+            if site_dom and site_dom in seen:
                 STATS["skip_dupe_domain"] += 1
                 continue
 
+            # robots + quick fetch to ensure site is up
             p = urlparse(website)
             base = f"{p.scheme}://{p.netloc}/"
             if not allowed_by_robots(base, "/"):
                 STATS["skip_robots"] += 1
                 continue
-
             try:
-                home = fetch(website)
+                fetch(website)
             except Exception:
                 STATS["skip_fetch"] += 1
                 continue
 
-            soup_home = BeautifulSoup(home.text, "html.parser")
-            contact = crawl_contact(website, home.text)
-            email = (contact.get("email") or "").strip()
-
-            # email policy
-            if is_freemail(email_domain(email)):
-                if REQUIRE_BUSINESS_DOMAIN:
-                    STATS["skip_freemail_reject"] += 1
-                    email = ""
-                elif not ALLOW_FREEMAIL:
-                    if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_freemail_reject"] += 1
-                        email = ""
-
-            if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
-                STATS["skip_generic_local"] += 1
-                email = ""
-
-            if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
-                STATS["skip_freemail_reject"] += 1
-                email = ""
-
-            if email and "@" in email and not _mx_ok(email_domain(email)):
-                fallback_ok = (site_dom and _mx_ok(site_dom))
-                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
-                    email = f"info@{site_dom}"
-                else:
-                    STATS["skip_mx"] += 1
-                    email = ""
-
-            if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
-                STATS["skip_explicit_required"] += 1
-                email = ""
-
-            if not email or "@" not in email:
-                if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-                    email = f"info@{site_dom}"
-                else:
-                    STATS["skip_no_email"] += 1
-                    continue
-
-            q = quality_score(website, home.text, soup_home, email)
-            if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                STATS["skip_quality"] += 1
-                continue
-            if q < QUALITY_MIN:
-                STATS["skip_quality"] += 1
-                continue
-
-            leads.append({
-                "Company": biz["business_name"],
-                "Email": email,
-                "Website": website,
-                "q": q,
-                "signals": summarize_signals(q, website, email, soup_home),
-            })
+            leads.append({"Company": biz["business_name"], "Website": website})
 
             if site_dom:
-                seen_domains(site_dom)
+                seen_domain_write(site_dom)
                 seen.add(site_dom)
 
             _sleep()
 
         print(f"[{city}] official done: +{len(leads)-leads_before_city} leads", flush=True)
 
-        # --- OSM fallback (NOW: Overpass OR Nominatim POI) ---
+        # --- OSM / POI fallback ---
         if len(leads) < DAILY_LIMIT:
             t_osm = time.time()
             print(f"[{city}] OSM search starting...", flush=True)
 
             cands = get_osm_candidates(city, country, lat, lon, south, west, north, east)
             STATS["osm_candidates"] += len(cands)
-
-            source_hint = "overpass" if OVERPASS_ENABLED and STATS["cand_overpass"] else "nominatim_poi" if NOMINATIM_POI_ENABLED else "none"
-            print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s) via {source_hint}", flush=True)
+            via = "overpass" if (OVERPASS_ENABLED and STATS["cand_overpass"]) else "nominatim_poi" if NOMINATIM_POI_ENABLED else "none"
+            print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s) via {via}", flush=True)
 
             leads_before_osm = len(leads)
 
-            for j, biz in enumerate(cands, start=1):
+            for biz in cands:
                 if len(leads) >= DAILY_LIMIT:
                     break
-
-                if j % 25 == 0:
-                    print(f"[{city}] OSM progress: {j}/{len(cands)} | leads={len(leads)}/{DAILY_LIMIT}", flush=True)
 
                 lat0 = biz.get("lat") or lat
                 lon0 = biz.get("lon") or lon
@@ -1826,18 +1196,12 @@ def main():
                     direct=biz.get("website"),
                     wikidata_qid=biz.get("wikidata"),
                 )
-
-                if not website and biz.get("email"):
-                    dom0 = email_domain(biz["email"])
-                    if dom0 and not is_freemail(dom0):
-                        website = normalize_url(f"https://{dom0}")
-
                 if not website:
                     STATS["skip_no_website"] += 1
                     continue
 
                 site_dom = etld1_from_url(website)
-                if site_dom in seen:
+                if site_dom and site_dom in seen:
                     STATS["skip_dupe_domain"] += 1
                     continue
 
@@ -1846,73 +1210,16 @@ def main():
                 if not allowed_by_robots(base, "/"):
                     STATS["skip_robots"] += 1
                     continue
-
                 try:
-                    home = fetch(website)
+                    fetch(website)
                 except Exception:
                     STATS["skip_fetch"] += 1
                     continue
 
-                soup_home = BeautifulSoup(home.text, "html.parser")
-                contact = crawl_contact(website, home.text)
-                email = (contact.get("email") or "").strip()
-
-                if is_freemail(email_domain(email)):
-                    if REQUIRE_BUSINESS_DOMAIN:
-                        STATS["skip_freemail_reject"] += 1
-                        email = ""
-                    elif not ALLOW_FREEMAIL:
-                        if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
-                            email = f"info@{site_dom}"
-                        else:
-                            STATS["skip_freemail_reject"] += 1
-                            email = ""
-
-                if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
-                    STATS["skip_generic_local"] += 1
-                    email = ""
-
-                if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
-                    STATS["skip_freemail_reject"] += 1
-                    email = ""
-
-                if email and "@" in email and not _mx_ok(email_domain(email)):
-                    fallback_ok = (site_dom and _mx_ok(site_dom))
-                    if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_mx"] += 1
-                        email = ""
-
-                if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
-                    STATS["skip_explicit_required"] += 1
-                    email = ""
-
-                if not email or "@" not in email:
-                    if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_no_email"] += 1
-                        continue
-
-                q = quality_score(website, home.text, soup_home, email)
-                if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                    STATS["skip_quality"] += 1
-                    continue
-                if q < QUALITY_MIN:
-                    STATS["skip_quality"] += 1
-                    continue
-
-                leads.append({
-                    "Company": biz["business_name"],
-                    "Email": email,
-                    "Website": website,
-                    "q": q,
-                    "signals": summarize_signals(q, website, email, soup_home),
-                })
+                leads.append({"Company": biz["business_name"], "Website": website})
 
                 if site_dom:
-                    seen_domains(site_dom)
+                    seen_domain_write(site_dom)
                     seen.add(site_dom)
 
                 _sleep()
@@ -1924,24 +1231,21 @@ def main():
         if len(leads) >= DAILY_LIMIT:
             break
 
+    # Trim to limit
     if leads:
-        leads.sort(key=lambda x: x.get("q", 0), reverse=True)
         leads = leads[:DAILY_LIMIT]
 
+    # Ensure blank templates exist (optional)
     need = min(DAILY_LIMIT, len(leads))
     if PRECLONE and need > 0 and TRELLO_TEMPLATE_CARD_ID:
         ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
 
+    # Save CSV (optional)
     if leads and last_city and last_country:
         append_csv(leads, last_city, last_country)
 
+    # Push to Trello
     def push_one_lead(lead: dict, seen: set) -> bool:
-        if SKIP_GENERIC_EMAILS and "@" in (lead.get("Email") or ""):
-            local = lead["Email"].split("@", 1)[0]
-            if is_generic_mailbox_local(local):
-                print(f"Skip generic mailbox: {lead['Email']} — {lead['Company']}", flush=True)
-                return False
-
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
             print("No empty template card available; skipping push.", flush=True)
@@ -1951,38 +1255,23 @@ def main():
         changed = update_card_header(
             card_id=card_id,
             company=lead["Company"],
-            email=lead["Email"],
             website=lead["Website"],
             new_name=lead["Company"],
         )
 
-        cur = trello_get_card(card_id)
-        website_on_card = extract_label_value(cur["desc"], "Website") or (lead.get("Website") or "")
-        website_on_card = normalize_url(website_on_card)
-        site_dom = etld1_from_url(website_on_card)
-
-        if not site_dom:
-            em_dom = email_domain(lead.get("Email") or "")
-            if em_dom and not is_freemail(em_dom):
-                site_dom = em_dom
-
-        if site_dom:
-            seen_domains(site_dom)
-            seen.add(site_dom)
+        # Always persist domain after push attempt
+        dom = etld1_from_url(lead.get("Website") or "")
+        if dom:
+            seen_domain_write(dom)
+            seen.add(dom)
 
         if changed:
-            print(f"PUSHED ✅ q={lead.get('q',0):.2f} — {lead['Company']} — {lead['Email']} — {lead['Website']}", flush=True)
-            if ADD_SIGNALS_NOTE:
-                append_note(card_id, lead.get("signals", ""))
+            print(f"PUSHED ✅ — {lead['Company']} — {lead['Website']}", flush=True)
         else:
-            print(f"UNCHANGED ℹ️ (still recorded domain) — {lead['Company']}", flush=True)
-
+            print(f"UNCHANGED ℹ️ — {lead['Company']}", flush=True)
         return True
 
     pushed = 0
-    if leads:
-        leads.sort(key=lambda x: x.get("q", 0), reverse=True)
-
     for lead in leads:
         if pushed >= DAILY_LIMIT:
             break
@@ -1992,19 +1281,12 @@ def main():
             time.sleep(max(0, PUSH_INTERVAL_S) + max(0, BUTLER_GRACE_S))
 
     if DEBUG:
-        print("Skip summary:", json.dumps(STATS, indent=2), flush=True)
-
-    list_for_backfill = os.getenv("TRELLO_LIST_ID_SEENSYNC") or TRELLO_LIST_ID
-    try:
-        added = backfill_seen_from_list(list_for_backfill, seen)
-        print(f"Backfill: added {added} domain(s) from list {list_for_backfill}", flush=True)
-    except Exception as e:
-        print(f"Backfill skipped due to error: {e}", flush=True)
+        print("Stats:", json.dumps(STATS, indent=2), flush=True)
 
     save_seen(seen)
 
     print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}", flush=True)
-    print(f"Done. Leads pushed: {pushed}/{min(len(leads), DAILY_LIMIT)}", flush=True)
+    print(f"Done. Leads pushed: {pushed}/{len(leads)}", flush=True)
 
 if __name__ == "__main__":
     main()
