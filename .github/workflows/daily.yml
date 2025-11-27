@@ -21,38 +21,22 @@ jobs:
       PYTHONUNBUFFERED: "1"
       DEBUG: "1"
 
-      # App secrets
+      # Required secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
-      TRELLO_TEMPLATE_CARD_ID: ${{ secrets.TRELLO_TEMPLATE_CARD_ID }}
-
-      FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
       NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
 
-      USE_COMPANIES_HOUSE: ${{ secrets.USE_COMPANIES_HOUSE }}
-      CH_API_KEY: ${{ secrets.CH_API_KEY }}
+      # Optional discovery (only if you set this secret)
+      FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
 
-      USE_SIRENE: ${{ secrets.USE_SIRENE }}
-      SIRENE_KEY: ${{ secrets.SIRENE_KEY }}
-      SIRENE_SECRET: ${{ secrets.SIRENE_SECRET }}
+      # Disable official sources (speed)
+      USE_COMPANIES_HOUSE: "0"
+      USE_SIRENE: "0"
+      USE_OPENCORP: "0"
+      USE_ZEFIX: "0"
 
-      USE_OPENCORP: ${{ secrets.USE_OPENCORP }}
-      OPENCORP_API_KEY: ${{ secrets.OPENCORP_API_KEY }}
-
-      USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
-
-      ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
-
-      ALLOW_FREEMAIL: ${{ secrets.ALLOW_FREEMAIL }}
-      FREEMAIL_EXTRA_Q: ${{ secrets.FREEMAIL_EXTRA_Q }}
-
-      COUNTRY_WHITELIST: ${{ secrets.COUNTRY_WHITELIST }}
-      CITY_MODE: ${{ secrets.CITY_MODE }}
-      FORCE_COUNTRY: ${{ secrets.FORCE_COUNTRY }}
-      FORCE_CITY: ${{ secrets.FORCE_CITY }}
-
-      # Force NO-EMAIL mode (override any secrets)
+      # Force NO-EMAIL mode
       COLLECT_EMAIL: "0"
       REQUIRE_EXPLICIT_EMAIL: "0"
       SKIP_GENERIC_EMAILS: "0"
@@ -60,16 +44,16 @@ jobs:
       VERIFY_MX: "0"
       USE_WHOIS: "0"
 
+      # Tuning
       QUALITY_MIN: "1.0"
       DAILY_LIMIT: "25"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.2"
-      MAX_CONTACT_PAGES: "1"
       CITY_HOPS: "14"
-      OSM_RADIUS_M: "2500"
+      OSM_RADIUS_M: "15000"
       BUTLER_GRACE_S: "10"
 
-      # Force the script + commit step to use the same file path
+      # Persist
       SEEN_FILE: .data/seen_domains.txt
 
     steps:
@@ -114,57 +98,6 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Show effective config (non-secret)
-        run: |
-          echo "REQUIRE_EXPLICIT_EMAIL=${REQUIRE_EXPLICIT_EMAIL:-unset}"
-          echo "SKIP_GENERIC_EMAILS=${SKIP_GENERIC_EMAILS:-unset}"
-          echo "REQUIRE_BUSINESS_DOMAIN=${REQUIRE_BUSINESS_DOMAIN:-unset}"
-          echo "ALLOW_FREEMAIL=${ALLOW_FREEMAIL:-unset}"
-          echo "QUALITY_MIN=${QUALITY_MIN:-unset}"
-          echo "FOURSQUARE_API_KEY_SET=$([ -n "${FOURSQUARE_API_KEY:-}" ] && echo yes || echo no)"
-          echo "USER_AGENT=${USER_AGENT:-unset}"
-
-      - name: Show effective Python config
-        run: |
-          python - <<'PY'
-          import os
-
-          def env_int(name, default):
-              v = (os.getenv(name) or "").strip()
-              try: return int(v)
-              except: return int(default)
-
-          def env_float(name, default):
-              v = (os.getenv(name) or "").strip()
-              try: return float(v)
-              except: return float(default)
-
-          def env_on(name, default=False):
-              v = (os.getenv(name) or "").strip().lower()
-              if v in ("1","true","yes","on"): return True
-              if v in ("0","false","no","off"): return False
-              return bool(default)
-
-          print("=== Computed effective config (after defaults) ===")
-          print("DAILY_LIMIT =", env_int("DAILY_LIMIT", 25))
-          print("PUSH_INTERVAL_S =", env_int("PUSH_INTERVAL_S", 20))
-          print("REQUEST_DELAY_S =", env_float("REQUEST_DELAY_S", 0.2))
-          print("QUALITY_MIN =", env_float("QUALITY_MIN", 1.2))
-
-          print("REQUIRE_EXPLICIT_EMAIL =", env_on("REQUIRE_EXPLICIT_EMAIL", False))
-          print("ADD_SIGNALS_NOTE =", env_on("ADD_SIGNALS_NOTE", False))
-          print("SKIP_GENERIC_EMAILS =", env_on("SKIP_GENERIC_EMAILS", False))
-          print("REQUIRE_BUSINESS_DOMAIN =", env_on("REQUIRE_BUSINESS_DOMAIN", False))
-          print("ALLOW_FREEMAIL =", env_on("ALLOW_FREEMAIL", True))
-          print("FREEMAIL_EXTRA_Q =", env_float("FREEMAIL_EXTRA_Q", 0.3))
-
-          print("CITY_MODE =", (os.getenv("CITY_MODE") or "rotate"))
-          print("FORCE_COUNTRY =", (os.getenv("FORCE_COUNTRY") or "").strip())
-          print("FORCE_CITY =", (os.getenv("FORCE_CITY") or "").strip())
-          print("COUNTRY_WHITELIST =", (os.getenv("COUNTRY_WHITELIST") or "").strip())
-          print("SEEN_FILE =", (os.getenv("SEEN_FILE") or "seen_domains.txt"))
-          PY
-
       - name: Run pipeline
         run: |
           set -euo pipefail
@@ -184,4 +117,4 @@ jobs:
 
           git commit -m "chore: update .data/seen_domains.txt [skip ci]"
           git pull --rebase --autostash
-          git push --force-with-lease
+          git push
