@@ -478,7 +478,7 @@ def _norm_name(s: str) -> str:
     return " ".join(parts)
 
 def _escape_overpass_regex(s: str) -> str:
-    return re.sub(r'([.^$*+?{}$begin:math:display$$end:math:display$\\|()])', r'\\\1', s)
+    return re.sub(r'([.^$*+?{}\[\]\\|()])', r'\\\1', s)
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     if None in (lat1, lon1, lat2, lon2):
@@ -930,11 +930,13 @@ def _split_header_rest(desc: str):
     rest = lines[i:]
     return header, rest
 
-def normalize_header_block(desc, company, email, website):
+def normalize_header_block(desc: str, company: str, website: str) -> str:
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
 
     header_lines, rest_lines = _split_header_rest(desc)
-    preserved = {"First": "", "Hook": "", "Variant": ""}
+
+    # preserve existing values already on the card (including Email)
+    preserved = {"First": "", "Email": "", "Hook": "", "Variant": ""}
 
     i = 0
     while i < len(header_lines):
@@ -949,7 +951,7 @@ def normalize_header_block(desc, company, email, website):
                 if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
                     val = nxt.strip()
                     i += 1
-            if lab in preserved and not preserved[lab]:
+            if lab in preserved and preserved[lab] == "":
                 preserved[lab] = val
             break
         i += 1
@@ -960,14 +962,15 @@ def normalize_header_block(desc, company, email, website):
     new_header = [
         hard(f"Company: {company or ''}"),
         hard(f"First: {preserved['First']}"),
-        hard(f"Email: {email or ''}"),
+        hard(f"Email: {preserved['Email']}"),
         hard(f"Hook: {preserved['Hook']}"),
         hard(f"Variant: {preserved['Variant']}"),
         hard(f"Website: {website or ''}"),
         "",
     ]
 
-    out = "\n".join(new_header + rest_lines).rstrip() + "\n\n@lead\n"
+    # IMPORTANT: don't rstrip spaces (would kill the "  " markdown breaks)
+    out = ("\n".join(new_header + rest_lines)).rstrip("\n") + "\n\n@lead\n"
     return out
 
 def update_card_header(card_id: str, company: str, website: str, new_name: Optional[str] = None) -> bool:
@@ -1176,7 +1179,7 @@ def main():
 
             cands = get_osm_candidates(city, country, lat, lon, south, west, north, east)
             STATS["osm_candidates"] += len(cands)
-            via = "overpass" if (OVERPASS_ENABLED and STATS["cand_overpass"]) else "nominatim_poi" if NOMINATIM_POI_ENABLED else "none"
+            via = "overpass" if cands and cands[0].get("website") is not None and OVERPASS_ENABLED else "nominatim_poi"
             print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s) via {via}", flush=True)
 
             leads_before_osm = len(leads)
