@@ -58,7 +58,7 @@ def env_on(name, default=False):
     return bool(default)
 
 # ---------- config ----------
-DAILY_LIMIT      = env_int("DAILY_LIMIT", 20)
+DAILY_LIMIT      = env_int("DAILY_LIMIT", 25)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)     # base pace (you also add BUTLER_GRACE_S)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 QUALITY_MIN      = env_float("QUALITY_MIN", 1.2)
