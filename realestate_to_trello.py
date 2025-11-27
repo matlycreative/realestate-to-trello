@@ -21,16 +21,16 @@
 #  10) Separate OVERPASS_LOOKUP_TIMEOUT_S for optional name-based lookup
 #  11) Local-run guard to avoid default NOMINATIM_EMAIL
 #
-# EXTRA (precise fix for “0 OSM candidates in GitHub Actions”):
-#  12) Overpass failures are surfaced (status code + short body snippet)
-#  13) Overpass strict query fallback: if strict (direct-contact) is empty, retry with broad query then filter in Python
-#  14) Optional multi-point sampling per city bbox (OSM_CITY_POINTS) to avoid “city center in water/park” zeros
-#  15) Optional radius bump on fallback (OSM_FALLBACK_RADIUS_M)
+# Added in this version (GitHub-friendly / no env required):
+#  12) Overpass no longer fails silently: prints non-200 + snippet / JSON errors
+#  13) Automatic fallback: strict OSM query -> relaxed query if results are low/zero
+#  14) Adaptive radius retries (2.5km -> 5km -> 10km -> 20km cap) to avoid "0 everywhere"
+#  15) Expanded OSM tag filters to include common variants
 
 import os, re, json, time, random, csv, pathlib, html, math
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
-from typing import Optional, Tuple, List
+from typing import Optional
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -95,6 +95,12 @@ VERIFY_MX  = env_on("VERIFY_MX", 0)  # default OFF for volume
 # pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
 
+# OSM fallback behavior (self-healing; no env required)
+OSM_ADAPTIVE_RADIUS      = env_on("OSM_ADAPTIVE_RADIUS", True)
+OSM_MAX_RADIUS_M         = env_int("OSM_MAX_RADIUS_M", 20000)
+OSM_RADIUS_STEPS         = env_int("OSM_RADIUS_STEPS", 4)  # base, x2, x4, x8 (capped)
+OSM_STRICT_MIN_CANDIDATES = env_int("OSM_STRICT_MIN_CANDIDATES", 3)  # if strict < this -> relaxed fallback
+
 STATS = {
     "off_candidates": 0, "osm_candidates": 0,
     "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
@@ -118,10 +124,6 @@ FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
 CITY_HOPS = env_int("CITY_HOPS", 8)
 OSM_RADIUS_M = env_int("OSM_RADIUS_M", 2500)
-
-# EXTRA: city sampling and fallback radius bump for the “0 candidates” case
-OSM_CITY_POINTS = env_int("OSM_CITY_POINTS", 1)  # 1 = center only, 3-7 recommended
-OSM_FALLBACK_RADIUS_M = env_int("OSM_FALLBACK_RADIUS_M", 10000)  # applied only when strict result is empty
 
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
 UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
@@ -194,13 +196,19 @@ def throttle(key: str, min_interval_s: float):
         time.sleep(wait)
     _LAST_CALL[key] = time.monotonic()
 
+# Expanded filters: common variants across regions
 OSM_FILTERS = [
     ("office","estate_agent"),
     ("office","real_estate"),
+    ("office","real_estate_agent"),
     ("office","property_management"),
+    ("office","property_agent"),
     ("shop","estate_agent"),
     ("shop","real_estate"),
+    ("amenity","estate_agent"),
+    ("amenity","real_estate_agent"),
 ]
+
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
 # freemail detection
@@ -218,6 +226,19 @@ def is_freemail(domain: str) -> bool:
     return any(re.search(p, d) for p in FREEMAIL_PATTERNS)
 
 # cities
+CITY_ROTATION = [
+    ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
+    ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
+    ("New York","United States"), ("Los Angeles","United States"), ("Chicago","United States"),
+    ("Miami","United States"), ("San Francisco","United States"), ("Dallas","United States"),
+    ("Paris","France"), ("Lyon","France"), ("Marseille","France"), ("Toulouse","France"),
+    ("Berlin","Germany"), ("Munich","Germany"), ("Hamburg","Germany"), ("Frankfurt","Germany"),
+    ("Milan","Italy"), ("Rome","Italy"), ("Naples","Italy"), ("Turin","Italy"),
+    ("Oslo","Norway"), ("Bergen","Norway"),
+    ("Copenhagen, Denmark"),  # NOTE: keep as you had? (you had "Copenhagen","Denmark" earlier)
+]
+
+# Keep your original list exactly (your earlier list was correct):
 CITY_ROTATION = [
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
     ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
@@ -580,158 +601,164 @@ def geocode_city(city, country):
     south, north, west, east = map(float, data[0]["boundingbox"])
     return south, west, north, east
 
-# EXTRA: Overpass helper w/ visible failures
-OVERPASS_ENDPOINTS = [
+_OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter",
     "https://overpass.nchc.org.tw/api/interpreter",
-]
-def _overpass_post(q: str, timeout_s: int, label: str) -> Optional[dict]:
-    last_err = None
-    for url in OVERPASS_ENDPOINTS:
-        try:
-            throttle("overpass", 2.0)
-            t0 = time.time()
-            r = SESS.post(url, data=q.encode("utf-8"), timeout=timeout_s + 35)
-            dt = time.time() - t0
+    "https://overpass.openstreetmap.ru/api/interpreter",
+)
 
-            if r.status_code == 200:
-                try:
-                    return r.json()
-                except Exception as e:
-                    snippet = (r.text or "").strip().replace("\n", " ")[:220]
-                    print(f"[overpass] {label} JSON decode failed from {url} after {dt:.1f}s: {e} | body='{snippet}'", flush=True)
-                    last_err = e
+def _overpass_run(q: str, timeout_s: int, purpose: str) -> Optional[dict]:
+    """
+    GitHub Actions reality:
+      - Overpass can 429/5xx or return HTML.
+      - JSON decode can fail.
+    This helper retries endpoints + prints a minimal error line so it's not silent.
+    """
+    payload = q.encode("utf-8")
+    for url in _OVERPASS_ENDPOINTS:
+        for attempt in range(3):
+            try:
+                throttle("overpass", 2.0)
+                r = SESS.post(url, data=payload, timeout=timeout_s + 35)
+
+                if r.status_code == 200:
+                    try:
+                        return r.json()
+                    except Exception:
+                        snippet = (r.text or "")[:200].replace("\n", " ")
+                        print(f"[overpass] JSON decode failed ({purpose}) via {url} snippet='{snippet}'", flush=True)
+                        time.sleep(1.5 * (attempt + 1))
+                        continue
+
+                # Non-200: print once per attempt (not too noisy, but not silent)
+                snippet = (r.text or "")[:160].replace("\n", " ")
+                print(f"[overpass] {r.status_code} ({purpose}) via {url} attempt={attempt+1} snippet='{snippet}'", flush=True)
+
+                # Backoff for rate-limit / overload
+                if r.status_code in (429, 502, 503, 504):
+                    time.sleep(2.5 * (attempt + 1))
                     continue
+                break
 
-            retry_after = r.headers.get("Retry-After") or ""
-            snippet = (r.text or "").strip().replace("\n", " ")[:220]
-            print(f"[overpass] {label} non-200 from {url} after {dt:.1f}s: {r.status_code} retry_after='{retry_after}' body='{snippet}'", flush=True)
-
-            if r.status_code in (429, 504, 502, 503):
-                # backoff that actually shows up in Actions logs
-                backoff = 3.0 if r.status_code == 429 else 2.0
-                try:
-                    ra = float(retry_after) if retry_after else 0.0
-                except Exception:
-                    ra = 0.0
-                time.sleep(max(backoff, ra))
+            except Exception as e:
+                print(f"[overpass] error ({purpose}) via {url} attempt={attempt+1}: {e}", flush=True)
+                time.sleep(2.0 * (attempt + 1))
                 continue
-
-            last_err = RuntimeError(f"Overpass non-200: {r.status_code}")
-        except Exception as e:
-            last_err = e
-            print(f"[overpass] {label} exception from {url}: {e}", flush=True)
-            continue
-
-    if DEBUG and last_err:
-        print(f"[overpass] {label} failed on all endpoints: {last_err}", flush=True)
     return None
 
-def _overpass_rows_from_json(js: dict) -> list:
-    rows = []
-    for el in (js.get("elements") or []):
-        tags = el.get("tags", {}) or {}
-        name = (tags.get("name") or "").strip()
-        if not name:
-            continue
-
-        website = tags.get("website") or tags.get("contact:website") or tags.get("url")
-        email   = tags.get("email") or tags.get("contact:email")
-        wikidata = tags.get("wikidata")
-
-        lat2 = el.get("lat")
-        lon2 = el.get("lon")
-        if (lat2 is None or lon2 is None) and isinstance(el.get("center"), dict):
-            lat2 = el["center"].get("lat")
-            lon2 = el["center"].get("lon")
-
-        rows.append({
-            "business_name": name,
-            "website": normalize_url(website) if website else None,
-            "email": email,
-            "wikidata": wikidata,
-            "lat": lat2,
-            "lon": lon2,
-            # keep raw tags if you ever need debug
-        })
-    return rows
-
-def _dedup_osm_rows(rows: list) -> list:
-    dedup = {}
-    for r0 in rows:
-        key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
-        if key not in dedup:
-            dedup[key] = r0
-    out = list(dedup.values())
-    random.shuffle(out)
-    return out[:max(1, OSM_MAX_CANDIDATES)]
-
 def overpass_estate_agents(lat: float, lon: float, radius_m: int):
-    # Strict query: only objects that already have website/url/email tags (fast, high yield).
-    def block(k, v, extra_tag):
-        return f'nwr(around:{radius_m},{lat},{lon})["{k}"="{v}"]["name"]["{extra_tag}"];'
+    # If we require direct contact, ask Overpass ONLY for elements that already have website/url/email tags.
+    def block(k, v, extra_tag, r_m):
+        return f'nwr(around:{r_m},{lat},{lon})["{k}"="{v}"]["name"]["{extra_tag}"];'
 
-    if OSM_REQUIRE_DIRECT_CONTACT:
-        contact_tags = ["website", "contact:website", "url", "email", "contact:email"]
+    def block_loose(k, v, r_m):
+        # No contact requirement, just the category + any named object
+        return f'nwr(around:{r_m},{lat},{lon})["{k}"="{v}"]["name"];'
+
+    def make_query_strict(r_m: int) -> str:
         parts = []
+        contact_tags = ["website", "contact:website", "url", "email", "contact:email"]
         for k, v in OSM_FILTERS:
             for tag in contact_tags:
-                parts.append(block(k, v, tag))
-
-        q_strict = f"""
+                parts.append(block(k, v, tag, r_m))
+        return f"""
 [out:json][timeout:{OVERPASS_TIMEOUT_S}];
 (
   {' '.join(parts)}
 );
 out tags center qt;
 """
-        js = _overpass_post(q_strict, OVERPASS_TIMEOUT_S, label=f"strict r={radius_m}")
-        if js:
-            rows = _overpass_rows_from_json(js)
-            if rows:
-                return _dedup_osm_rows(rows)
 
-        # ✅ precise fallback: broaden query (fewer selectors) and filter in Python
-        radius2 = max(radius_m, OSM_FALLBACK_RADIUS_M)
-        parts2 = []
+    def make_query_loose(r_m: int) -> str:
+        parts = []
         for k, v in OSM_FILTERS:
-            parts2.append(f'nwr(around:{radius2},{lat},{lon})["{k}"="{v}"]["name"];')
-        q_broad = f"""
-[out:json][timeout:{OVERPASS_TIMEOUT_S}];
-(
-  {' '.join(parts2)}
-);
-out tags center qt;
-"""
-        js2 = _overpass_post(q_broad, OVERPASS_TIMEOUT_S, label=f"broad r={radius2}")
-        if not js2:
-            return []
-        rows2 = _overpass_rows_from_json(js2)
-
-        # keep only those with at least one contact hint (same keys as strict)
-        kept = []
-        for r0 in rows2:
-            if r0.get("website") or r0.get("email"):
-                kept.append(r0)
-        return _dedup_osm_rows(kept)
-
-    # Non-strict mode (single broad query)
-    parts = []
-    for k, v in OSM_FILTERS:
-        parts.append(f'nwr(around:{radius_m},{lat},{lon})["{k}"="{v}"]["name"];')
-    q = f"""
+            parts.append(block_loose(k, v, r_m))
+        return f"""
 [out:json][timeout:{OVERPASS_TIMEOUT_S}];
 (
   {' '.join(parts)}
 );
 out tags center qt;
 """
-    js = _overpass_post(q, OVERPASS_TIMEOUT_S, label=f"broad-only r={radius_m}")
-    if not js:
-        return []
-    return _dedup_osm_rows(_overpass_rows_from_json(js))
+
+    # ---- adaptive radius plan (no env required) ----
+    radii = [max(500, int(radius_m))]
+    if OSM_ADAPTIVE_RADIUS:
+        # grow radius: x2, x4, x8 (capped)
+        r = radii[0]
+        for _ in range(max(0, OSM_RADIUS_STEPS - 1)):
+            r = min(OSM_MAX_RADIUS_M, r * 2)
+            if r != radii[-1]:
+                radii.append(r)
+
+    def parse_rows(js: dict) -> list:
+        rows = []
+        for el in (js.get("elements", []) if isinstance(js, dict) else []):
+            tags = el.get("tags", {}) or {}
+            name = (tags.get("name") or "").strip()
+            if not name:
+                continue
+
+            website = tags.get("website") or tags.get("contact:website") or tags.get("url")
+            email   = tags.get("email") or tags.get("contact:email")
+            wikidata = tags.get("wikidata")
+
+            lat2 = el.get("lat")
+            lon2 = el.get("lon")
+            if (lat2 is None or lon2 is None) and isinstance(el.get("center"), dict):
+                lat2 = el["center"].get("lat")
+                lon2 = el["center"].get("lon")
+
+            rows.append({
+                "business_name": name,
+                "website": normalize_url(website) if website else None,
+                "email": email,
+                "wikidata": wikidata,
+                "lat": lat2,
+                "lon": lon2,
+            })
+
+        # de-dup (name + domain)
+        dedup = {}
+        for r0 in rows:
+            key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
+            if key not in dedup:
+                dedup[key] = r0
+
+        out = list(dedup.values())
+        random.shuffle(out)
+        return out[:max(1, OSM_MAX_CANDIDATES)]
+
+    # ---- 1) strict first (fast/high quality) ----
+    if OSM_REQUIRE_DIRECT_CONTACT:
+        for r_m in radii:
+            js = _overpass_run(make_query_strict(r_m), OVERPASS_TIMEOUT_S, purpose=f"strict r={r_m}")
+            if not js:
+                continue
+            out = parse_rows(js)
+            if len(out) >= OSM_STRICT_MIN_CANDIDATES:
+                dbg(f"[overpass] strict ok: r={r_m} -> {len(out)} candidates")
+                return out
+            # if strict returned some but low, keep trying larger radius
+            if out:
+                dbg(f"[overpass] strict low: r={r_m} -> {len(out)} candidates; trying bigger radius")
+                continue
+
+        # ---- 2) automatic relaxed fallback (prevents “0 everywhere” on GH) ----
+        print("[overpass] strict yielded too few/zero; falling back to relaxed query (no contact-tag requirement).", flush=True)
+
+    # ---- relaxed query ----
+    for r_m in radii:
+        js = _overpass_run(make_query_loose(r_m), OVERPASS_TIMEOUT_S, purpose=f"relaxed r={r_m}")
+        if not js:
+            continue
+        out = parse_rows(js)
+        if out:
+            dbg(f"[overpass] relaxed ok: r={r_m} -> {len(out)} candidates")
+            return out
+
+    return []
 
 # ---------- Foursquare website finder (v3) ----------
 def fsq_find_website(name, lat, lon):
@@ -774,7 +801,6 @@ def _norm_name(s: str) -> str:
     parts = [p for p in s.split() if p and p not in LEGAL_SUFFIXES]
     return " ".join(parts)
 
-# ✅ FIX: escape tokens safely for Overpass regex
 def _escape_overpass_regex(s: str) -> str:
     return re.escape(s or "")
 
@@ -808,7 +834,7 @@ def overpass_lookup_website_by_name(name: str, lat: float, lon: float, radius_m:
 );
 out tags center;
 """
-    js = _overpass_post(q, OVERPASS_LOOKUP_TIMEOUT_S, label="name-lookup")
+    js = _overpass_run(q, OVERPASS_LOOKUP_TIMEOUT_S, purpose="name-lookup")
     if not js:
         return None
 
@@ -1465,8 +1491,6 @@ def append_note(card_id, note):
 
 def is_template_blank(desc: str) -> bool:
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-    # In "no email" mode, Email will be blank forever.
-    # So the ONLY reliable signal of an empty template card is: Company is blank.
     return bool(re.search(r"(?mi)^\s*Company\s*:\s*$", d))
 
 def find_empty_template_cards(list_id, max_needed=1):
@@ -1583,7 +1607,6 @@ def save_seen(seen):
     except Exception:
         pass
 
-# ✅ FIX: per-lead City/Country in CSV (multi-city correctness)
 def append_csv(leads):
     if not leads:
         return
@@ -1606,22 +1629,8 @@ def append_csv(leads):
             ])
 
 # ---------- main ----------
-def _city_sample_points(south: float, west: float, north: float, east: float, n: int) -> List[Tuple[float,float]]:
-    # n=1 -> center only. n>1 -> add random points inside bbox to avoid “center in water” cases.
-    cx = (south + north) / 2.0
-    cy = (west + east) / 2.0
-    pts = [(cx, cy)]
-    if n <= 1:
-        return pts
-    # deterministic-ish but still spreads across bbox
-    for _ in range(max(0, n-1)):
-        lat = random.uniform(south, north)
-        lon = random.uniform(west, east)
-        pts.append((lat, lon))
-    return pts
-
 def main():
-    # ✅ FIX: Local-run safety to avoid default NOMINATIM_EMAIL
+    # Local-run safety (skips in CI)
     if (os.getenv("CI") or "").strip() == "" and (not NOMINATIM_EMAIL or "example.com" in NOMINATIM_EMAIL):
         raise SystemExit("NOMINATIM_EMAIL is missing or placeholder. Set it to a real email to comply with Nominatim policy.")
 
@@ -1697,7 +1706,7 @@ def main():
                 continue
 
             soup_home = BeautifulSoup(home.text, "html.parser")
-            email = ""  # forced no-email mode in your workflow
+            email = ""
 
             q = quality_score(website, home.text, soup_home, email)
             if q < QUALITY_MIN:
@@ -1726,28 +1735,7 @@ def main():
         if len(leads) < DAILY_LIMIT:
             t_osm = time.time()
             print(f"[{city}] OSM search starting...", flush=True)
-
-            # ✅ FIX: multi-point sampling inside bbox
-            points = _city_sample_points(south, west, north, east, max(1, OSM_CITY_POINTS))
-            agg = []
-            for idx, (plat, plon) in enumerate(points, start=1):
-                if len(agg) >= OSM_MAX_CANDIDATES:
-                    break
-                print(f"[{city}] OSM point {idx}/{len(points)} @ {plat:.5f},{plon:.5f}", flush=True)
-                agg.extend(overpass_estate_agents(plat, plon, OSM_RADIUS_M))
-                # light pause between points so GH actions doesn't hammer Overpass bursts
-                time.sleep(0.5)
-
-            # de-dup aggregated candidates across points
-            ded = {}
-            for r0 in agg:
-                key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
-                if key not in ded:
-                    ded[key] = r0
-            cands = list(ded.values())
-            random.shuffle(cands)
-            cands = cands[:max(1, OSM_MAX_CANDIDATES)]
-
+            cands = overpass_estate_agents(lat, lon, OSM_RADIUS_M)
             STATS["osm_candidates"] += len(cands)
             print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s)", flush=True)
 
@@ -1803,7 +1791,7 @@ def main():
                     continue
 
                 soup_home = BeautifulSoup(home.text, "html.parser")
-                email = ""  # forced no-email mode in your workflow
+                email = ""
 
                 q = quality_score(website, home.text, soup_home, email)
                 if q < QUALITY_MIN:
