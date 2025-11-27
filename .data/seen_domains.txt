@@ -59,6 +59,7 @@ human-immobilier.fr
 iconacasa.com
 ics-immo.com
 ilopimmobiliare.it
+immobilgrouproma.it
 immobiliarepuntoverde.it
 immobiliarevercellina.it
 immobiliarevolpe.it
@@ -93,16 +94,19 @@ residence-wohnbau.at
 sagi-ter.fr
 sarpifamagosta.it
 selmakrealty.com
+shoppingimmobiliare.com
 skynet.be
 slcpitance.com
 soloaffitti.it
 square-properties.be
+stessopiano.it
 studio-orefici.it
 studioimmobiliarevercelli.it
 suithome.fr
 sweetinn.com
 taurus.dk
 team-rauscher.at
+team-service.it
 tecnocasa.it
 tecnocasaimpresa.it
 tecnorete.it
@@ -111,6 +115,7 @@ thecoronadoapartment.com
 thomas-graf.ch
 vaneau.fr
 viagerlodelparis.com
+vianelli-immobili.com
 wiesinger-im.at
 wilink.be
 zampetticlass.com
