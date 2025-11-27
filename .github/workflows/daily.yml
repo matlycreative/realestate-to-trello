@@ -42,6 +42,7 @@ jobs:
 
       USE_ZEFIX: ${{ secrets.USE_ZEFIX }}
 
+
       QUALITY_MIN: ${{ secrets.QUALITY_MIN }}
       REQUIRE_EXPLICIT_EMAIL: ${{ secrets.REQUIRE_EXPLICIT_EMAIL }}
       ADD_SIGNALS_NOTE: ${{ secrets.ADD_SIGNALS_NOTE }}
@@ -59,6 +60,15 @@ jobs:
       DAILY_LIMIT: ${{ secrets.DAILY_LIMIT }}
       PUSH_INTERVAL_S: ${{ secrets.PUSH_INTERVAL_S }}
       REQUEST_DELAY_S: ${{ secrets.REQUEST_DELAY_S }}
+
+      # Force NO-EMAIL mode (override any secrets)
+      COLLECT_EMAIL: "0"
+      REQUIRE_EXPLICIT_EMAIL: "0"
+      SKIP_GENERIC_EMAILS: "0"
+      REQUIRE_BUSINESS_DOMAIN: "0"
+      VERIFY_MX: "0"
+      USE_WHOIS: "0"
+      QUALITY_MIN: "1.0"
 
       MAX_CONTACT_PAGES: "1"
       CITY_HOPS: "8"
