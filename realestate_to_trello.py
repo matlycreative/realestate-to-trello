@@ -15,6 +15,11 @@
 #   6) Trello header rewrite only touches the top header block (never nukes body lines)
 #   7) Same-site logic uses eTLD+1 so www/non-www works
 #   8) Per-service throttles for Nominatim + Overpass (and a few other external calls)
+#
+# Added in this version:
+#   9) CSV City/Country correctness per lead (multi-city runs)
+#  10) Separate OVERPASS_LOOKUP_TIMEOUT_S for optional name-based lookup
+#  11) Local-run guard to avoid default NOMINATIM_EMAIL
 
 import os, re, json, time, random, csv, pathlib, html, math
 from datetime import date, datetime
@@ -79,7 +84,6 @@ FREEMAIL_EXTRA_Q        = env_float("FREEMAIL_EXTRA_Q", 0.3)
 # debug / performance
 DEBUG      = env_on("DEBUG", False)
 USE_WHOIS  = env_on("USE_WHOIS", 0)
-
 VERIFY_MX  = env_on("VERIFY_MX", 0)  # default OFF for volume
 
 # pre-clone toggle (disabled by default)
@@ -126,10 +130,28 @@ USE_COMPANIES_HOUSE = env_on("USE_COMPANIES_HOUSE", False); CH_API_KEY = os.gete
 USE_SIRENE          = env_on("USE_SIRENE", False); SIRENE_KEY = os.getenv("SIRENE_KEY"); SIRENE_SECRET = os.getenv("SIRENE_SECRET")
 USE_OPENCORP        = env_on("USE_OPENCORP", False); OPENCORP_API_KEY = os.getenv("OPENCORP_API_KEY")
 USE_ZEFIX           = env_on("USE_ZEFIX", False)
+USE_OFFICIAL_SOURCES = any([USE_COMPANIES_HOUSE, USE_SIRENE, USE_OPENCORP, USE_ZEFIX])
+
+# OSM speed / yield knobs
+OSM_REQUIRE_DIRECT_CONTACT = env_on("OSM_REQUIRE_DIRECT_CONTACT", True)
+# If False, we will NOT do slow name-based website resolution for OSM entries with no website/email.
+OSM_ALLOW_NAME_FALLBACK = env_on("OSM_ALLOW_NAME_FALLBACK", False)
+
+# Safety cap for huge radiuses (prevents “forever runs”)
+OSM_MAX_CANDIDATES = env_int("OSM_MAX_CANDIDATES", 400)
+
+# Overpass timeout (bigger radius needs longer)
+OVERPASS_TIMEOUT_S = env_int("OVERPASS_TIMEOUT_S", 60)
+# Optional “name lookup” should not stall forever
+OVERPASS_LOOKUP_TIMEOUT_S = env_int("OVERPASS_LOOKUP_TIMEOUT_S", 25)
 
 # ---------- HTTP ----------
 SESS = requests.Session()
-SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
+SESS.headers.update({
+    "User-Agent": UA,
+    "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6",
+    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+})
 
 MAX_CONTACT_PAGES = env_int("MAX_CONTACT_PAGES", 1)
 
@@ -549,18 +571,44 @@ def geocode_city(city, country):
     return south, west, north, east
 
 def overpass_estate_agents(lat: float, lon: float, radius_m: int):
+    # If we require direct contact, ask Overpass ONLY for elements that already have website/url/email tags.
+    # This massively improves “leads per minute”.
+    def block(k, v, extra_tag):
+        # nwr = node/way/relation shorthand
+        return f'nwr(around:{radius_m},{lat},{lon})["{k}"="{v}"]["name"]["{extra_tag}"];'
+
     parts = []
-    for k, v in OSM_FILTERS:
-        for t in ("node", "way", "relation"):
-            parts.append(f'{t}(around:{radius_m},{lat},{lon})["{k}"="{v}"];')
-    q = f"""[out:json][timeout:25];({ ' '.join(parts) });out tags center;"""
+
+    if OSM_REQUIRE_DIRECT_CONTACT:
+        contact_tags = ["website", "contact:website", "url", "email", "contact:email"]
+        for k, v in OSM_FILTERS:
+            for tag in contact_tags:
+                parts.append(block(k, v, tag))
+        q = f"""
+[out:json][timeout:{OVERPASS_TIMEOUT_S}];
+(
+  {' '.join(parts)}
+);
+out tags center qt;
+"""
+    else:
+        parts = []
+        for k, v in OSM_FILTERS:
+            parts.append(f'nwr(around:{radius_m},{lat},{lon})["{k}"="{v}"];')
+        q = f"""
+[out:json][timeout:{OVERPASS_TIMEOUT_S}];
+(
+  {' '.join(parts)}
+);
+out tags center qt;
+"""
 
     js = None
     for url in ("https://overpass-api.de/api/interpreter",
                 "https://overpass.kumi.systems/api/interpreter"):
         try:
             throttle("overpass", 2.0)
-            r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
+            r = SESS.post(url, data=q.encode("utf-8"), timeout=OVERPASS_TIMEOUT_S + 35)
             if r.status_code == 200:
                 js = r.json()
                 break
@@ -571,10 +619,13 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int):
 
     rows = []
     for el in js.get("elements", []):
-        tags = el.get("tags", {})
-        name = tags.get("name")
+        tags = el.get("tags", {}) or {}
+        name = (tags.get("name") or "").strip()
+        if not name:
+            continue
+
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
-        email = tags.get("email") or tags.get("contact:email")
+        email   = tags.get("email") or tags.get("contact:email")
         wikidata = tags.get("wikidata")
 
         lat2 = el.get("lat")
@@ -583,16 +634,16 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int):
             lat2 = el["center"].get("lat")
             lon2 = el["center"].get("lon")
 
-        if name:
-            rows.append({
-                "business_name": name.strip(),
-                "website": normalize_url(website) if website else None,
-                "email": email,
-                "wikidata": wikidata,
-                "lat": lat2,
-                "lon": lon2,
-            })
+        rows.append({
+            "business_name": name,
+            "website": normalize_url(website) if website else None,
+            "email": email,
+            "wikidata": wikidata,
+            "lat": lat2,
+            "lon": lon2,
+        })
 
+    # de-dup (name + domain)
     dedup = {}
     for r0 in rows:
         key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
@@ -601,7 +652,9 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int):
 
     out = list(dedup.values())
     random.shuffle(out)
-    return out
+
+    # hard cap to prevent huge cities from exploding runtime
+    return out[:max(1, OSM_MAX_CANDIDATES)]
 
 # ---------- Foursquare website finder (v3) ----------
 def fsq_find_website(name, lat, lon):
@@ -644,10 +697,10 @@ def _norm_name(s: str) -> str:
     parts = [p for p in s.split() if p and p not in LEGAL_SUFFIXES]
     return " ".join(parts)
 
-# ✅ FIXED: proper regex escaping for Overpass regex fragments
+# ✅ FIXED: escape tokens safely for Overpass regex
 def _escape_overpass_regex(s: str) -> str:
-    return re.sub(r'([.^$*+?{}\[\]\\|()])', r'\\\1', s)
-    
+    return re.escape(s or "")
+
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     if None in (lat1, lon1, lat2, lon2):
         return 999999.0
@@ -670,7 +723,7 @@ def overpass_lookup_website_by_name(name: str, lat: float, lon: float, radius_m:
     pattern = ".*".join(_escape_overpass_regex(t) for t in tokens)
 
     q = f"""
-[out:json][timeout:25];
+[out:json][timeout:{OVERPASS_LOOKUP_TIMEOUT_S}];
 (
   node(around:{radius_m},{lat},{lon})["name"~"{pattern}",i];
   way(around:{radius_m},{lat},{lon})["name"~"{pattern}",i];
@@ -683,7 +736,7 @@ out tags center;
                 "https://overpass.kumi.systems/api/interpreter"):
         try:
             throttle("overpass", 2.0)
-            r = SESS.post(url, data=q.encode("utf-8"), timeout=60)
+            r = SESS.post(url, data=q.encode("utf-8"), timeout=OVERPASS_LOOKUP_TIMEOUT_S + 35)
             if r.status_code == 200:
                 js = r.json()
                 break
@@ -1463,7 +1516,8 @@ def save_seen(seen):
     except Exception:
         pass
 
-def append_csv(leads, city, country):
+# ✅ FIX: per-lead City/Country in CSV (multi-city correctness)
+def append_csv(leads):
     if not leads:
         return
     fname = os.getenv("LEADS_CSV", f"leads_{date.today().isoformat()}.csv")
@@ -1474,23 +1528,32 @@ def append_csv(leads, city, country):
             w.writerow(["timestamp","city","country","company","email","website","q"])
         ts = datetime.utcnow().isoformat(timespec="seconds")+"Z"
         for L in leads:
-            w.writerow([ts, city, country, L["Company"], L["Email"], L["Website"], f'{L.get("q",0):.2f}'])
+            w.writerow([
+                ts,
+                L.get("City",""),
+                L.get("Country",""),
+                L["Company"],
+                L["Email"],
+                L["Website"],
+                f'{L.get("q",0):.2f}'
+            ])
 
 # ---------- main ----------
 def main():
+    # ✅ FIX: Local-run safety to avoid default NOMINATIM_EMAIL
+    if (os.getenv("CI") or "").strip() == "" and (not NOMINATIM_EMAIL or "example.com" in NOMINATIM_EMAIL):
+        raise SystemExit("NOMINATIM_EMAIL is missing or placeholder. Set it to a real email to comply with Nominatim policy.")
+
     missing = [n for n in ["TRELLO_KEY","TRELLO_TOKEN","TRELLO_LIST_ID"] if not os.getenv(n)]
     if missing:
         raise SystemExit(f"Missing env: {', '.join(missing)}")
 
     leads = []
     seen = load_seen()
-    last_city = ""
-    last_country = ""
 
     for (city, country) in iter_cities():
         print(f"\n=== CITY START: {city}, {country} ===", flush=True)
         t_city = time.time()
-        last_city, last_country = city, country
 
         # --- geocode ---
         try:
@@ -1504,10 +1567,14 @@ def main():
             continue
 
         # --- official sources ---
-        t_off = time.time()
-        off = official_sources(city, country, lat, lon)
-        STATS["off_candidates"] += len(off)
-        print(f"[{city}, {country}] official candidates: {len(off)} (took {time.time()-t_off:.1f}s)", flush=True)
+        off = []
+        if USE_OFFICIAL_SOURCES:
+            t_off = time.time()
+            off = official_sources(city, country, lat, lon)
+            STATS["off_candidates"] += len(off)
+            print(f"[{city}, {country}] official candidates: {len(off)} (took {time.time()-t_off:.1f}s)", flush=True)
+        else:
+            print(f"[{city}, {country}] official candidates: 0 (disabled)", flush=True)
 
         leads_before_city = len(leads)
 
@@ -1549,17 +1616,17 @@ def main():
                 continue
 
             soup_home = BeautifulSoup(home.text, "html.parser")
-            email = ""
+            email = ""  # forced no-email mode in your workflow
 
             q = quality_score(website, home.text, soup_home, email)
-            if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                STATS["skip_quality"] += 1
-                continue
             if q < QUALITY_MIN:
                 STATS["skip_quality"] += 1
                 continue
 
+            # ✅ FIX: store City/Country per lead
             leads.append({
+                "City": city,
+                "Country": country,
                 "Company": biz["business_name"],
                 "Email": email,
                 "Website": website,
@@ -1595,20 +1662,25 @@ def main():
                 lat0 = biz.get("lat") or lat
                 lon0 = biz.get("lon") or lon
 
-                website = resolve_website(
-                    biz_name=biz["business_name"],
-                    city=city,
-                    country=country,
-                    lat=lat0,
-                    lon=lon0,
-                    direct=biz.get("website"),
-                    wikidata_qid=biz.get("wikidata"),
-                )
+                # Fast paths first
+                website = normalize_url(biz.get("website"))
 
                 if not website and biz.get("email"):
                     dom0 = email_domain(biz["email"])
                     if dom0 and not is_freemail(dom0):
                         website = normalize_url(f"https://{dom0}")
+
+                # Optional slow fallback (OFF by default)
+                if not website and OSM_ALLOW_NAME_FALLBACK:
+                    website = resolve_website(
+                        biz_name=biz["business_name"],
+                        city=city,
+                        country=country,
+                        lat=lat0,
+                        lon=lon0,
+                        direct=biz.get("website"),
+                        wikidata_qid=biz.get("wikidata"),
+                    )
 
                 if not website:
                     STATS["skip_no_website"] += 1
@@ -1632,17 +1704,17 @@ def main():
                     continue
 
                 soup_home = BeautifulSoup(home.text, "html.parser")
-                email = ""
+                email = ""  # forced no-email mode in your workflow
 
                 q = quality_score(website, home.text, soup_home, email)
-                if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
-                    STATS["skip_quality"] += 1
-                    continue
                 if q < QUALITY_MIN:
                     STATS["skip_quality"] += 1
                     continue
 
+                # ✅ FIX: store City/Country per lead
                 leads.append({
+                    "City": city,
+                    "Country": country,
                     "Company": biz["business_name"],
                     "Email": email,
                     "Website": website,
@@ -1671,8 +1743,8 @@ def main():
     if PRECLONE and need > 0 and TRELLO_TEMPLATE_CARD_ID:
         ensure_min_blank_templates(TRELLO_LIST_ID, TRELLO_TEMPLATE_CARD_ID, need)
 
-    if leads and last_city and last_country:
-        append_csv(leads, last_city, last_country)
+    if leads:
+        append_csv(leads)
 
     def push_one_lead(lead: dict, seen: set) -> bool:
         if SKIP_GENERIC_EMAILS and "@" in (lead.get("Email") or ""):
