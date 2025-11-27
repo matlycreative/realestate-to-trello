@@ -3,7 +3,7 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * 1-5" # 04:00 UTC Mon–Fri
+    - cron: "0 2 * * 1-5" # 02:00 UTC Mon–Fri
 
 permissions:
   contents: write
@@ -59,7 +59,7 @@ jobs:
       REQUIRE_BUSINESS_DOMAIN: "0"
       VERIFY_MX: "0"
       USE_WHOIS: "0"
-      
+
       QUALITY_MIN: "1.0"
       DAILY_LIMIT: "25"
       PUSH_INTERVAL_S: "20"
@@ -69,9 +69,6 @@ jobs:
       OSM_RADIUS_M: "2500"
       BUTLER_GRACE_S: "10"
 
-      # Optional: helps reduce website blocks
-      # USER_AGENT: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
-
       # Force the script + commit step to use the same file path
       SEEN_FILE: .data/seen_domains.txt
 
@@ -80,6 +77,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -125,7 +123,7 @@ jobs:
           echo "QUALITY_MIN=${QUALITY_MIN:-unset}"
           echo "FOURSQUARE_API_KEY_SET=$([ -n "${FOURSQUARE_API_KEY:-}" ] && echo yes || echo no)"
           echo "USER_AGENT=${USER_AGENT:-unset}"
-       
+
       - name: Show effective Python config
         run: |
           python - <<'PY'
@@ -166,6 +164,7 @@ jobs:
           print("COUNTRY_WHITELIST =", (os.getenv("COUNTRY_WHITELIST") or "").strip())
           print("SEEN_FILE =", (os.getenv("SEEN_FILE") or "seen_domains.txt"))
           PY
+
       - name: Run pipeline
         run: |
           set -euo pipefail
@@ -184,5 +183,5 @@ jobs:
           fi
 
           git commit -m "chore: update .data/seen_domains.txt [skip ci]"
-          git pull --rebase
-          git push
+          git pull --rebase --autostash
+          git push --force-with-lease
