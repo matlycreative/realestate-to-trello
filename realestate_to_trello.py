@@ -930,12 +930,11 @@ def _split_header_rest(desc: str):
     rest = lines[i:]
     return header, rest
 
-def normalize_header_block(desc: str, company: str, website: str):
+def normalize_header_block(desc, company, email, website):
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-    header_lines, rest_lines = _split_header_rest(desc)
 
-    # Preserve existing data for these fields (including Email, but we don't touch it)
-    preserved = {"First": "", "Email": "", "Hook": "", "Variant": ""}
+    header_lines, rest_lines = _split_header_rest(desc)
+    preserved = {"First": "", "Hook": "", "Variant": ""}
 
     i = 0
     while i < len(header_lines):
@@ -961,13 +960,15 @@ def normalize_header_block(desc: str, company: str, website: str):
     new_header = [
         hard(f"Company: {company or ''}"),
         hard(f"First: {preserved['First']}"),
-        hard(f"Email: {preserved['Email']}"),
+        hard(f"Email: {email or ''}"),
         hard(f"Hook: {preserved['Hook']}"),
         hard(f"Variant: {preserved['Variant']}"),
         hard(f"Website: {website or ''}"),
         "",
     ]
-    return "\n".join(new_header + rest_lines)
+
+    out = "\n".join(new_header + rest_lines).rstrip() + "\n\n@lead\n"
+    return out
 
 def update_card_header(card_id: str, company: str, website: str, new_name: Optional[str] = None) -> bool:
     cur = trello_get_card(card_id)
