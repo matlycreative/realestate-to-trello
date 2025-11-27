@@ -68,6 +68,7 @@ SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")  # root file by de
 BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 10)
 
 # behavior / quality
+COLLECT_EMAIL           = env_on("COLLECT_EMAIL", 0)  # 0 = disable all email crawling/logic
 REQUIRE_EXPLICIT_EMAIL  = env_on("REQUIRE_EXPLICIT_EMAIL", 0)
 ADD_SIGNALS_NOTE        = env_on("ADD_SIGNALS_NOTE", False)
 SKIP_GENERIC_EMAILS     = env_on("SKIP_GENERIC_EMAILS", 0)
@@ -918,7 +919,7 @@ def discover_sitemap_urls(base_url: str, limit: int = 10) -> list:
 
 def crawl_contact(site_url, home_html=None):
     out = {"email": ""}
-    if not site_url:
+    if not site_url or not COLLECT_EMAIL:
         return out
 
     candidates = []
@@ -1305,11 +1306,6 @@ def update_card_header(card_id, company, email, website, new_name=None):
     desc_old = cur["desc"]
     name_old = cur["name"]
 
-    site_dom = etld1_from_url(website)
-    if site_dom and (not email or "@" not in email):
-        if not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-            email = f"info@{site_dom}"
-
     desc_new = normalize_header_block(desc_old, company, email, website)
 
     payload = {}
@@ -1349,20 +1345,9 @@ def append_note(card_id, note):
 
 def is_template_blank(desc: str) -> bool:
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-
-    if re.search(r"(?mi)^\s*Company\s*:\s*$", d):
-        return True
-
-    for m in LABEL_RE["Email"].finditer(d):
-        val = (m.group(1) or "").strip()
-        if "@" not in val:
-            return True
-
-    dl = d.lower()
-    if ("company:" in dl and "email:" in dl and "website:" in dl and "@" not in dl):
-        return True
-
-    return False
+    # In "no email" mode, Email will be blank forever.
+    # So the ONLY reliable signal of an empty template card is: Company is blank.
+    return bool(re.search(r"(?mi)^\s*Company\s*:\s*$", d))
 
 def find_empty_template_cards(list_id, max_needed=1):
     r = SESS.get(
@@ -1564,47 +1549,7 @@ def main():
                 continue
 
             soup_home = BeautifulSoup(home.text, "html.parser")
-            contact = crawl_contact(website, home.text)
-            email = (contact.get("email") or "").strip()
-
-            # email policy
-            if is_freemail(email_domain(email)):
-                if REQUIRE_BUSINESS_DOMAIN:
-                    STATS["skip_freemail_reject"] += 1
-                    email = ""
-                elif not ALLOW_FREEMAIL:
-                    if site_dom and not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL):
-                        email = f"info@{site_dom}"
-                    else:
-                        STATS["skip_freemail_reject"] += 1
-                        email = ""
-
-            if email and SKIP_GENERIC_EMAILS and is_generic_mailbox_local(email.split("@",1)[0]):
-                STATS["skip_generic_local"] += 1
-                email = ""
-
-            if email and REQUIRE_BUSINESS_DOMAIN and email_domain(email) != site_dom:
-                STATS["skip_freemail_reject"] += 1
-                email = ""
-
-            if email and "@" in email and not _mx_ok(email_domain(email)):
-                fallback_ok = (site_dom and _mx_ok(site_dom))
-                if not (SKIP_GENERIC_EMAILS or REQUIRE_EXPLICIT_EMAIL) and fallback_ok:
-                    email = f"info@{site_dom}"
-                else:
-                    STATS["skip_mx"] += 1
-                    email = ""
-
-            if REQUIRE_EXPLICIT_EMAIL and (not email or "@" not in email):
-                STATS["skip_explicit_required"] += 1
-                email = ""
-
-            if not email or "@" not in email:
-                if site_dom and not SKIP_GENERIC_EMAILS and not REQUIRE_EXPLICIT_EMAIL:
-                    email = f"info@{site_dom}"
-                else:
-                    STATS["skip_no_email"] += 1
-                    continue
+            email = ""
 
             q = quality_score(website, home.text, soup_home, email)
             if ALLOW_FREEMAIL and is_freemail(email_domain(email)) and q < QUALITY_MIN + FREEMAIL_EXTRA_Q:
@@ -1687,8 +1632,7 @@ def main():
                     continue
 
                 soup_home = BeautifulSoup(home.text, "html.parser")
-                contact = crawl_contact(website, home.text)
-                email = (contact.get("email") or "").strip()
+                email = ""
 
                 if is_freemail(email_domain(email)):
                     if REQUIRE_BUSINESS_DOMAIN:
