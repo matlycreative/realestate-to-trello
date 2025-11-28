@@ -54,7 +54,7 @@ def env_on(name, default=False):
     return bool(default)
 
 # ---------- config ----------
-DAILY_LIMIT      = env_int("DAILY_LIMIT", 15)
+DAILY_LIMIT      = env_int("DAILY_LIMIT", 25)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 15)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
@@ -69,6 +69,7 @@ PRECLONE   = env_on("PRECLONE", False)
 # OSM candidates source toggles
 OVERPASS_ENABLED = env_on("OVERPASS_ENABLED", 1)
 NOMINATIM_POI_ENABLED = env_on("NOMINATIM_POI_ENABLED", 1)
+OVERPASS_NAME_LOOKUP_ENABLED = env_on("OVERPASS_NAME_LOOKUP_ENABLED", 0)
 
 # Overpass tuning (GH Actions often times out)
 OVERPASS_TIMEOUT_S = env_int("OVERPASS_TIMEOUT_S", 45)           # HTTP timeout (client)
@@ -202,11 +203,35 @@ def normalize_url(u):
     if not u:
         return None
     u = u.strip()
-    if u.startswith("mailto:"):
+
+    if u.lower().startswith("mailto:"):
         return None
+
+    # plain email like "a@b.com"
+    if "@" in u and "://" not in u:
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", u):
+            return None
+
     p = urlparse(u)
+
+    # if no scheme, assume https
     if not p.scheme:
         u = "https://" + u.strip("/")
+
+    p2 = urlparse(u)
+
+    # only accept http(s)
+    if p2.scheme not in ("http", "https"):
+        return None
+
+    # must have host
+    if not p2.netloc:
+        return None
+
+    # reject URLs containing userinfo like https://user@host
+    if p2.username or p2.password or "@" in p2.netloc:
+        return None
+
     return u
 
 def etld1_from_url(u: str) -> str:
@@ -491,7 +516,7 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return 2*R*math.asin(math.sqrt(a))
 
 def overpass_lookup_website_by_name(name: str, lat: float, lon: float, radius_m: int = 20000) -> Optional[str]:
-    if not OVERPASS_ENABLED:
+    if not (OVERPASS_ENABLED and OVERPASS_NAME_LOOKUP_ENABLED):
         return None
     if not name or lat is None or lon is None:
         return None
@@ -644,14 +669,16 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
         STATS["website_wikidata"] += 1
         return w
 
-    w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
-    if w:
-        STATS["website_overpass_name"] += 1
-        return w
-
+    # Try Nominatim BEFORE Overpass-by-name (much more reliable)
     w = nominatim_lookup_website(biz_name, city, country, limit=8)
     if w:
         STATS["website_nominatim"] += 1
+        return w
+
+    # Only if explicitly enabled
+    w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
+    if w:
+        STATS["website_overpass_name"] += 1
         return w
 
     w = normalize_url(fsq_find_website(biz_name, lat, lon))
