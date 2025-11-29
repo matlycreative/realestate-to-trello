@@ -52,7 +52,7 @@ jobs:
       REQUEST_DELAY_S: "0.2"
       CITY_HOPS: "14"
       OSM_RADIUS_M: "15000"
-      BUTLER_GRACE_S: "10"
+      BUTLER_GRACE_S: "15"
 
       # Persist
       SEEN_FILE: .data/seen_domains.txt
