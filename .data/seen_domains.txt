@@ -18,10 +18,14 @@ aktiv.no
 alex-jones.co.uk
 alkimmo.com
 allinlyon.com
+alvesealves.com
 amstelmakelaardij.nl
+andres.pt
 andrewdawson.co.uk
+anibalrealestate.pt
 anson-realty.com
 apartmentincopenhagen.com
+arcada.com.pt
 arcadiabelgium.be
 arkaden.at
 arlim-prestige.com
@@ -65,9 +69,11 @@ century21.be
 century21.com
 century21.pt
 cfcimmobiliare.it
+chavenova.com
 chicagospropertymanagement.com
 chris-wilkinson.co.uk
 chrisoostingmakelaardij.nl
+cidadefoz.pt
 cimm.com
 circleparkchicago.com
 citinestgroup.com
@@ -100,11 +106,13 @@ edjline.com
 edwardmellor.co.uk
 ehouseusa.com
 eigenaarsbond.be
+ekz.nl
 elliman.com
 emilegarcin.fr
 emmanuelaxelrad.com
 engelvoelkers.com
 era.at
+era.pt
 estate-maeglerne.dk
 estate.dk
 evansnyc.com
@@ -154,6 +162,7 @@ homevast.be
 horizonimmobiliare.it
 hpgreenfield.com
 human-immobilier.fr
+hypotheker.nl
 ibmakelaars.nl
 iconacasa.com
 ics-immo.com
@@ -180,6 +189,7 @@ immostate.at
 immovate.com
 immovermeulen.be
 immoxx.at
+imobiliariarv.pt
 imoperola.pt
 impressionhomes.net
 infinitiproperties.net
@@ -190,6 +200,8 @@ integratedequities.com
 irres.be
 isaak.nl
 ivyparkhomes.com
+jfpimobiliaria.com
+jll.pt
 john-taylor.com
 johnstonanddaniel.com
 jpandbrimelow.co.uk
@@ -214,6 +226,7 @@ liebminger-immobilien.at
 lig-stmk.at
 limestonebkrealty.com
 limmobiliare.com
+linhadapraia.pt
 lisboa.pt
 listwithgowest.com
 liveathansberrysquare.com
@@ -222,8 +235,10 @@ liveatsavoysquare.com
 ls-real.ch
 lsimmobilier.com
 mainandmain.co.uk
+makelaarbert.nu
 manerrealtyco.com
 martinco.com
+matrizurbana.pt
 mayfairestates.co.uk
 michaelzingraf.com
 milanolivingsrl.it
@@ -264,6 +279,7 @@ projektwohnen.com
 prometeoagenziaimmobiliare.it
 proprietesparisiennes-sothebysrealty.com
 psrbrokerage.com
+puga.pt
 r2.me
 realgoodliving.at
 realosophy.com
@@ -298,8 +314,10 @@ savileontheroe.com
 selinver.com
 selmakrealty.com
 semcoda.com
+servigrupo.pt
 servitress.com
 shoppingimmobiliare.com
+sigla.pt
 skynet.be
 slcpitance.com
 soloaffitti.it
@@ -341,7 +359,9 @@ trans-immo.be
 trececasas.com
 uk.com
 unu.pt
+vanbaerlemakelaars.nl
 vaneau.fr
+vanhuisuit-makelaars.nl
 vanreethvastgoed.be
 vastgoed03.be
 vastgoed4you.be
@@ -350,6 +370,7 @@ verlat.be
 viagerlodelparis.com
 vianelli-immobili.com
 vitalspace.co.uk
+vlieg.nl
 waartsmakelaars.nl
 wag.at
 walls.be
