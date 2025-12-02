@@ -24,7 +24,8 @@ jobs:
 
       # Required secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_TOKEN: $
+      {{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
       NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
 
@@ -47,7 +48,7 @@ jobs:
 
       # Tuning
       QUALITY_MIN: "1.0"
-      DAILY_LIMIT: "14"
+      DAILY_LIMIT: "40"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.2"
       CITY_HOPS: "14"
