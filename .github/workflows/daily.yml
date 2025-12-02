@@ -24,8 +24,7 @@ jobs:
 
       # Required secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-      TRELLO_TOKEN: $
-      {{ secrets.TRELLO_TOKEN }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
       TRELLO_LIST_ID: ${{ secrets.TRELLO_LIST_ID }}
       NOMINATIM_EMAIL: ${{ secrets.NOMINATIM_EMAIL }}
 
