@@ -434,7 +434,7 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
     html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
 
-    # Insert main anchor
+    # Insert main anchor (only if full is non-empty)
     if full:
         style_attr = (
             f' style="color:{html.escape(link_color or LINK_COLOR)};'
@@ -585,15 +585,16 @@ def main():
             from_name=FROM_NAME, link=chosen_link, extra=""
         )
 
-        link_label = LINK_TEXT  # still "See examples" by default
+        # ⚠ FU3: we DO NOT want a portfolio CTA link at the bottom.
+        # Only the [here] upload link inside the body.
+        link_label = ""      # not used
+        link_for_cta = ""    # disables extra anchor
 
-      try:
-          send_email(
-              email_v, subject, body,
-              link_url="",      # <- disables the extra anchor
-              link_text="",     # <- no label = no "My portfolio"
-              link_color=LINK_COLOR,
-          )
+        try:
+            send_email(
+                email_v, subject, body,
+                link_url=link_for_cta, link_text=link_label, link_color=LINK_COLOR
+            )
             processed += 1
             log(f"Sent FU3 to {email_v} — '{title}' — ready={ready} link={chosen_link}")
         except Exception as e:
