@@ -1,0 +1,102 @@
+name: Trello FU3 Email
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:55 GMT+2 → 06:55 UTC
+    - cron: "55 6 * * 1-5"
+    # 16:55 GMT+2 → 14:55 UTC
+    - cron: "55 14 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  send-fu3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+      # Trello
+      TRELLO_KEY:   ${{ secrets.TRELLO_KEY }}
+      TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+      TRELLO_LIST_ID_FU3: ${{ secrets.TRELLO_LIST_ID_FU3 }}
+
+      # SMTP
+      SMTP_USER: ${{ secrets.SMTP_USER != '' && secrets.SMTP_USER
+        || secrets.SMTP_USERNAME != '' && secrets.SMTP_USERNAME
+        || secrets.smtp_user != '' && secrets.smtp_user
+        || secrets.smtp_username != '' && secrets.smtp_username
+        || secrets.FROM_EMAIL }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS != '' && secrets.SMTP_PASS
+        || secrets.smtp_pass != '' && secrets.smtp_pass
+        || secrets.SMTP_PASSWORD != '' && secrets.SMTP_PASSWORD
+        || secrets.smtp_password }}
+      SMTP_HOST:  ${{ secrets.SMTP_HOST }}
+      SMTP_PORT:  ${{ secrets.SMTP_PORT }}
+      FROM_NAME:  ${{ secrets.FROM_NAME }}
+      FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+
+      # Links
+      PUBLIC_BASE:   ${{ secrets.PUBLIC_BASE }}
+      PORTFOLIO_URL: ""
+      LINK_TEXT: "My portfolio"
+      LINK_COLOR: "#858585"
+
+      # FU3 templates (the script reads these)
+      SUBJECT_A: ${{ secrets.SUBJECT_A_FU3 }}
+      BODY_A:    ${{ secrets.BODY_A_FU3 }}
+      SUBJECT_B: ${{ secrets.SUBJECT_B_FU3 }}
+      BODY_B:    ${{ secrets.BODY_B_FU3 }}
+
+      # Appearance
+      EMAIL_FONT_PX: "16"
+      SIGNATURE_LOGO_URL: ${{ secrets.SIGNATURE_LOGO_URL }}
+      SIGNATURE_INLINE: "0"
+      SIGNATURE_MAX_W_PX: "200"
+      SIGNATURE_ADD_NAME: "0"
+
+      # Link rendering
+      INCLUDE_PLAIN_URL: "0"
+
+      # Marker/cache for FU3
+      SENT_MARKER_TEXT: "Sent: FU3"
+      SENT_CACHE_FILE: ".data/.sent_fu3.json"
+
+      # Use env templates
+      USE_ENV_TEMPLATES: "1"
+
+      # Force using your domain link (override API-provided absolute links)
+      USE_API_LINK: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure data dir
+        run: mkdir -p .data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Debug base URL
+        run: |
+          echo "PUBLIC_BASE=${PUBLIC_BASE}"
+          echo "PORTFOLIO_URL=${PORTFOLIO_URL}"
+          echo "USE_API_LINK=${USE_API_LINK}"
+          echo "USE_ENV_TEMPLATES=${USE_ENV_TEMPLATES}"
+
+      - name: Run FU3 sender
+        run: python trello_email_fu3.py
