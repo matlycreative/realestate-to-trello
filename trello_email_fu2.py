@@ -10,7 +10,6 @@ STRICT RULES (match Day-0/FU1):
 - With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
 - Add a clickable [here] link in NOT READY path to UPLOAD_URL (default https://matlycreative.com/upload/).
 - No "Email me" contact line; no hidden overrides in send_email().
-
 Defaults (overridable via env):
   FROM_NAME=Matthieu from Matly
   FROM_EMAIL=matthieu@matlycreative.com
@@ -104,66 +103,54 @@ SESS.headers.update({"User-Agent": UA})
 # ----------------- templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
-    SUBJECT_A = _get_env("SUBJECT_A", default="Last quick check-in on listing videos for {company}")
-    SUBJECT_B = _get_env("SUBJECT_B", default="Last quick check-in for {first} — listing videos at {company}")
+    SUBJECT_A = _get_env("SUBJECT_A", default="Want a free sample for {Company}?")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Want a free sample for {Company}?")
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
+If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-I know your inbox is busy, so I’ll keep this short.
+You can drop 2–3 raw clips [here]
 
-I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
-{extra}
-
-If this isn’t something you’re exploring right now, no worries at all — just let me know and I’ll close the loop.
-
-Otherwise, would you be open to testing this on one upcoming property?
+Should I slot you into this week’s samples?
 
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi {first},
+"""Hey {first},
+If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-I know your inbox is busy, so I’ll keep this short.
+You can drop 2–3 raw clips [here]
 
-I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
-{extra}
-
-If this isn’t something you’re exploring right now, no worries at all — just let me know and I’ll close the loop.
-
-Otherwise, would you be open to testing this on one upcoming property?
+Should I slot you into this week’s samples?
 
 Best,
 Matthieu from Matly""")
 else:
-    SUBJECT_A = "Last quick check-in on listing videos for {company}"
-    SUBJECT_B = "Last quick check-in for {first} — listing videos at {company}"
+    SUBJECT_A = "Want a free sample for {Company}?"
+    SUBJECT_B = "Want a free sample for {Company}?"
     BODY_A = """Hi there,
+If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-I know your inbox is busy, so I’ll keep this short.
+You can drop 2–3 raw clips [here]
 
-I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
-{extra}
-
-If this isn’t something you’re exploring right now, no worries at all — just let me know and I’ll close the loop.
-
-Otherwise, would you be open to testing this on one upcoming property?
+Should I slot you into this week’s samples?
 
 Best,
 Matthieu from Matly"""
-    BODY_B = """Hi {first},
+    BODY_B = """Hey {first},
+If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-I know your inbox is busy, so I’ll keep this short.
+You can drop 2–3 raw clips [here]
 
-I shared some examples of listing videos with you recently. We handle the editing so you can focus on getting more properties live. {extra} You can see everything here: {link}
+No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
-{extra}
-
-If this isn’t something you’re exploring right now, no worries at all — just let me know and I’ll close the loop.
-
-Otherwise, would you be open to testing this on one upcoming property?
+Should I slot you into this week’s samples?
 
 Best,
 Matthieu from Matly"""
