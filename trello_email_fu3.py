@@ -588,12 +588,12 @@ def main():
         link_label = LINK_TEXT  # still "See examples" by default
 
       try:
-            send_email(
-                email_v, subject, body,
-                link_url="",      # <- disables the extra anchor
-                link_text="",     # <- no label = no "My portfolio"
-                link_color=LINK_COLOR,
-            )
+          send_email(
+              email_v, subject, body,
+              link_url="",      # <- disables the extra anchor
+              link_text="",     # <- no label = no "My portfolio"
+              link_color=LINK_COLOR,
+          )
             processed += 1
             log(f"Sent FU3 to {email_v} — '{title}' — ready={ready} link={chosen_link}")
         except Exception as e:
