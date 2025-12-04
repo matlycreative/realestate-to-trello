@@ -103,74 +103,70 @@ SESS.headers.update({"User-Agent": UA})
 # ----------------- templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
-    SUBJECT_A = _get_env("SUBJECT_A", default="Polished videos for {company}'s listings")
-    SUBJECT_B = _get_env("SUBJECT_B", default="Polished videos for {company}'s listings")
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick question about {Company}’s listings")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick question about {Company}’s listings")
     BODY_A = _get_env("BODY_A", default=
-"""Hi there, hope you're doing well,
+"""Hi there,
+Saw a few of {Company}’s recent listings — really strong properties.
 
-I’ve been looking at {company}’s listings and you’re working with some really strong properties.
+Quick one:
+I run a small studio that edits real estate listing videos. Agencies send raw clips, we turn them into clean, cinematic videos that get more eyes on the property.
 
-We are a video editing company who works specifically with real estate agents and agencies. You send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+Here’s a quick example of what we do:
+{link}
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+If this could save you time on upcoming {Company} listings, I can show you how it would look for your brand.
 
-{extra}
-
-If you ever feel that editing is slowing you down, we can handle that part so you can focus on getting more listings and viewings booked.
-
-Would you be open to testing this on one upcoming property?
+Worth a look?
 
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi {first},
+"""Hey {First},
+Saw a few of {Company}’s recent listings — really strong properties.
 
-I’ve been looking at {company}’s listings and you’re working with some really strong properties.
+Quick one:
+I run a small studio that edits real estate listing videos. Agencies send raw clips, we turn them into clean, cinematic videos that get more eyes on the property.
 
-We are a video editing company who works specifically with real estate agents and agencies. You send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+Here’s a quick example of what we do:
+{link}
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+If this could save you time on upcoming {Company} listings, I can show you how it would look for your brand.
 
-{extra}
-
-If you ever feel that editing is slowing you down, we can handle that part so you can focus on getting more listings and viewings booked.
-
-Would you be open to testing this on one upcoming property?
+Worth a look?
 
 Best,
 Matthieu from Matly""")
 else:
-    SUBJECT_A = "Polished videos for {company}'s listings"
-    SUBJECT_B = "Polished videos for {company}'s listings"
-    BODY_A = """Hi there, hope you're doing well,
+    SUBJECT_A = "Quick question about {Company}’s listings"
+    SUBJECT_B = "Quick question about {Company}’s listings"
+    BODY_A = """Hi there,
+Saw a few of {Company}’s recent listings — really strong properties.
 
-I’ve been looking at {company}’s listings and you’re working with some really strong properties.
+Quick one:
+I run a small studio that edits real estate listing videos. Agencies send raw clips, we turn them into clean, cinematic videos that get more eyes on the property.
 
-We are a video editing company who works specifically with real estate agents and agencies. You send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+Here’s a quick example of what we do:
+{link}
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+If this could save you time on upcoming {Company} listings, I can show you how it would look for your brand.
 
-{extra}
-
-If you ever feel that editing is slowing you down, we can handle that part so you can focus on getting more listings and viewings booked.
-
-Would you be open to testing this on one upcoming property?
+Worth a look?
 
 Best,
 Matthieu from Matly"""
-    BODY_B = """Hi {first},
+    BODY_B = """Hey {First},
+Saw a few of {Company}’s recent listings — really strong properties.
 
-I’ve been looking at {company}’s listings and you’re working with some really strong properties.
+Quick one:
+I run a small studio that edits real estate listing videos. Agencies send raw clips, we turn them into clean, cinematic videos that get more eyes on the property.
 
-We are a video editing company who works specifically with real estate agents and agencies. You send raw footage, we send back clean, polished listing videos that look high-end and are ready to post.
+Here’s a quick example of what we do:
+{link}
 
-Here’s our portfolio with examples of how polished video can make properties more appealing to clients {extra} : {link}.
+If this could save you time on upcoming {Company} listings, I can show you how it would look for your brand.
 
-{extra}
-
-If you ever feel that editing is slowing you down, we can handle that part so you can focus on getting more listings and viewings booked.
-
-Would you be open to testing this on one upcoming property?
+Worth a look?
 
 Best,
 Matthieu from Matly"""
