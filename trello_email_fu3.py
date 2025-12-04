@@ -590,7 +590,9 @@ def main():
         try:
             send_email(
                 email_v, subject, body,
-                link_url=chosen_link, link_text=link_label, link_color=LINK_COLOR
+                link_url="",      # disable auto CTA
+                link_text="",     # no label
+                link_color=LINK_COLOR
             )
             processed += 1
             log(f"Sent FU3 to {email_v} — '{title}' — ready={ready} link={chosen_link}")
