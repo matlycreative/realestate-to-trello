@@ -426,13 +426,21 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     # HTML with explicit markers
     MARK = "__LINK_MARKER__"
     body_marked = body_text
-    for pat in (full, bare):
-        if pat:
-            body_marked = body_marked.replace(pat, MARK)
+
+    # Only try to mark/replace if we actually have a main link
+    if full:
+        for pat in (full, bare):
+            if pat:
+                body_marked = body_marked.replace(pat, MARK)
 
     html_core_inner = text_to_html(body_marked)
-    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
-    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
+
+    if full:
+        # Only do these substitutions when esc_full/esc_bare are non-empty
+        if esc_full:
+            html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
+        if esc_bare:
+            html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
 
     # Insert main anchor (only if full is non-empty)
     if full:
@@ -590,10 +598,10 @@ def main():
         link_label = ""      # not used
         link_for_cta = ""    # disables extra anchor
 
-        try:
+       try:
             send_email(
                 email_v, subject, body,
-                link_url=link_for_cta, link_text=link_label, link_color=LINK_COLOR
+                link_url="", link_text="", link_color=LINK_COLOR
             )
             processed += 1
             log(f"Sent FU3 to {email_v} — '{title}' — ready={ready} link={chosen_link}")
