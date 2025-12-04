@@ -104,60 +104,62 @@ SESS.headers.update({"User-Agent": UA})
 # ----------------- templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
-    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up on listing videos for {company}")
-    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first} — listing videos at {company}")
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up}")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first}")
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
+Just bumping this in case it got buried.
 
-Just following up in case you didn’t get a chance to look at what I sent over.
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
+Examples again:
+{link}
 
-{extra}
-
-Would you be open to testing this on one upcoming property?
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
 
 Best,
 Matthieu from Matly""")
     BODY_B = _get_env("BODY_B", default=
-"""Hi {first},
+"""Hey {first},
+Just bumping this in case it got buried.
 
-Just following up in case you didn’t get a chance to look at what I sent over.
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
+Examples again:
+{link}
 
-{extra}
-
-Would you be open to testing this on one upcoming property?
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
 
 Best,
 Matthieu from Matly""")
 else:
-    SUBJECT_A = "Quick follow-up on listing videos for {company}"
-    SUBJECT_B = "Quick follow-up for {first} — listing videos at {company}"
+    SUBJECT_A = "Quick follow-up"
+    SUBJECT_B = "Quick follow-up for {first}"
     BODY_A = """Hi there,
+Just bumping this in case it got buried.
 
-Just following up in case you didn’t get a chance to look at what I sent over.
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
+Examples again:
+{link}
 
-{extra}
-
-Would you be open to testing this on one upcoming property?
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
 
 Best,
 Matthieu from Matly"""
-    BODY_B = """Hi {first},
+    BODY_B = """Hey {first},
+Just bumping this in case it got buried.
 
-Just following up in case you didn’t get a chance to review the listing video sample I made for you.
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Just following up in case you didn’t get a chance to look at what I sent over.
+Examples again:
+{link}
 
-We handle the editing for your listing videos so you can focus on getting more properties live. {extra} You can see everything here: {link}
-
-{extra}
-
-Would you be open to testing this on one upcoming property?
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
 
 Best,
 Matthieu from Matly"""
