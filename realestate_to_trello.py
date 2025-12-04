@@ -58,6 +58,40 @@ DAILY_LIMIT      = env_int("DAILY_LIMIT", 45)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
+# Batch rotation for scheduling (e.g. "Monday morning", "Monday afternoon", etc.)
+BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
+BATCH_SLOTS = [
+    "m monday",
+    "a monday",
+    "m tuesday",
+    "a tuesday",
+    "m wednesday",
+    "a wednesday",
+    "m thursday",
+    "a thursday",
+    "m friday",
+    "a friday",
+]
+
+def load_batch_index() -> int:
+    try:
+        with open(BATCH_FILE, "r", encoding="utf-8") as f:
+            val = f.read().strip()
+            idx = int(val)
+            if 0 <= idx < len(BATCH_SLOTS):
+                return idx
+    except Exception:
+        pass
+    # default to start
+    return 0
+
+def save_batch_index(idx: int) -> None:
+    try:
+        os.makedirs(os.path.dirname(BATCH_FILE) or ".", exist_ok=True)
+        with open(BATCH_FILE, "w", encoding="utf-8") as f:
+            f.write(str(idx))
+    except Exception:
+        pass
 
 BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 15)
 
@@ -957,7 +991,7 @@ def _split_header_rest(desc: str):
     rest = lines[i:]
     return header, rest
 
-def normalize_header_block(desc: str, company: str, website: str) -> str:
+def normalize_header_block(desc: str, company: str, website: str, batch: Optional[str] = None) -> str:
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
 
     header_lines, rest_lines = _split_header_rest(desc)
@@ -996,16 +1030,27 @@ def normalize_header_block(desc: str, company: str, website: str) -> str:
         "",
     ]
 
+    # Optionally append batch label (e.g. "Monday morning") to the body,
+    # but only if it's not already there.
+    if batch:
+        has_batch = any((line or "").strip() == batch for line in rest_lines)
+        if not has_batch:
+            if rest_lines and rest_lines[-1].strip() != "":
+                rest_lines.append("")
+            rest_lines.append(batch)
+            
     # IMPORTANT: don't rstrip spaces (would kill the "  " markdown breaks)
     out = ("\n".join(new_header + rest_lines)).rstrip("\n") + "\n\n@lead\n"
     return out
 
-def update_card_header(card_id: str, company: str, website: str, new_name: Optional[str] = None) -> bool:
+def update_card_header(card_id: str, company: str, website: str,
+                       new_name: Optional[str] = None,
+                       batch: Optional[str] = None) -> bool:
     cur = trello_get_card(card_id)
     desc_old = cur["desc"]
     name_old = cur["name"]
 
-    desc_new = normalize_header_block(desc_old, company, website)
+    desc_new = normalize_header_block(desc_old, company, website, batch=batch)
 
     payload = {}
     if desc_new != desc_old:
@@ -1276,7 +1321,7 @@ def main():
         append_csv(leads, last_city, last_country)
 
     # Push to Trello
-    def push_one_lead(lead: dict, seen: set) -> bool:
+    def push_one_lead(lead: dict, seen: set, batch_label: Optional[str] = None) -> bool:
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
             print("No empty template card available; skipping push.", flush=True)
@@ -1288,6 +1333,7 @@ def main():
             company=lead["Company"],
             website=lead["Website"],
             new_name=lead["Company"],
+            batch=batch_label,
         )
 
         # Always persist domain after push attempt
@@ -1302,14 +1348,23 @@ def main():
             print(f"UNCHANGED ℹ️ — {lead['Company']}", flush=True)
         return True
 
+    # Batch rotation: assign same batch label to all leads of this run
+    batch_idx = load_batch_index()
+    batch_label = BATCH_SLOTS[batch_idx]
+    next_batch_idx = (batch_idx + 1) % len(BATCH_SLOTS)
+    
     pushed = 0
     for lead in leads:
         if pushed >= DAILY_LIMIT:
             break
-        ok = push_one_lead(lead, seen)
+        ok = push_one_lead(lead, seen, batch_label=batch_label)
         if ok:
             pushed += 1
             time.sleep(max(0, PUSH_INTERVAL_S) + max(0, BUTLER_GRACE_S))
+
+    # Only advance the batch rotation if we actually pushed leads
+    if pushed > 0:
+        save_batch_index(next_batch_idx)
 
     if DEBUG:
         print("Stats:", json.dumps(STATS, indent=2), flush=True)
