@@ -139,19 +139,20 @@ USE_ENV_TEMPLATES = (
 )
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env(
-        "SUBJECT_A", default="Last call for the free {Company} sample"
+        "SUBJECT_A", default="Before I close this — free sample for {Company}?"
     )
     SUBJECT_B = _get_env(
-        "SUBJECT_B", default="Last call for the free {Company} sample"
+        "SUBJECT_B", default="Before I close this — free sample for {Company}?"
     )
     BODY_A = _get_env(
         "BODY_A",
         default="""Hi there,
-I only do a few free samples per week and I’ve got time to fit one more in for {Company}.
+I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
 If you want one for an upcoming listing, you can upload 2–3 raw clips [here].
+I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
-Otherwise, no worries — just let me know and I’ll close this thread.
+If not, no worries — just tell me and I’ll close the loop.
 
 Best,
 Matthieu from Matly""",
@@ -159,33 +160,37 @@ Matthieu from Matly""",
     BODY_B = _get_env(
         "BODY_B",
         default="""Hey {first},
-I only do a few free samples per week and I’ve got time to fit one more in for {Company}.
+I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
 If you want one for an upcoming listing, you can upload 2–3 raw clips [here].
+I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
-Otherwise, no worries — just let me know and I’ll close this thread.
+If not, no worries — just tell me and I’ll close the loop.
 
 Best,
-Matthieu from Matly""",
+Matthieu from Matly
+""",
     )
 else:
-    SUBJECT_A = "Last call for the free {Company} sample"
-    SUBJECT_B = "Last call for the free {Company} sample"
+    SUBJECT_A = "Before I close this — free sample for {Company}?"
+    SUBJECT_B = "Before I close this — free sample for {Company}?"
     BODY_A = """Hi there,
-I only do a few free samples per week and I’ve got time to fit one more in for {Company}.
+I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
 If you want one for an upcoming listing, you can upload 2–3 raw clips [here].
+I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
-Otherwise, no worries — just let me know and I’ll close this thread.
+If not, no worries — just tell me and I’ll close the loop.
 
 Best,
 Matthieu from Matly"""
     BODY_B = """Hey {first},
-I only do a few free samples per week and I’ve got time to fit one more in for {Company}.
+I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
 If you want one for an upcoming listing, you can upload 2–3 raw clips [here].
+I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
-Otherwise, no worries — just let me know and I’ll close this thread.
+If not, no worries — just tell me and I’ll close the loop.
 
 Best,
 Matthieu from Matly"""
