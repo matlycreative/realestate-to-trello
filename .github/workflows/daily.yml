@@ -3,7 +3,7 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * 2-6" # Tue–Sat
+    - cron: "0 2 * * 2-5" # Tue–Sat
     - cron: "0 2 * * 0"   # Sun
 
 permissions:
