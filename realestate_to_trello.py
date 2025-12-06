@@ -61,16 +61,16 @@ SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 # Batch rotation for scheduling (e.g. "Monday morning", "Monday afternoon", etc.)
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
-    "m monday",
-    "a monday",
-    "m tuesday",
-    "a tuesday",
-    "m wednesday",
     "a wednesday",
     "m thursday",
     "a thursday",
     "m friday",
     "a friday",
+    "m monday",
+    "a monday",
+    "m tuesday",
+    "a tuesday",
+    "m wednesday",
 ]
 
 def load_batch_index() -> int:
