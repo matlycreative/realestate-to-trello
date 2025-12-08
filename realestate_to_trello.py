@@ -54,14 +54,13 @@ def env_on(name, default=False):
     return bool(default)
 
 # ---------- config ----------
-DAILY_LIMIT      = env_int("DAILY_LIMIT", 45)
+DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 # Batch rotation for scheduling (e.g. "Monday morning", "Monday afternoon", etc.)
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
-    "m friday",
     "a friday",
     "m monday",
     "a monday",
@@ -71,6 +70,7 @@ BATCH_SLOTS = [
     "a wednesday",
     "m thursday",
     "a thursday",
+    "m friday",
 ]
 
 def load_batch_index() -> int:
