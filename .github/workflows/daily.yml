@@ -3,7 +3,7 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * 2-5" # Tue–Sat
+    - cron: "0 2 * * 1-6" # Tue–Sat
     - cron: "0 2 * * 0"   # Sun
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
 
       # Tuning
       QUALITY_MIN: "1.0"
-      DAILY_LIMIT: "45"
+      DAILY_LIMIT: "50"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.2"
       CITY_HOPS: "14"
