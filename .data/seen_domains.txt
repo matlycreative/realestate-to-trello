@@ -15,6 +15,7 @@ abiteca.com
 access-immo.be
 accessestate.be
 acoutfix.fr
+activaproperties.com
 activexpertise-aubagne.fr
 adaix.com
 adhocbeheer.nl
@@ -56,6 +57,7 @@ almaterraimmobilier.com
 alquilerseguro.es
 altro-vastgoed.be
 alvesealves.com
+amatimmobiliaris.com
 ammproperties.com
 amstelmakelaardij.nl
 andres.pt
@@ -65,11 +67,13 @@ anibalrealestate.pt
 ankebodewes.nl
 anson-realty.com
 anthemproperties.com
+apabcn.net
 apartmentincopenhagen.com
 apidominguez.com
 arcada.com.pt
 arcadiabelgium.be
 architektur-ag.ch
+are.lu
 are.nl
 arimco.ch
 arkaden.at
@@ -88,11 +92,14 @@ awayerealty.com
 awchilds.co.uk
 axellenaerts.be
 axiommortgage.ca
+b-immobilier.lu
 babiakteam.com
 baltrusch.ch
 bankasa.it
+barcelona.cat
 barnapiso.com
 barnes-international.com
+barnes-luxembourg.com
 barrycohenhomes.com
 barthreal.ch
 batibella.com
@@ -100,9 +107,11 @@ batilac.ch
 baustone.com
 baysideproperty.com
 bcnfinques.com
+bcnpremium.com
 becoimmobiliare.it
 beeldgarage.nl
 behroyan.com
+beltrealestate.es
 bemyflat.fr
 benhams.com
 benoitlannesimmobilier.com
@@ -162,6 +171,7 @@ cabinetcourtois.com
 cabinetdumidi.fr
 calabresere.com
 calgreenhomes.ca
+calteux.lu
 capannonearancione.com
 carbonell.com
 casa.it
@@ -223,6 +233,7 @@ comfortlivingexp.com
 communityimpactrealestate.ca
 compasimmobilier.com
 compass.com
+comprarcasa.com
 condoblackbook.com
 condowong.ca
 connexion-immobilier.com
@@ -239,6 +250,7 @@ curriegreen.ca
 danbolig.dk
 dandreacraigrealty.com
 danielfeau.com
+dayuanhuan.com
 defalcorealty.com
 defforge-immobilier.fr
 dekkermakelaars.nl
@@ -253,6 +265,7 @@ desormiere-immo.com
 dewaele.com
 dewekkervoorburg.nl
 dexin.be
+dianafinques.com
 diciottoimmobiliare.it
 dijkhuizenmakelaars.nl
 dimensionizago.it
@@ -286,6 +299,7 @@ emeraldmanagement.com
 emilegarcin.fr
 emmanuelaxelrad.com
 engelvoelkers.com
+entrepisos.es
 era.at
 era.pt
 erafrance.com
@@ -295,6 +309,7 @@ essentimmo.be
 estate-maeglerne.dk
 estate.dk
 estoppey-immobilier.ch
+estram.es
 eurofa.be
 eurofincas.es
 evansnyc.com
@@ -310,6 +325,7 @@ expert-invest.fr
 expertissimmo.eu
 falcimmo.de
 fastgoed.pro
+fatjoassets.com
 fenixalmada.pt
 fgfimmobiliare.com
 fgzzh.ch
@@ -319,9 +335,16 @@ fika.fr
 fimmo-vastgoed.be
 fincasarroyo.com
 fincascos.com
+fincasdomus.com
+fincashervas.es
+fincasmadruga.com
+fincasordonez.com
 fineandcountry.co.uk
 finest-homes.com
 finquesbernat.com
+finquesmarba.com
+finquesmur.com
+finquesrierablanca.cat
 firstclasshousing.nl
 flatfeefloridarealty.com
 fmassessors.com
@@ -343,6 +366,7 @@ friswonen.nl
 funnyhouse.pt
 g-h.co.uk
 gabetti.it
+gabinetejorvi.com
 gascoignehalman.co.uk
 gemmonsyndic.fr
 generation-campus.be
@@ -352,7 +376,9 @@ genusswohnwelt.at
 gererseul.com
 gerritjanheemskerk.nl
 gersin.at
+gesnieto.com
 gestietarcoslada.es
+gestoriak2.com
 gilmar.es
 ginmo.es
 girardi-immobilier.com
@@ -362,11 +388,13 @@ globexs.com
 goodbyeland.com
 goudenbuurten.nl
 goviewlondon.co.uk
+grabig.com
 gracewoodgroup.com
 grandgeneve-immo.com
 gravestate.com
 grawe-immobilien.at
 greaterlondonproperties.co.uk
+greystar.com
 grimaldiricambi.it
 grootewaard.nl
 grosschaedl-immo.at
@@ -401,6 +429,7 @@ hillewaere-vastgoed.be
 hmj.nl
 hmpmarseille.fr
 hochreal.at
+hoffstetter.lu
 hogenboommakelaardij.nl
 home-consult.be
 home-estate.be
@@ -420,7 +449,9 @@ hometownbny.com
 homevast.be
 hoosify.fr
 horizonimmobiliare.it
+hosta.cat
 houghtonestates.com
+houseconcept.lu
 housepartners.immo
 hpgreenfield.com
 human-immobilier.fr
@@ -446,6 +477,7 @@ immo-b.com
 immo-company.at
 immo-cvh.be
 immo-declic.com
+immo-domus.lu
 immo-elite.com
 immo-gross.de
 immo-kubicek.at
@@ -470,16 +502,19 @@ immobiliengaiser.de
 immobiliereduparc-marseille.fr
 immoby.be
 immocd.be
+immodavinci.be
 immodelaet.be
 immodevauxgestion-paris.fr
 immodome.be
 immoedenpark.com
+immofocus.lu
 immofrancois.be
 immogy.be
 immoh.at
 immohaegeman.be
 immoid.be
 immolangeveld.be
+immoprestige.lu
 immoquartier.be
 immoseeker.ch
 immosol.ch
@@ -502,6 +537,7 @@ ingescasa.es
 inmo2021.com
 inmobiliariaocasion.com
 inmobiliariaohana.com
+inmueblaretail.com
 innocept.ca
 inopiae.fr
 instantrealtyinc.com
@@ -518,6 +554,7 @@ jcre.ca
 jeancharpentier.com
 jetimmo.be
 jfpimobiliaria.com
+jiahuarealestate.com
 jjfinques.es
 jll.pt
 john-taylor.com
@@ -600,6 +637,7 @@ luxeresidential.co.uk
 luxurymtl.com
 lwwonen.info
 m-oi.fr
+mabro.lu
 mafyc.com
 mainandmain.co.uk
 maisconsultores.pt
@@ -625,6 +663,7 @@ medintsrl.it
 mediogo.pt
 megauniversoimmobiliare.com
 mesolia.fr
+metresquadrats.com
 metropoleproperty.com
 mfimmobilien.at
 michaelzingraf.com
@@ -676,14 +715,17 @@ nomadaimobiliaria.pt
 nordvikbolig.no
 northernetchellshomes.com
 northgatehousebuyers.com
+noucastor.com
 novateasesora.com
 nu-man.co.uk
+nuevacasa.net
 nybolig.dk
 nyempirerealestate.com
 nysuperiorrealty.com
 oakwyn.com
 ocvastgoed.be
 odeonimmobilier.fr
+oficina24.es
 ok-it.at
 olivimmobiliare.com
 olsthoornmakelaars.nl
@@ -842,6 +884,7 @@ securitegestion.fr
 seefirstpre.com
 sefimmo.com
 seg.at
+segermar.es
 selinver.com
 selmakrealty.com
 semcoda.com
@@ -851,6 +894,7 @@ sergic.com
 servigrupo.pt
 servitress.com
 sfp.ch
+shbarcelona.com
 sherwoodsproperty.co.uk
 shoppingimmobiliare.com
 sigla.pt
@@ -910,7 +954,9 @@ sweetinn.com
 sycogest-immobilier.com
 synchromakelaardij.nl
 tagerim.fr
+tasinsa.com
 taurus.dk
+taurusiberica.com
 team-rauscher.at
 team-service.it
 teamneunzehn.at
@@ -938,6 +984,7 @@ thp.co.at
 timeimmobiliare.it
 tkrmgmt.com
 tomcampone.com
+top-invest.lu
 topbinzco.com
 topcalgaryrealestate.com
 topdd.at
@@ -951,6 +998,7 @@ trevi.be
 triompheimmobilier.com
 trior.be
 trivalue.com
+tucom.es
 tulou.life
 turofincas.com
 tvw.nl
@@ -964,6 +1012,7 @@ unu.pt
 up-immo.net
 urban-concept.be
 urbanleasing.com
+urbanlivin.lu
 urbecasa.com
 valentimmo.com
 valimmas.be
@@ -1004,6 +1053,7 @@ vitalspace.co.uk
 vivendex.com
 vlieg.nl
 vlkmakelaars.nl
+von-poll.com
 voormamillenaar.nl
 vuurtoren.nl
 waartsmakelaars.nl
