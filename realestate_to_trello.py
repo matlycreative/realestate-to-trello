@@ -56,7 +56,7 @@ def env_on(name, default=False):
 # ---------- config ----------
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
-REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
+REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.8)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
 # Batch rotation
