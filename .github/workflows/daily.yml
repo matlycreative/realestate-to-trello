@@ -43,9 +43,9 @@ jobs:
       # Tuning
       DAILY_LIMIT: "50"
       PUSH_INTERVAL_S: "20"
-      REQUEST_DELAY_S: "0.2"
+      REQUEST_DELAY_S: "0.8"
       CITY_HOPS: "14"
-      OSM_RADIUS_M: "15000"
+      OSM_RADIUS_M: "25000"
       BUTLER_GRACE_S: "15"
 
       # Robots is OFF by default in the script (recommended)
