@@ -13,16 +13,14 @@
 # - Robots OFF by default (won't block leads); enable with CHECK_ROBOTS=1
 # - tldextract offline: avoid downloading suffix list in CI
 #
-# Volume/coverage upgrades:
+# Coverage upgrades kept:
 # - Expanded OSM filters (adds deprecated/common tags)
-# - Accept social links as "Website" when no real website exists (IG/FB/LinkedIn)
-# - Multi-point sampling inside city bbox to cover large cities
-# - Optional duplicate-domain cap per run (instead of global forever-block)
+# - Multi-point sampling inside city bbox (helps large cities)
 
 import os, re, json, time, random, csv, pathlib, math, socket
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -102,19 +100,7 @@ PRECLONE   = env_on("PRECLONE", False)
 # Robots toggle (OFF by default)
 CHECK_ROBOTS = env_on("CHECK_ROBOTS", False)
 
-# Duplicate-domain policy:
-# By default we still use SEEN_FILE, but we allow a per-run cap so one franchise site doesn't wipe volume forever.
-# - DOMAIN_MAX_PER_RUN=0 means "no cap" (allow duplicates)
-# - DOMAIN_MAX_PER_RUN=1 means "only one lead per domain per run"
-DOMAIN_MAX_PER_RUN = env_int("DOMAIN_MAX_PER_RUN", 0)
-
-# Also allow turning OFF the global seen-file blocking (pure volume runs)
-IGNORE_GLOBAL_SEEN = env_on("IGNORE_GLOBAL_SEEN", False)
-
-# Accept social as website (huge volume boost when agencies only have IG/FB)
-ACCEPT_SOCIAL_AS_WEBSITE = env_on("ACCEPT_SOCIAL_AS_WEBSITE", True)
-
-# Multi-point sampling inside bbox (huge for big cities)
+# Multi-point sampling inside bbox (helps large cities)
 BBOX_SAMPLES = env_int("BBOX_SAMPLES", 5)  # 1 = only center point
 
 # OSM candidates source toggles
@@ -161,10 +147,8 @@ USE_ZEFIX           = env_on("USE_ZEFIX", False)
 STATS = {
     "off_candidates": 0, "osm_candidates": 0,
     "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
-    "skip_domain_cap": 0,
     "cand_overpass": 0, "cand_nominatim_poi": 0,
     "website_direct": 0, "website_overpass_name": 0, "website_nominatim": 0, "website_fsq": 0, "website_wikidata": 0,
-    "website_social": 0,
     "fetch_ok": 0, "fetch_soft_ok": 0, "fetch_hard_fail": 0, "fetch_dns_ok": 0,
     "bbox_samples_used": 0,
 }
@@ -425,7 +409,6 @@ def geocode_city(city, country) -> Tuple[float,float,float,float]:
     raise RuntimeError(f"Nominatim rate-limited geocode for {city}, {country}")
 
 def _bbox_samples(south: float, west: float, north: float, east: float, n: int) -> List[Tuple[float,float]]:
-    # deterministic-ish samples: center + random points
     pts: List[Tuple[float,float]] = []
     lat_c = (south + north) / 2.0
     lon_c = (west + east) / 2.0
@@ -434,7 +417,6 @@ def _bbox_samples(south: float, west: float, north: float, east: float, n: int) 
     if n <= 1:
         return pts
 
-    # avoid edges a bit
     lat_min = south + (north - south) * 0.15
     lat_max = north - (north - south) * 0.15
     lon_min = west + (east - west) * 0.15
@@ -443,7 +425,6 @@ def _bbox_samples(south: float, west: float, north: float, east: float, n: int) 
     for _ in range(max(0, n - 1)):
         pts.append((random.uniform(lat_min, lat_max), random.uniform(lon_min, lon_max)))
 
-    # de-dup near-identical
     out = []
     seen = set()
     for la, lo in pts:
@@ -463,56 +444,10 @@ OSM_FILTERS = [
     ("shop","real_estate"),
 
     # extra coverage / common legacy tags:
-    ("office","real_estate_agent"),        # deprecated but still used
-    ("office","property_agent"),           # rare but exists
-    ("amenity","real_estate_agent"),       # rare
+    ("office","real_estate_agent"),
+    ("office","property_agent"),
+    ("amenity","real_estate_agent"),
 ]
-
-# Social tags in OSM/nominatim extratags to treat as fallback "website"
-SOCIAL_TAGS = [
-    "contact:website","website","url",
-    "contact:facebook","facebook",
-    "contact:instagram","instagram",
-    "contact:linkedin","linkedin",
-    "contact:youtube","youtube",
-    "contact:tiktok","tiktok",
-]
-
-SOCIAL_HOST_ALLOW = (
-    "instagram.com", "www.instagram.com",
-    "facebook.com", "www.facebook.com",
-    "linkedin.com", "www.linkedin.com",
-    "youtube.com", "www.youtube.com", "youtu.be",
-    "tiktok.com", "www.tiktok.com",
-)
-
-def _normalize_social(v: Optional[str]) -> Optional[str]:
-    v = (v or "").strip()
-    if not v:
-        return None
-
-    # allow handles like "@name" for instagram as convenience
-    if v.startswith("@"):
-        v = v[1:]
-
-    # sometimes stored as just "instagram.com/name" or "name"
-    if "://" not in v:
-        if v.lower().startswith("instagram.com/") or v.lower().startswith("www.instagram.com/"):
-            v = "https://" + v
-        elif v.lower().startswith("facebook.com/") or v.lower().startswith("www.facebook.com/"):
-            v = "https://" + v
-        elif v.lower().startswith("linkedin.com/") or v.lower().startswith("www.linkedin.com/"):
-            v = "https://" + v
-        elif v.lower().startswith("tiktok.com/") or v.lower().startswith("www.tiktok.com/"):
-            v = "https://" + v
-
-    u = normalize_url(v)
-    if not u:
-        return None
-    host = (urlparse(u).hostname or "").lower()
-    if host in SOCIAL_HOST_ALLOW:
-        return u
-    return None
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -534,26 +469,6 @@ def _overpass_post(query: str) -> Optional[dict]:
                 continue
     return None
 
-def _pick_website_or_social(tags: Dict[str,str]) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Returns (website, social)
-    website = real website if present
-    social  = social URL if present and allowed
-    """
-    tags = tags or {}
-    website = tags.get("website") or tags.get("contact:website") or tags.get("url")
-    website = normalize_url(website) if website else None
-
-    social = None
-    if ACCEPT_SOCIAL_AS_WEBSITE and not website:
-        for k in SOCIAL_TAGS:
-            if k in ("website","contact:website","url"):
-                continue
-            social = _normalize_social(tags.get(k))
-            if social:
-                break
-    return website, social
-
 def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
     if not OVERPASS_ENABLED:
         return []
@@ -574,7 +489,8 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
         if not name:
             continue
 
-        website, social = _pick_website_or_social(tags)
+        website = tags.get("website") or tags.get("contact:website") or tags.get("url")
+        website = normalize_url(website) if website else None
         wikidata = tags.get("wikidata")
 
         lat2 = el.get("lat")
@@ -586,7 +502,6 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
         rows.append({
             "business_name": name,
             "website": website,
-            "social": social,
             "wikidata": wikidata,
             "lat": lat2,
             "lon": lon2,
@@ -595,7 +510,7 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
     # Dedup
     dedup = {}
     for r0 in rows:
-        dom = etld1_from_url(r0["website"] or r0["social"] or "")
+        dom = etld1_from_url(r0["website"] or "")
         key = (r0["business_name"].lower(), dom)
         if key not in dedup:
             dedup[key] = r0
@@ -638,21 +553,6 @@ def _nominatim_poi_queries_for(country: str) -> List[str]:
     elif c in ("norway",):
         base = ["eiendomsmegler", "eiendom", "property management"]
     return base
-
-def _extract_nominatim_site_or_social(extratags: Dict[str,str]) -> Tuple[Optional[str], Optional[str]]:
-    xt = extratags or {}
-    w = xt.get("website") or xt.get("contact:website") or xt.get("url")
-    w = normalize_url(w) if w else None
-
-    social = None
-    if ACCEPT_SOCIAL_AS_WEBSITE and not w:
-        for k in SOCIAL_TAGS:
-            if k in ("website","contact:website","url"):
-                continue
-            social = _normalize_social(xt.get(k))
-            if social:
-                break
-    return w, social
 
 def nominatim_poi_candidates(city: str, country: str, south: float, west: float, north: float, east: float) -> List[dict]:
     if not NOMINATIM_POI_ENABLED:
@@ -715,7 +615,8 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
                 continue
 
             xt = it.get("extratags") or {}
-            website, social = _extract_nominatim_site_or_social(xt)
+            website = xt.get("website") or xt.get("contact:website") or xt.get("url")
+            website = normalize_url(website) if website else None
 
             try:
                 lat2 = float(it.get("lat")) if it.get("lat") is not None else None
@@ -723,7 +624,7 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             except Exception:
                 lat2, lon2 = None, None
 
-            dom = etld1_from_url(website or social or "") or f"{lat2},{lon2}"
+            dom = etld1_from_url(website or "") or f"{lat2},{lon2}"
             key = (nm.lower(), dom)
             if key in seen_key:
                 continue
@@ -732,7 +633,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             out.append({
                 "business_name": nm,
                 "website": website,
-                "social": social,
                 "wikidata": xt.get("wikidata"),
                 "lat": lat2,
                 "lon": lon2,
@@ -743,7 +643,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     return out
 
 def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> Tuple[List[dict], str]:
-    # multi-point sampling: center + random points in bbox
     pts = _bbox_samples(south, west, north, east, BBOX_SAMPLES)
     STATS["bbox_samples_used"] += len(pts)
 
@@ -758,24 +657,21 @@ def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: f
                     via = "overpass"
                     all_cands.extend(cands)
 
-    # If overpass yields nothing at all, try nominatim POI once (bbox-wide)
     if not all_cands and NOMINATIM_POI_ENABLED:
         cands = nominatim_poi_candidates(city, country, south, west, north, east)
         if cands:
             via = "nominatim_poi"
             all_cands.extend(cands)
 
-    # final dedup
     dedup = {}
     for c in all_cands:
-        dom = etld1_from_url(c.get("website") or c.get("social") or "")
+        dom = etld1_from_url(c.get("website") or "")
         k = (c.get("business_name","").lower(), dom)
         if k not in dedup:
             dedup[k] = c
     out = list(dedup.values())
     random.shuffle(out)
 
-    STATS["osm_candidates"] += len(out)
     return out, via
 
 # ---------- website resolution helpers ----------
@@ -966,41 +862,27 @@ def fsq_find_website(name, lat, lon):
     return None
 
 def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: float,
-                    direct: Optional[str],
-                    wikidata_qid: Optional[str] = None,
-                    social_direct: Optional[str] = None) -> Optional[str]:
-    # direct website
+                    direct: Optional[str], wikidata_qid: Optional[str] = None) -> Optional[str]:
     w = normalize_url(direct)
     if w:
         STATS["website_direct"] += 1
         return w
 
-    # direct social fallback
-    if ACCEPT_SOCIAL_AS_WEBSITE:
-        s = _normalize_social(social_direct)
-        if s:
-            STATS["website_social"] += 1
-            return s
-
-    # wikidata
     w = wikidata_website_from_qid(wikidata_qid or "")
     if w:
         STATS["website_wikidata"] += 1
         return w
 
-    # nominatim lookup
     w = nominatim_lookup_website(biz_name, city, country, limit=8)
     if w:
         STATS["website_nominatim"] += 1
         return w
 
-    # overpass-by-name (optional)
     w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
     if w:
         STATS["website_overpass_name"] += 1
         return w
 
-    # foursquare
     w = normalize_url(fsq_find_website(biz_name, lat, lon))
     if w:
         STATS["website_fsq"] += 1
@@ -1019,7 +901,7 @@ def uk_companies_house():
         if r.status_code != 200:
             return []
         items = r.json().get("items") or []
-        out = [{"business_name": (it.get("company_name") or "").strip(), "website": None, "wikidata": None, "social": None} for it in items]
+        out = [{"business_name": (it.get("company_name") or "").strip(), "website": None, "wikidata": None} for it in items]
         out = [x for x in out if x["business_name"]]
         random.shuffle(out)
         return out
@@ -1067,9 +949,9 @@ def fr_sirene(city=None):
             nm = (ul.get("denominationUniteLegale") or ul.get("nomUniteLegale") or "").strip()
             if not nm:
                 nm = (e.get("periodesEtablissement") or [{}])[-1].get("enseigne1Etablissement") or ""
-                nm = (nm or "").strip()
+                nm = nm.strip()
             if nm:
-                out.append({"business_name": nm, "website": None, "wikidata": None, "social": None})
+                out.append({"business_name": nm, "website": None, "wikidata": None})
         random.shuffle(out)
         return out
     except Exception:
@@ -1098,9 +980,10 @@ def opencorp_search(country_code):
         results = (r.json().get("results") or {}).get("companies") or []
         out = []
         for c in results:
-            nm = ((c.get("company") or {}).get("name") or "").strip()
+            nm = (c.get("company") or {}).get("name") or ""
+            nm = nm.strip()
             if nm:
-                out.append({"business_name": nm, "website": None, "wikidata": None, "social": None})
+                out.append({"business_name": nm, "website": None, "wikidata": None})
         seen, uniq = set(), []
         for x in out:
             k = x["business_name"].lower()
@@ -1141,7 +1024,7 @@ def ch_zefix():
                     for it in items:
                         nm = (it.get("name") or it.get("companyName") or it.get("firmName") or "").strip()
                         if nm:
-                            out.append({"business_name": nm, "website": None, "wikidata": None, "social": None})
+                            out.append({"business_name": nm, "website": None, "wikidata": None})
                     if len(out) >= 50:
                         break
                 except Exception:
@@ -1453,22 +1336,6 @@ def main():
     last_city = ""
     last_country = ""
 
-    # per-run domain cap counter
-    domain_count: Dict[str,int] = {}
-
-    def domain_allowed(dom: str) -> bool:
-        if not dom:
-            return True
-        if DOMAIN_MAX_PER_RUN <= 0:
-            return True
-        c = domain_count.get(dom, 0)
-        return c < DOMAIN_MAX_PER_RUN
-
-    def domain_bump(dom: str):
-        if not dom:
-            return
-        domain_count[dom] = domain_count.get(dom, 0) + 1
-
     for (city, country) in iter_cities():
         print(f"\n=== CITY START: {city}, {country} ===", flush=True)
         t_city = time.time()
@@ -1506,19 +1373,13 @@ def main():
                 lon=lon,
                 direct=biz.get("website"),
                 wikidata_qid=biz.get("wikidata"),
-                social_direct=biz.get("social"),
             )
             if not website:
                 STATS["skip_no_website"] += 1
                 continue
 
             dom = etld1_from_url(website)
-
-            if not domain_allowed(dom):
-                STATS["skip_domain_cap"] += 1
-                continue
-
-            if (not IGNORE_GLOBAL_SEEN) and dom and dom in seen:
+            if dom and dom in seen:
                 STATS["skip_dupe_domain"] += 1
                 continue
 
@@ -1535,10 +1396,8 @@ def main():
             leads.append({"Company": biz["business_name"], "Website": website})
 
             if dom:
-                domain_bump(dom)
-                if not IGNORE_GLOBAL_SEEN:
-                    seen_domain_write(dom)
-                    seen.add(dom)
+                seen_domain_write(dom)
+                seen.add(dom)
 
             _sleep()
 
@@ -1550,6 +1409,7 @@ def main():
             print(f"[{city}] OSM search starting...", flush=True)
 
             cands, via = get_osm_candidates(city, country, lat, lon, south, west, north, east)
+            STATS["osm_candidates"] += len(cands)
             print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s) via {via}", flush=True)
 
             leads_before_osm = len(leads)
@@ -1569,19 +1429,13 @@ def main():
                     lon=lon0,
                     direct=biz.get("website"),
                     wikidata_qid=biz.get("wikidata"),
-                    social_direct=biz.get("social"),
                 )
                 if not website:
                     STATS["skip_no_website"] += 1
                     continue
 
                 dom = etld1_from_url(website)
-
-                if not domain_allowed(dom):
-                    STATS["skip_domain_cap"] += 1
-                    continue
-
-                if (not IGNORE_GLOBAL_SEEN) and dom and dom in seen:
+                if dom and dom in seen:
                     STATS["skip_dupe_domain"] += 1
                     continue
 
@@ -1598,10 +1452,8 @@ def main():
                 leads.append({"Company": biz["business_name"], "Website": website})
 
                 if dom:
-                    domain_bump(dom)
-                    if not IGNORE_GLOBAL_SEEN:
-                        seen_domain_write(dom)
-                        seen.add(dom)
+                    seen_domain_write(dom)
+                    seen.add(dom)
 
                 _sleep()
 
@@ -1625,7 +1477,7 @@ def main():
         append_csv(leads, last_city, last_country)
 
     # Push to Trello
-    def push_one_lead(lead: dict, batch_label: Optional[str] = None) -> bool:
+    def push_one_lead(lead: dict, seen: set, batch_label: Optional[str] = None) -> bool:
         empties = find_empty_template_cards(TRELLO_LIST_ID, max_needed=1)
         if not empties:
             print("No empty template card available; skipping push.", flush=True)
@@ -1639,6 +1491,11 @@ def main():
             new_name=lead["Company"],
             batch=batch_label,
         )
+
+        dom = etld1_from_url(lead.get("Website") or "")
+        if dom:
+            seen_domain_write(dom)
+            seen.add(dom)
 
         if changed:
             print(f"PUSHED ✅ — {lead['Company']} — {lead['Website']}", flush=True)
@@ -1654,7 +1511,7 @@ def main():
     for lead in leads:
         if pushed >= DAILY_LIMIT:
             break
-        ok = push_one_lead(lead, batch_label=batch_label)
+        ok = push_one_lead(lead, seen, batch_label=batch_label)
         if ok:
             pushed += 1
             time.sleep(max(0, PUSH_INTERVAL_S) + max(0, BUTLER_GRACE_S))
@@ -1664,8 +1521,7 @@ def main():
 
     print("Stats:", json.dumps(STATS, indent=2), flush=True)
 
-    if not IGNORE_GLOBAL_SEEN:
-        save_seen(seen)
+    save_seen(seen)
 
     print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}", flush=True)
     print(f"Done. Leads pushed: {pushed}/{len(leads)}", flush=True)
