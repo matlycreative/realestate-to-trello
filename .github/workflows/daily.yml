@@ -22,6 +22,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       DEBUG: "1"
 
+      # Browser-like UA for website checks (prevents mass-403 on GH Actions)
       WEB_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
       # Required secrets
@@ -39,22 +40,17 @@ jobs:
       USE_OPENCORP: "0"
       USE_ZEFIX: "0"
 
-      # Force NO-EMAIL mode
-      COLLECT_EMAIL: "0"
-      REQUIRE_EXPLICIT_EMAIL: "0"
-      SKIP_GENERIC_EMAILS: "0"
-      REQUIRE_BUSINESS_DOMAIN: "0"
-      VERIFY_MX: "0"
-      USE_WHOIS: "0"
-
       # Tuning
-      QUALITY_MIN: "1.0"
       DAILY_LIMIT: "50"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.2"
       CITY_HOPS: "14"
       OSM_RADIUS_M: "15000"
       BUTLER_GRACE_S: "15"
+
+      # Robots is OFF by default in the script (recommended)
+      # If you ever want it ON:
+      # CHECK_ROBOTS: "1"
 
       # Persist
       SEEN_FILE: .data/seen_domains.txt
