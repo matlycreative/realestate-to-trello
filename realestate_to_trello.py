@@ -6,13 +6,12 @@
 # It preserves other fields already on the card:
 #   First, Email, Hook, Variant
 #
-# Big reliability fix (GitHub Actions friendly):
-# - Overpass often times out. We keep it, but add a strong fallback:
-#   ✅ Nominatim POI keyword search inside the city bounding box
-#
-# No email crawling. No email extraction. No MX/DMARC. No contact pages.
+# Reliability fixes (GitHub Actions friendly):
+# - Nominatim rate-limit safe: single global throttle key + 429 backoff + email= param
+# - Website check: don't discard leads on 403/429 (common on GH Actions); only hard-fail on 404/410
+# - tldextract offline: avoid downloading suffix list in CI
 
-import os, re, json, time, random, csv, pathlib, html, math
+import os, re, json, time, random, csv, pathlib, math
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
 from typing import Optional, List, Dict, Tuple
@@ -20,7 +19,6 @@ from typing import Optional, List, Dict, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
 import tldextract
 import urllib.robotparser as robotparser
 from functools import lru_cache
@@ -58,6 +56,7 @@ DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
+
 # Batch rotation for scheduling (e.g. "Monday morning", "Monday afternoon", etc.)
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
@@ -82,7 +81,6 @@ def load_batch_index() -> int:
                 return idx
     except Exception:
         pass
-    # default to start
     return 0
 
 def save_batch_index(idx: int) -> None:
@@ -94,7 +92,6 @@ def save_batch_index(idx: int) -> None:
         pass
 
 BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 15)
-
 DEBUG      = env_on("DEBUG", False)
 
 # pre-clone toggle (disabled by default)
@@ -116,8 +113,15 @@ NOMINATIM_LIMIT = env_int("NOMINATIM_LIMIT", 60)
 NOMINATIM_POI_QUERIES_PER_CITY = env_int("NOMINATIM_POI_QUERIES_PER_CITY", 3)
 
 # Nominatim + UA
-NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "you@example.com")
-UA              = os.getenv("USER_AGENT", f"EditorLeads/1.0 (+{NOMINATIM_EMAIL})")
+NOMINATIM_EMAIL = (os.getenv("NOMINATIM_EMAIL") or "you@example.com").strip()
+UA_NOMINATIM    = os.getenv("USER_AGENT", f"MatlyLeads/1.0 (+{NOMINATIM_EMAIL})")
+
+# Website fetch UA (browser-like to reduce mass-403 on CI)
+WEB_USER_AGENT = os.getenv(
+    "WEB_USER_AGENT",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
 
 # Trello
 TRELLO_KEY      = os.getenv("TRELLO_KEY")
@@ -139,6 +143,7 @@ STATS = {
     "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
     "cand_overpass": 0, "cand_nominatim_poi": 0,
     "website_direct": 0, "website_overpass_name": 0, "website_nominatim": 0, "website_fsq": 0, "website_wikidata": 0,
+    "fetch_ok": 0, "fetch_soft_ok": 0, "fetch_hard_fail": 0,
 }
 
 def dbg(msg):
@@ -160,7 +165,10 @@ def _sleep():
 
 # ---------- HTTP ----------
 SESS = requests.Session()
-SESS.headers.update({"User-Agent": UA, "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"})
+SESS.headers.update({
+    "User-Agent": UA_NOMINATIM,
+    "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"
+})
 
 # retries for GET only
 try:
@@ -180,6 +188,12 @@ except TypeError:
     )
 SESS.mount("https://", HTTPAdapter(max_retries=_retries))
 SESS.mount("http://", HTTPAdapter(max_retries=_retries))
+
+# ---------- tldextract (offline / no suffix-list download in CI) ----------
+_TLD_EXTRACT = tldextract.TLDExtract(
+    cache_dir=os.path.expanduser("~/.cache/tldextract"),
+    suffix_list_urls=None,
+)
 
 # ---------- geo / city ----------
 COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").split(",") if s.strip()]
@@ -270,24 +284,61 @@ def normalize_url(u):
 
 def etld1_from_url(u: str) -> str:
     try:
-        ex = tldextract.extract(u or "")
+        ex = _TLD_EXTRACT(u or "")
         if ex.domain:
             return f"{ex.domain}.{ex.suffix}" if ex.suffix else ex.domain
     except Exception:
         pass
     return ""
 
-def fetch(url):
-    r = SESS.get(url, timeout=30)
-    r.raise_for_status()
-    return r
+def fetch_site_ok(url: str) -> bool:
+    """
+    Website existence check.
+    On GitHub Actions, many legit sites return 403/406/429 to bots/datacenter IPs.
+    Treat those as SOFT OK so you don't lose all leads.
+    Hard-fail only on real not found.
+    """
+    try:
+        r = SESS.get(
+            url,
+            timeout=20,
+            headers={
+                "User-Agent": WEB_USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            allow_redirects=True,
+        )
+        code = int(r.status_code)
+
+        if code in (404, 410):
+            STATS["fetch_hard_fail"] += 1
+            return False
+
+        if 200 <= code < 400:
+            STATS["fetch_ok"] += 1
+            return True
+
+        if code in (401, 403, 405, 406, 429):
+            STATS["fetch_soft_ok"] += 1
+            return True
+
+        STATS["fetch_hard_fail"] += 1
+        return False
+    except Exception:
+        STATS["fetch_hard_fail"] += 1
+        return False
 
 # ---------- robots (cached per-base) ----------
 @lru_cache(maxsize=2048)
 def _robots_parser_for_base(base: str) -> robotparser.RobotFileParser:
     rp = robotparser.RobotFileParser()
     try:
-        resp = SESS.get(urljoin(base, "/robots.txt"), timeout=10)
+        resp = SESS.get(
+            urljoin(base, "/robots.txt"),
+            timeout=10,
+            headers={"User-Agent": WEB_USER_AGENT}
+        )
         if resp.status_code != 200:
             rp.parse([])  # allow all
             return rp
@@ -305,25 +356,38 @@ def allowed_by_robots(base_url: str, path: str = "/") -> bool:
         if not path0.startswith("/"):
             path0 = "/" + path0
         rp = _robots_parser_for_base(base)
-        return rp.can_fetch(UA, urljoin(base, path0))
+        return rp.can_fetch(UA_NOMINATIM, urljoin(base, path0))
     except Exception:
         return True
 
 # ---------- geo ----------
 def geocode_city(city, country) -> Tuple[float,float,float,float]:
-    throttle("nominatim", 1.1)
-    r = SESS.get(
-        "https://nominatim.openstreetmap.org/search",
-        params={"q": f"{city}, {country}", "format":"json", "limit":1},
-        headers={"Referer":"https://nominatim.org"},
-        timeout=30
-    )
-    r.raise_for_status()
-    data = r.json()
-    if not data:
-        raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
-    south, north, west, east = map(float, data[0]["boundingbox"])
-    return south, west, north, east
+    for attempt in range(5):
+        throttle("nominatim", 1.3)
+        r = SESS.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": f"{city}, {country}",
+                "format":"json",
+                "limit":1,
+                "email": NOMINATIM_EMAIL,
+            },
+            headers={"Referer":"https://nominatim.org"},
+            timeout=30
+        )
+
+        if r.status_code == 429:
+            time.sleep(2 * (attempt + 1))
+            continue
+
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            raise RuntimeError(f"Nominatim couldn't find {city}, {country}")
+        south, north, west, east = map(float, data[0]["boundingbox"])
+        return south, west, north, east
+
+    raise RuntimeError(f"Nominatim rate-limited geocode for {city}, {country}")
 
 # ---------- OSM candidates (Overpass + Nominatim POI fallback) ----------
 OSM_FILTERS = [
@@ -447,29 +511,41 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     seen_key = set()
 
     for qstr in queries:
-        try:
-            throttle("nominatim_poi", 1.1)
-            r = SESS.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={
-                    "q": f"{qstr} {city} {country}",
-                    "format": "jsonv2",
-                    "limit": NOMINATIM_LIMIT,
-                    "viewbox": vb,
-                    "bounded": 1,
-                    "dedupe": 1,
-                    "extratags": 1,
-                    "namedetails": 1,
-                },
-                headers={"Referer":"https://nominatim.org"},
-                timeout=30,
-            )
-            if r.status_code != 200:
+        items = []
+        for attempt in range(5):
+            try:
+                throttle("nominatim", 1.3)  # SINGLE global bucket
+                r = SESS.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={
+                        "q": f"{qstr} {city} {country}",
+                        "format": "jsonv2",
+                        "limit": NOMINATIM_LIMIT,
+                        "viewbox": vb,
+                        "bounded": 1,
+                        "dedupe": 1,
+                        "extratags": 1,
+                        "namedetails": 1,
+                        "email": NOMINATIM_EMAIL,
+                    },
+                    headers={"Referer":"https://nominatim.org"},
+                    timeout=30,
+                )
+
+                if r.status_code == 429:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+
+                if r.status_code != 200:
+                    items = []
+                    break
+
+                items = r.json() or []
+                break
+            except Exception as e:
+                dbg(f"[nominatim_poi] error: {e}")
+                time.sleep(1.0 + attempt)
                 continue
-            items = r.json() or []
-        except Exception as e:
-            dbg(f"[nominatim_poi] error: {e}")
-            continue
 
         for it in items:
             nm = _guess_name_from_nominatim(it).strip()
@@ -486,8 +562,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             xt = it.get("extratags") or {}
             website = xt.get("website") or xt.get("contact:website") or xt.get("url")
 
-            lat2 = None
-            lon2 = None
             try:
                 lat2 = float(it.get("lat")) if it.get("lat") is not None else None
                 lon2 = float(it.get("lon")) if it.get("lon") is not None else None
@@ -512,18 +586,18 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     STATS["cand_nominatim_poi"] += len(out)
     return out
 
-def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> List[dict]:
-    cands: List[dict] = []
+def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> Tuple[List[dict], str]:
+    # return (cands, via)
     if OVERPASS_ENABLED:
         for rad in (OSM_RADIUS_M, max(800, OSM_RADIUS_M // 2), max(500, OSM_RADIUS_M // 3)):
             cands = overpass_estate_agents(lat, lon, rad)
             if cands:
-                return cands
+                return cands, "overpass"
     if NOMINATIM_POI_ENABLED:
         cands = nominatim_poi_candidates(city, country, south, west, north, east)
         if cands:
-            return cands
-    return []
+            return cands, "nominatim_poi"
+    return [], "none"
 
 # ---------- website resolution helpers ----------
 LEGAL_SUFFIXES = [
@@ -537,7 +611,7 @@ def _norm_name(s: str) -> str:
     return " ".join(parts)
 
 def _escape_overpass_regex(s: str) -> str:
-    return re.sub(r'([.^$*+?{}\[\]\\|()])', r'\\\1', s)
+    return re.sub(r'([.^$*+?{}$begin:math:display$$end:math:display$\\|()])', r'\\\1', s)
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     if None in (lat1, lon1, lat2, lon2):
@@ -616,29 +690,49 @@ out tags center;
 
     return normalize_url(best) if best else None
 
+@lru_cache(maxsize=4096)
 def nominatim_lookup_website(name: str, city: str, country: str, limit: int = 8) -> Optional[str]:
     if not name:
         return None
-    try:
-        throttle("nominatim", 1.1)
-        q = f"{name}, {city}, {country}".strip(", ")
-        r = SESS.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": q, "format":"jsonv2", "limit": limit, "extratags": 1, "namedetails": 1},
-            headers={"Referer":"https://nominatim.org"},
-            timeout=30
-        )
-        if r.status_code != 200:
+
+    q = f"{name}, {city}, {country}".strip(", ")
+
+    for attempt in range(5):
+        try:
+            throttle("nominatim", 1.3)
+            r = SESS.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": q,
+                    "format":"jsonv2",
+                    "limit": limit,
+                    "extratags": 1,
+                    "namedetails": 1,
+                    "email": NOMINATIM_EMAIL,
+                },
+                headers={"Referer":"https://nominatim.org"},
+                timeout=30
+            )
+
+            if r.status_code == 429:
+                time.sleep(2 * (attempt + 1))
+                continue
+
+            if r.status_code != 200:
+                return None
+
+            items = r.json() or []
+            for it in items:
+                xt = it.get("extratags") or {}
+                w = xt.get("website") or xt.get("contact:website") or xt.get("url")
+                w = normalize_url(w)
+                if w:
+                    return w
             return None
-        items = r.json() or []
-        for it in items:
-            xt = it.get("extratags") or {}
-            w = xt.get("website") or xt.get("contact:website") or xt.get("url")
-            w = normalize_url(w)
-            if w:
-                return w
-    except Exception:
-        return None
+        except Exception:
+            time.sleep(1.0 + attempt)
+            continue
+
     return None
 
 @lru_cache(maxsize=4096)
@@ -703,7 +797,7 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
         STATS["website_wikidata"] += 1
         return w
 
-    # Try Nominatim BEFORE Overpass-by-name (much more reliable)
+    # Try Nominatim before Overpass-by-name (more reliable)
     w = nominatim_lookup_website(biz_name, city, country, limit=8)
     if w:
         STATS["website_nominatim"] += 1
@@ -967,6 +1061,9 @@ def _split_header_rest(desc: str):
             seen_labels.add(m_lab)
 
             val = (LABEL_RE[m_lab].match(line).group(1) or "").strip()
+            if not val and (i + 1) < len(header):
+                pass
+
             if not val and (i + 1) < len(lines):
                 nxt = lines[i + 1]
                 if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
@@ -996,7 +1093,6 @@ def normalize_header_block(desc: str, company: str, website: str, batch: Optiona
 
     header_lines, rest_lines = _split_header_rest(desc)
 
-    # preserve existing values already on the card (including Email)
     preserved = {"First": "", "Email": "", "Hook": "", "Variant": ""}
 
     i = 0
@@ -1030,16 +1126,13 @@ def normalize_header_block(desc: str, company: str, website: str, batch: Optiona
         "",
     ]
 
-    # Optionally append batch label (e.g. "Monday morning") to the body,
-    # but only if it's not already there.
     if batch:
         has_batch = any((line or "").strip() == batch for line in rest_lines)
         if not has_batch:
             if rest_lines and rest_lines[-1].strip() != "":
                 rest_lines.append("")
             rest_lines.append(batch)
-            
-    # IMPORTANT: don't rstrip spaces (would kill the "  " markdown breaks)
+
     out = ("\n".join(new_header + rest_lines)).rstrip("\n") + "\n\n@lead\n"
     return out
 
@@ -1076,10 +1169,8 @@ def is_template_blank(desc: str) -> bool:
     d = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
     company = extract_label_value(d, "Company").strip()
     website = extract_label_value(d, "Website").strip()
-    # consider blank if both are empty (email doesn't matter)
     if company == "" and website == "":
         return True
-    # also treat explicit empty Company line as blank
     if re.search(r"(?mi)^\s*Company\s*:\s*$", d) and re.search(r"(?mi)^\s*Website\s*:\s*$", d):
         return True
     return False
@@ -1222,15 +1313,13 @@ def main():
                 STATS["skip_dupe_domain"] += 1
                 continue
 
-            # robots + quick fetch to ensure site is up
             p = urlparse(website)
             base = f"{p.scheme}://{p.netloc}/"
             if not allowed_by_robots(base, "/"):
                 STATS["skip_robots"] += 1
                 continue
-            try:
-                fetch(website)
-            except Exception:
+
+            if not fetch_site_ok(website):
                 STATS["skip_fetch"] += 1
                 continue
 
@@ -1249,9 +1338,8 @@ def main():
             t_osm = time.time()
             print(f"[{city}] OSM search starting...", flush=True)
 
-            cands = get_osm_candidates(city, country, lat, lon, south, west, north, east)
+            cands, via = get_osm_candidates(city, country, lat, lon, south, west, north, east)
             STATS["osm_candidates"] += len(cands)
-            via = "overpass" if cands and cands[0].get("website") is not None and OVERPASS_ENABLED else "nominatim_poi"
             print(f"[{city}] OSM candidates: {len(cands)} (took {time.time()-t_osm:.1f}s) via {via}", flush=True)
 
             leads_before_osm = len(leads)
@@ -1286,9 +1374,8 @@ def main():
                 if not allowed_by_robots(base, "/"):
                     STATS["skip_robots"] += 1
                     continue
-                try:
-                    fetch(website)
-                except Exception:
+
+                if not fetch_site_ok(website):
                     STATS["skip_fetch"] += 1
                     continue
 
@@ -1307,7 +1394,6 @@ def main():
         if len(leads) >= DAILY_LIMIT:
             break
 
-    # Trim to limit
     if leads:
         leads = leads[:DAILY_LIMIT]
 
@@ -1336,7 +1422,6 @@ def main():
             batch=batch_label,
         )
 
-        # Always persist domain after push attempt
         dom = etld1_from_url(lead.get("Website") or "")
         if dom:
             seen_domain_write(dom)
@@ -1348,11 +1433,10 @@ def main():
             print(f"UNCHANGED ℹ️ — {lead['Company']}", flush=True)
         return True
 
-    # Batch rotation: assign same batch label to all leads of this run
     batch_idx = load_batch_index()
     batch_label = BATCH_SLOTS[batch_idx]
     next_batch_idx = (batch_idx + 1) % len(BATCH_SLOTS)
-    
+
     pushed = 0
     for lead in leads:
         if pushed >= DAILY_LIMIT:
@@ -1362,12 +1446,11 @@ def main():
             pushed += 1
             time.sleep(max(0, PUSH_INTERVAL_S) + max(0, BUTLER_GRACE_S))
 
-    # Only advance the batch rotation if we actually pushed leads
     if pushed > 0:
         save_batch_index(next_batch_idx)
 
-    if DEBUG:
-        print("Stats:", json.dumps(STATS, indent=2), flush=True)
+    # Always print stats (so you immediately see why it goes to zero)
+    print("Stats:", json.dumps(STATS, indent=2), flush=True)
 
     save_seen(seen)
 
