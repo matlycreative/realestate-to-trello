@@ -25,7 +25,6 @@ jobs:
       # Browser-like UA for website checks (prevents mass-403 on GH Actions)
       WEB_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-      # Stronger discovery (website resolution boost)
       OVERPASS_NAME_LOOKUP_ENABLED: "1"
       OVERPASS_TIMEOUT_S: "90"
       OVERPASS_QUERY_TIMEOUT: "45"
@@ -33,16 +32,6 @@ jobs:
 
       # Big city coverage boost
       BBOX_SAMPLES: "5"
-
-      # Accept social URLs if no website exists (biggest volume boost)
-      ACCEPT_SOCIAL_AS_WEBSITE: "1"
-
-      # Optional: allow multiple leads from same domain per run (good for franchises)
-      # 0 = unlimited, 1 = only one per domain per run, 2/3 = balanced
-      DOMAIN_MAX_PER_RUN: "0"
-
-      # Optional: ignore global seen list entirely (pure volume mode)
-      # IGNORE_GLOBAL_SEEN: "1"
 
       # Required secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
