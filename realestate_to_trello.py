@@ -9,12 +9,14 @@
 # Reliability fixes (GitHub Actions friendly):
 # - Nominatim rate-limit safe: single global throttle key + 429 backoff + email= param
 # - Website check: don't discard leads on 403/429 (common on GH Actions); only hard-fail on 404/410
+# - DNS fallback: if HTTP fails, accept if domain resolves
+# - Robots OFF by default (won't block leads); enable with CHECK_ROBOTS=1
 # - tldextract offline: avoid downloading suffix list in CI
 
-import os, re, json, time, random, csv, pathlib, math
+import os, re, json, time, random, csv, pathlib, math, socket
 from datetime import date, datetime
 from urllib.parse import urljoin, urlparse
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Tuple
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -57,26 +59,20 @@ PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.2)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
-# Batch rotation for scheduling (e.g. "Monday morning", "Monday afternoon", etc.)
+# Batch rotation
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
-    "m monday",
-    "a monday",
-    "m tuesday",
-    "a tuesday",
-    "m wednesday",
-    "a wednesday",
-    "m thursday",
-    "a thursday",
-    "m friday",
-    "a friday",
+    "m monday","a monday",
+    "m tuesday","a tuesday",
+    "m wednesday","a wednesday",
+    "m thursday","a thursday",
+    "m friday","a friday",
 ]
 
 def load_batch_index() -> int:
     try:
         with open(BATCH_FILE, "r", encoding="utf-8") as f:
-            val = f.read().strip()
-            idx = int(val)
+            idx = int((f.read() or "").strip())
             if 0 <= idx < len(BATCH_SLOTS):
                 return idx
     except Exception:
@@ -92,20 +88,23 @@ def save_batch_index(idx: int) -> None:
         pass
 
 BUTLER_GRACE_S   = env_int("BUTLER_GRACE_S", 15)
-DEBUG      = env_on("DEBUG", False)
+DEBUG            = env_on("DEBUG", False)
 
 # pre-clone toggle (disabled by default)
 PRECLONE   = env_on("PRECLONE", False)
 
+# Robots toggle (OFF by default)
+CHECK_ROBOTS = env_on("CHECK_ROBOTS", False)
+
 # OSM candidates source toggles
-OVERPASS_ENABLED = env_on("OVERPASS_ENABLED", 1)
-NOMINATIM_POI_ENABLED = env_on("NOMINATIM_POI_ENABLED", 1)
+OVERPASS_ENABLED             = env_on("OVERPASS_ENABLED", 1)
+NOMINATIM_POI_ENABLED        = env_on("NOMINATIM_POI_ENABLED", 1)
 OVERPASS_NAME_LOOKUP_ENABLED = env_on("OVERPASS_NAME_LOOKUP_ENABLED", 0)
 
-# Overpass tuning (GH Actions often times out)
-OVERPASS_TIMEOUT_S = env_int("OVERPASS_TIMEOUT_S", 45)           # HTTP timeout (client)
-OVERPASS_QUERY_TIMEOUT = env_int("OVERPASS_QUERY_TIMEOUT", 25)   # [timeout:..] inside query
-OVERPASS_RETRIES = env_int("OVERPASS_RETRIES", 2)                # per endpoint
+# Overpass tuning
+OVERPASS_TIMEOUT_S      = env_int("OVERPASS_TIMEOUT_S", 45)           # HTTP timeout (client)
+OVERPASS_QUERY_TIMEOUT  = env_int("OVERPASS_QUERY_TIMEOUT", 25)       # [timeout:..] inside query
+OVERPASS_RETRIES        = env_int("OVERPASS_RETRIES", 2)              # per endpoint
 OVERPASS_MIN_INTERVAL_S = env_float("OVERPASS_MIN_INTERVAL_S", 2.0)
 
 # Nominatim POI fallback tuning
@@ -129,7 +128,7 @@ TRELLO_TOKEN    = os.getenv("TRELLO_TOKEN")
 TRELLO_LIST_ID  = os.getenv("TRELLO_LIST_ID")
 TRELLO_TEMPLATE_CARD_ID = os.getenv("TRELLO_TEMPLATE_CARD_ID")  # used only if PRECLONE=1
 
-# Discovery (Foursquare v3 = single API Key) — optional
+# Discovery (optional)
 FOURSQUARE_API_KEY = os.getenv("FOURSQUARE_API_KEY")
 
 # Official sources (optional)
@@ -143,14 +142,14 @@ STATS = {
     "skip_no_website": 0, "skip_dupe_domain": 0, "skip_robots": 0, "skip_fetch": 0,
     "cand_overpass": 0, "cand_nominatim_poi": 0,
     "website_direct": 0, "website_overpass_name": 0, "website_nominatim": 0, "website_fsq": 0, "website_wikidata": 0,
-    "fetch_ok": 0, "fetch_soft_ok": 0, "fetch_hard_fail": 0,
+    "fetch_ok": 0, "fetch_soft_ok": 0, "fetch_hard_fail": 0, "fetch_dns_ok": 0,
 }
 
 def dbg(msg):
     if DEBUG:
         print(msg, flush=True)
 
-# ---------- threading-free throttling ----------
+# ---------- throttling ----------
 _LAST_CALL = {}
 def throttle(key: str, min_interval_s: float):
     now = time.monotonic()
@@ -170,7 +169,6 @@ SESS.headers.update({
     "Accept-Language": "en;q=0.8,de;q=0.6,fr;q=0.6"
 })
 
-# retries for GET only
 try:
     _retries = Retry(
         total=3,
@@ -186,6 +184,7 @@ except TypeError:
         status_forcelist=[429, 500, 502, 503, 504],
         method_whitelist=frozenset({"GET"}),
     )
+
 SESS.mount("https://", HTTPAdapter(max_retries=_retries))
 SESS.mount("http://", HTTPAdapter(max_retries=_retries))
 
@@ -200,8 +199,8 @@ COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").s
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS = env_int("CITY_HOPS", 8)
-OSM_RADIUS_M = env_int("OSM_RADIUS_M", 2500)
+CITY_HOPS     = env_int("CITY_HOPS", 8)
+OSM_RADIUS_M  = env_int("OSM_RADIUS_M", 2500)
 
 CITY_ROTATION = [
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
@@ -255,28 +254,23 @@ def normalize_url(u):
     if u.lower().startswith("mailto:"):
         return None
 
-    # plain email like "a@b.com"
     if "@" in u and "://" not in u:
         if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", u):
             return None
 
     p = urlparse(u)
 
-    # if no scheme, assume https
     if not p.scheme:
         u = "https://" + u.strip("/")
 
     p2 = urlparse(u)
 
-    # only accept http(s)
     if p2.scheme not in ("http", "https"):
         return None
 
-    # must have host
     if not p2.netloc:
         return None
 
-    # reject URLs containing userinfo like https://user@host
     if p2.username or p2.password or "@" in p2.netloc:
         return None
 
@@ -291,12 +285,23 @@ def etld1_from_url(u: str) -> str:
         pass
     return ""
 
+def _dns_resolves(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return False
+        socket.getaddrinfo(host, None)
+        return True
+    except Exception:
+        return False
+
 def fetch_site_ok(url: str) -> bool:
     """
     Website existence check.
-    On GitHub Actions, many legit sites return 403/406/429 to bots/datacenter IPs.
-    Treat those as SOFT OK so you don't lose all leads.
-    Hard-fail only on real not found.
+    - Hard fail only on 404/410
+    - Treat 2xx/3xx as OK
+    - Treat 401/403/405/406/429 as SOFT OK (datacenter/bot blocks)
+    - If HTTP fails, accept if DNS resolves
     """
     try:
         r = SESS.get(
@@ -323,9 +328,18 @@ def fetch_site_ok(url: str) -> bool:
             STATS["fetch_soft_ok"] += 1
             return True
 
+        # For everything else (500 etc), fall back to DNS:
+        if _dns_resolves(url):
+            STATS["fetch_dns_ok"] += 1
+            return True
+
         STATS["fetch_hard_fail"] += 1
         return False
+
     except Exception:
+        if _dns_resolves(url):
+            STATS["fetch_dns_ok"] += 1
+            return True
         STATS["fetch_hard_fail"] += 1
         return False
 
@@ -349,6 +363,8 @@ def _robots_parser_for_base(base: str) -> robotparser.RobotFileParser:
         return rp
 
 def allowed_by_robots(base_url: str, path: str = "/") -> bool:
+    if not CHECK_ROBOTS:
+        return True
     try:
         p = urlparse(base_url)
         base = f"{p.scheme}://{p.netloc}"
@@ -356,7 +372,7 @@ def allowed_by_robots(base_url: str, path: str = "/") -> bool:
         if not path0.startswith("/"):
             path0 = "/" + path0
         rp = _robots_parser_for_base(base)
-        return rp.can_fetch(UA_NOMINATIM, urljoin(base, path0))
+        return rp.can_fetch(WEB_USER_AGENT, urljoin(base, path0))
     except Exception:
         return True
 
@@ -389,7 +405,7 @@ def geocode_city(city, country) -> Tuple[float,float,float,float]:
 
     raise RuntimeError(f"Nominatim rate-limited geocode for {city}, {country}")
 
-# ---------- OSM candidates (Overpass + Nominatim POI fallback) ----------
+# ---------- OSM candidates ----------
 OSM_FILTERS = [
     ("office","estate_agent"),
     ("office","real_estate"),
@@ -465,7 +481,6 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
     return out
 
 def _viewbox_param(south: float, west: float, north: float, east: float) -> str:
-    # Nominatim expects: left,top,right,bottom
     return f"{west},{north},{east},{south}"
 
 def _guess_name_from_nominatim(item: dict) -> str:
@@ -514,7 +529,7 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
         items = []
         for attempt in range(5):
             try:
-                throttle("nominatim", 1.3)  # SINGLE global bucket
+                throttle("nominatim", 1.3)
                 r = SESS.get(
                     "https://nominatim.openstreetmap.org/search",
                     params={
@@ -587,7 +602,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     return out
 
 def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> Tuple[List[dict], str]:
-    # return (cands, via)
     if OVERPASS_ENABLED:
         for rad in (OSM_RADIUS_M, max(800, OSM_RADIUS_M // 2), max(500, OSM_RADIUS_M // 3)):
             cands = overpass_estate_agents(lat, lon, rad)
@@ -604,6 +618,7 @@ LEGAL_SUFFIXES = [
     "ag","gmbh","sa","sarl","sàrl","llc","ltd","limited","inc","corp","s.p.a","spa","bv","nv",
     "kg","ohg","ug","gbr","kft","sro","s.r.o","oy","ab","as","aps"
 ]
+
 def _norm_name(s: str) -> str:
     s = (s or "").strip().lower()
     s = re.sub(r"[\u2019'`\".,:;()\-_/\\]+", " ", s)
@@ -797,13 +812,11 @@ def resolve_website(biz_name: str, city: str, country: str, lat: float, lon: flo
         STATS["website_wikidata"] += 1
         return w
 
-    # Try Nominatim before Overpass-by-name (more reliable)
     w = nominatim_lookup_website(biz_name, city, country, limit=8)
     if w:
         STATS["website_nominatim"] += 1
         return w
 
-    # Only if explicitly enabled
     w = overpass_lookup_website_by_name(biz_name, lat, lon, radius_m=20000)
     if w:
         STATS["website_overpass_name"] += 1
@@ -1041,7 +1054,7 @@ def _split_header_rest(desc: str):
     if i >= len(lines) or not any(LABEL_RE[lab].match(lines[i]) for lab in TARGET_LABELS):
         return [], lines
 
-    header = []
+    header_lines = []
     seen_labels = set()
     started = False
 
@@ -1057,24 +1070,21 @@ def _split_header_rest(desc: str):
 
         if m_lab:
             started = True
-            header.append(line)
+            header_lines.append(line)
             seen_labels.add(m_lab)
 
             val = (LABEL_RE[m_lab].match(line).group(1) or "").strip()
-            if not val and (i + 1) < len(header):
-                pass
-
             if not val and (i + 1) < len(lines):
                 nxt = lines[i + 1]
                 if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                    header.append(nxt)
+                    header_lines.append(nxt)
                     i += 1
 
             i += 1
             continue
 
         if line.strip() == "":
-            header.append(line)
+            header_lines.append(line)
             i += 1
             if "Website" in seen_labels:
                 break
@@ -1085,12 +1095,11 @@ def _split_header_rest(desc: str):
 
         i += 1
 
-    rest = lines[i:]
-    return header, rest
+    rest_lines = lines[i:]
+    return header_lines, rest_lines
 
 def normalize_header_block(desc: str, company: str, website: str, batch: Optional[str] = None) -> str:
     desc = (desc or "").replace("\r\n", "\n").replace("\r", "\n")
-
     header_lines, rest_lines = _split_header_rest(desc)
 
     preserved = {"First": "", "Email": "", "Hook": "", "Variant": ""}
@@ -1449,7 +1458,7 @@ def main():
     if pushed > 0:
         save_batch_index(next_batch_idx)
 
-    # Always print stats (so you immediately see why it goes to zero)
+    # Always print stats
     print("Stats:", json.dumps(STATS, indent=2), flush=True)
 
     save_seen(seen)
