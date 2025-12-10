@@ -25,6 +25,11 @@ jobs:
       # Browser-like UA for website checks (prevents mass-403 on GH Actions)
       WEB_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
+      OVERPASS_NAME_LOOKUP_ENABLED: "1"
+      OVERPASS_TIMEOUT_S: "90"
+      OVERPASS_QUERY_TIMEOUT: "45"
+      OVERPASS_RETRIES: "3"
+
       # Required secrets
       TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
       TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
