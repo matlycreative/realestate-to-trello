@@ -12,10 +12,6 @@
 # - DNS fallback: if HTTP fails, accept if domain resolves
 # - Robots OFF by default (won't block leads); enable with CHECK_ROBOTS=1
 # - tldextract offline: avoid downloading suffix list in CI
-#
-# Coverage upgrades kept:
-# - Expanded OSM filters (adds deprecated/common tags)
-# - Multi-point sampling inside city bbox (helps large cities)
 
 import os, re, json, time, random, csv, pathlib, math, socket
 from datetime import date, datetime
@@ -100,9 +96,6 @@ PRECLONE   = env_on("PRECLONE", False)
 # Robots toggle (OFF by default)
 CHECK_ROBOTS = env_on("CHECK_ROBOTS", False)
 
-# Multi-point sampling inside bbox (helps large cities)
-BBOX_SAMPLES = env_int("BBOX_SAMPLES", 5)  # 1 = only center point
-
 # OSM candidates source toggles
 OVERPASS_ENABLED             = env_on("OVERPASS_ENABLED", 1)
 NOMINATIM_POI_ENABLED        = env_on("NOMINATIM_POI_ENABLED", 1)
@@ -150,7 +143,6 @@ STATS = {
     "cand_overpass": 0, "cand_nominatim_poi": 0,
     "website_direct": 0, "website_overpass_name": 0, "website_nominatim": 0, "website_fsq": 0, "website_wikidata": 0,
     "fetch_ok": 0, "fetch_soft_ok": 0, "fetch_hard_fail": 0, "fetch_dns_ok": 0,
-    "bbox_samples_used": 0,
 }
 
 def dbg(msg):
@@ -267,14 +259,18 @@ def normalize_url(u):
             return None
 
     p = urlparse(u)
+
     if not p.scheme:
         u = "https://" + u.strip("/")
 
     p2 = urlparse(u)
+
     if p2.scheme not in ("http", "https"):
         return None
+
     if not p2.netloc:
         return None
+
     if p2.username or p2.password or "@" in p2.netloc:
         return None
 
@@ -305,7 +301,7 @@ def fetch_site_ok(url: str) -> bool:
     - Hard fail only on 404/410
     - Treat 2xx/3xx as OK
     - Treat 401/403/405/406/429 as SOFT OK (datacenter/bot blocks)
-    - If HTTP fails/odd, accept if DNS resolves
+    - If HTTP fails, accept if DNS resolves
     """
     try:
         r = SESS.get(
@@ -332,6 +328,7 @@ def fetch_site_ok(url: str) -> bool:
             STATS["fetch_soft_ok"] += 1
             return True
 
+        # For everything else (500 etc), fall back to DNS:
         if _dns_resolves(url):
             STATS["fetch_dns_ok"] += 1
             return True
@@ -408,47 +405,14 @@ def geocode_city(city, country) -> Tuple[float,float,float,float]:
 
     raise RuntimeError(f"Nominatim rate-limited geocode for {city}, {country}")
 
-def _bbox_samples(south: float, west: float, north: float, east: float, n: int) -> List[Tuple[float,float]]:
-    pts: List[Tuple[float,float]] = []
-    lat_c = (south + north) / 2.0
-    lon_c = (west + east) / 2.0
-    pts.append((lat_c, lon_c))
-
-    if n <= 1:
-        return pts
-
-    lat_min = south + (north - south) * 0.15
-    lat_max = north - (north - south) * 0.15
-    lon_min = west + (east - west) * 0.15
-    lon_max = east - (east - west) * 0.15
-
-    for _ in range(max(0, n - 1)):
-        pts.append((random.uniform(lat_min, lat_max), random.uniform(lon_min, lon_max)))
-
-    out = []
-    seen = set()
-    for la, lo in pts:
-        k = (round(la, 4), round(lo, 4))
-        if k not in seen:
-            seen.add(k)
-            out.append((la, lo))
-    return out
-
 # ---------- OSM candidates ----------
-# Expanded tags for better coverage:
 OSM_FILTERS = [
     ("office","estate_agent"),
     ("office","real_estate"),
     ("office","property_management"),
     ("shop","estate_agent"),
     ("shop","real_estate"),
-
-    # extra coverage / common legacy tags:
-    ("office","real_estate_agent"),
-    ("office","property_agent"),
-    ("amenity","real_estate_agent"),
 ]
-
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -488,9 +452,7 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
         name = (tags.get("name") or "").strip()
         if not name:
             continue
-
         website = tags.get("website") or tags.get("contact:website") or tags.get("url")
-        website = normalize_url(website) if website else None
         wikidata = tags.get("wikidata")
 
         lat2 = el.get("lat")
@@ -501,17 +463,15 @@ def overpass_estate_agents(lat: float, lon: float, radius_m: int) -> List[dict]:
 
         rows.append({
             "business_name": name,
-            "website": website,
+            "website": normalize_url(website) if website else None,
             "wikidata": wikidata,
             "lat": lat2,
             "lon": lon2,
         })
 
-    # Dedup
     dedup = {}
     for r0 in rows:
-        dom = etld1_from_url(r0["website"] or "")
-        key = (r0["business_name"].lower(), dom)
+        key = (r0["business_name"].lower(), etld1_from_url(r0["website"] or ""))
         if key not in dedup:
             dedup[key] = r0
 
@@ -616,7 +576,6 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
 
             xt = it.get("extratags") or {}
             website = xt.get("website") or xt.get("contact:website") or xt.get("url")
-            website = normalize_url(website) if website else None
 
             try:
                 lat2 = float(it.get("lat")) if it.get("lat") is not None else None
@@ -624,8 +583,8 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
             except Exception:
                 lat2, lon2 = None, None
 
-            dom = etld1_from_url(website or "") or f"{lat2},{lon2}"
-            key = (nm.lower(), dom)
+            website = normalize_url(website) if website else None
+            key = (nm.lower(), etld1_from_url(website or "") or f"{lat2},{lon2}")
             if key in seen_key:
                 continue
             seen_key.add(key)
@@ -643,36 +602,16 @@ def nominatim_poi_candidates(city: str, country: str, south: float, west: float,
     return out
 
 def get_osm_candidates(city: str, country: str, lat: float, lon: float, south: float, west: float, north: float, east: float) -> Tuple[List[dict], str]:
-    pts = _bbox_samples(south, west, north, east, BBOX_SAMPLES)
-    STATS["bbox_samples_used"] += len(pts)
-
-    all_cands: List[dict] = []
-    via = "none"
-
-    for (la, lo) in pts:
-        if OVERPASS_ENABLED:
-            for rad in (OSM_RADIUS_M, max(800, OSM_RADIUS_M // 2), max(500, OSM_RADIUS_M // 3)):
-                cands = overpass_estate_agents(la, lo, rad)
-                if cands:
-                    via = "overpass"
-                    all_cands.extend(cands)
-
-    if not all_cands and NOMINATIM_POI_ENABLED:
+    if OVERPASS_ENABLED:
+        for rad in (OSM_RADIUS_M, max(800, OSM_RADIUS_M // 2), max(500, OSM_RADIUS_M // 3)):
+            cands = overpass_estate_agents(lat, lon, rad)
+            if cands:
+                return cands, "overpass"
+    if NOMINATIM_POI_ENABLED:
         cands = nominatim_poi_candidates(city, country, south, west, north, east)
         if cands:
-            via = "nominatim_poi"
-            all_cands.extend(cands)
-
-    dedup = {}
-    for c in all_cands:
-        dom = etld1_from_url(c.get("website") or "")
-        k = (c.get("business_name","").lower(), dom)
-        if k not in dedup:
-            dedup[k] = c
-    out = list(dedup.values())
-    random.shuffle(out)
-
-    return out, via
+            return cands, "nominatim_poi"
+    return [], "none"
 
 # ---------- website resolution helpers ----------
 LEGAL_SUFFIXES = [
@@ -687,7 +626,7 @@ def _norm_name(s: str) -> str:
     return " ".join(parts)
 
 def _escape_overpass_regex(s: str) -> str:
-    return re.sub(r'([.^$*+?{}\\|()])', r'\\\1', s)
+    return re.sub(r'([.^$*+?{}$begin:math:display$$end:math:display$\\|()])', r'\\\1', s)
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     if None in (lat1, lon1, lat2, lon2):
@@ -1378,8 +1317,8 @@ def main():
                 STATS["skip_no_website"] += 1
                 continue
 
-            dom = etld1_from_url(website)
-            if dom and dom in seen:
+            site_dom = etld1_from_url(website)
+            if site_dom and site_dom in seen:
                 STATS["skip_dupe_domain"] += 1
                 continue
 
@@ -1395,9 +1334,9 @@ def main():
 
             leads.append({"Company": biz["business_name"], "Website": website})
 
-            if dom:
-                seen_domain_write(dom)
-                seen.add(dom)
+            if site_dom:
+                seen_domain_write(site_dom)
+                seen.add(site_dom)
 
             _sleep()
 
@@ -1434,8 +1373,8 @@ def main():
                     STATS["skip_no_website"] += 1
                     continue
 
-                dom = etld1_from_url(website)
-                if dom and dom in seen:
+                site_dom = etld1_from_url(website)
+                if site_dom and site_dom in seen:
                     STATS["skip_dupe_domain"] += 1
                     continue
 
@@ -1451,9 +1390,9 @@ def main():
 
                 leads.append({"Company": biz["business_name"], "Website": website})
 
-                if dom:
-                    seen_domain_write(dom)
-                    seen.add(dom)
+                if site_dom:
+                    seen_domain_write(site_dom)
+                    seen.add(site_dom)
 
                 _sleep()
 
@@ -1519,6 +1458,7 @@ def main():
     if pushed > 0:
         save_batch_index(next_batch_idx)
 
+    # Always print stats
     print("Stats:", json.dumps(STATS, indent=2), flush=True)
 
     save_seen(seen)
