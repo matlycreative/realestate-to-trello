@@ -104,7 +104,7 @@ SESS.headers.update({"User-Agent": UA})
 # ----------------- templates -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
-    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up}")
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up")
     SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first}")
     BODY_A = _get_env("BODY_A", default=
 """Hi there,
