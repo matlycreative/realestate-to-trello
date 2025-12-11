@@ -612,7 +612,7 @@ def main():
 
         pid   = choose_id(company, email_v)
         ready = is_sample_ready(pid)
-        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
+        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready)
         log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
 
         use_b    = bool(first)
