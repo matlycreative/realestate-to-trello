@@ -638,7 +638,7 @@ def main():
             extra_ready=extra_ready, extra_wait=extra_wait,
         )
 
-        link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
+        link_label = "" if ready else LINK_TEXT
 
         try:
             send_email(
