@@ -451,9 +451,18 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     esc_bare = html.escape(bare, quote=True) if full else ""
 
 
-
-
-
+    # Plain text: also expand [here] → UPLOAD_URL
+    body_pt = body_text
+    if "[here]" in body_pt:
+        body_pt = body_pt.replace("[here]", UPLOAD_URL)
+    if full:
+        if not INCLUDE_PLAIN_URL:
+            for pat in (full, bare):
+                if pat:
+                    body_pt = body_pt.replace(pat, label)
+        else:
+            if full not in body_pt and bare not in body_pt:
+                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
 
     # HTML with explicit markers
@@ -605,7 +614,7 @@ def main():
 
         # Safety net: ensure [here] exists in NOT-READY copy
         if not ready and "[here]" not in body:
-            body += " — upload them [here]."
+            body += ""
 
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
