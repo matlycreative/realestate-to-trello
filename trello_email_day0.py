@@ -74,7 +74,7 @@ BCC_TO       = _get_env("BCC_TO", default="").strip()
 
 PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
 PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
-
+UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
 
 # Pointer readiness (recommended)
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
@@ -450,18 +450,11 @@ def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, li
     esc_full = html.escape(full, quote=True) if full else ""
     esc_bare = html.escape(bare, quote=True) if full else ""
 
-    # Plain text: also expand [here] → UPLOAD_URL
-    body_pt = body_text
-    if "[here]" in body_pt:
-        body_pt = body_pt.replace("[here]", UPLOAD_URL)
-    if full:
-        if not INCLUDE_PLAIN_URL:
-            for pat in (full, bare):
-                if pat:
-                    body_pt = body_pt.replace(pat, label)
-        else:
-            if full not in body_pt and bare not in body_pt:
-                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+
+
+
+
+
 
     # HTML with explicit markers
     MARK = "__LINK_MARKER__"
