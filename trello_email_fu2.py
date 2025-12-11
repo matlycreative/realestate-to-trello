@@ -13,7 +13,7 @@ STRICT RULES (match Day-0/FU1):
 Defaults (overridable via env):
   FROM_NAME=Matthieu from Matly
   FROM_EMAIL=matthieu@matlycreative.com
-  LINK_TEXT=See examples
+  LINK_TEXT=
   LINK_COLOR=#858585   (same look as Day-0/FU1)
 """
 
@@ -85,7 +85,7 @@ READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
 # Link look (match Day-0 & FU1 visuals)
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
-LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
 
 # Send control
@@ -446,7 +446,7 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     from email.message import EmailMessage
     import smtplib
 
-    label = (link_text or "See examples").strip()
+    label = (link_text or "").strip()
     if link_url and not re.match(r"^https?://", link_url, flags=re.I):
         link_url = "https://" + link_url
 
