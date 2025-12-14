@@ -41,7 +41,7 @@ jobs:
       USE_ZEFIX: "0"
 
       # Tuning
-      DAILY_LIMIT: "20"
+      DAILY_LIMIT: "15"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.8"
       CITY_HOPS: "14"
