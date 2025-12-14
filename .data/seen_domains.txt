@@ -1,6 +1,7 @@
 11makelaars.nl
 18avenue.fr
 18montenapoleone.it
+1a-wohnen.net
 1stavenue.co.uk
 222estates.co.uk
 2a-xpert.be
@@ -12,9 +13,9 @@
 7184992000.com
 800king.ca
 88makelaars.nl
-Batilac.ch
 a-demeure.com
 a2zproperties.co.uk
+abaco-hanau.de
 abbapropertyservices.co.uk
 abbeyspring.co.uk
 abitare-limbiate.it
@@ -158,6 +159,7 @@ barthreal.ch
 bassimmobiliare.it
 batibella.com
 batilac.ch
+baumann-immo.net
 baustone.com
 baysideproperty.com
 bcnfinques.com
@@ -231,6 +233,7 @@ brownandbrooke.co.uk
 brownstonelistings.com
 bryantsestateagents.co.uk
 buddys-immobilier.fr
+buero-service-huss.com
 buisevansoest.nl
 bunnandco.com
 burchelledwards.co.uk
@@ -313,6 +316,7 @@ chicagospropertymanagement.com
 chris-wilkinson.co.uk
 chrisfoster.co.uk
 chrisoostingmakelaardij.nl
+christina-uecker-immobilien.de
 chronos-wohnen.at
 cidadefoz.pt
 cierredental.it
@@ -466,6 +470,7 @@ era.at
 era.pt
 erafrance.com
 erho.at
+eschner-immobilien.de
 espaces-atypiques.com
 essentimmo.be
 estate-maeglerne.dk
@@ -573,6 +578,7 @@ genevievelangevin.com
 genusswohnwelt.at
 georgeproctor.co.uk
 gererseul.com
+gernhardt-immobilien.de
 gerofinance.ch
 gerritjanheemskerk.nl
 gersin.at
@@ -660,6 +666,7 @@ henkburger.nl
 henleysestates.co.uk
 henrysea.com
 henrywiltshire.co.uk
+hermann-immobilien.de
 herzogdemeuron.com
 hestaimmobilien.ch
 hetkompas-levwn.nl
@@ -729,6 +736,7 @@ illinoisproperty.com
 ilmarsrl.com
 ilmq.it
 ilopimmobiliare.it
+iltiger.de
 imcosrl.it
 immo-anderlecht.be
 immo-b.com
@@ -770,6 +778,7 @@ immobiliarezaffani.it
 immobilieffegi.it
 immobilien-bucher.ch
 immobilien-eder.at
+immobilien-gaentzsch.de
 immobilien-moertl.at
 immobilien-ortner.at
 immobilien-salzburg.com
@@ -837,12 +846,14 @@ investissement-locatif.com
 ipg-immo.at
 irres.be
 isaak.nl
+ish-immobilien.de
 isodiag.fr
 ivyparkhomes.com
 jackson-stops.co.uk
 jacksonfuller.com
 jacksonslane.org.uk
 jafinmobiliaria.es
+jalink-immobilien.de
 jamesanderson.co.uk
 jamespendleton.co.uk
 jayman.co.uk
@@ -871,6 +882,7 @@ josiestern.com
 jpandbrimelow.co.uk
 jsproperties.be
 jumimmo.com
+junker-immobilien.net
 junot.fr
 junotfineproperties.com
 justimmo.be
@@ -894,6 +906,7 @@ knightfrank.co.uk
 kochreal.at
 koenigimmobilien.at
 kravens.co.uk
+kreuz-immobilien.de
 krogsveen.no
 ks.at
 kursalonwien.at
@@ -1190,6 +1203,7 @@ plazaestates.co.uk
 plintzrealestate.com
 plurimmo.fr
 pmi-graz.at
+pohlimmobilien.de
 poirier-immobilier.com
 poli-real-estate.ch
 poljanproperties.com
@@ -1309,6 +1323,7 @@ roger-dean.co.uk
 rogplus.com
 rootrealty.com
 rosenbergimmobilier.fr
+rosenstengel-immobilien.de
 rosseel.be
 rotsvast.nl
 rotterdamhostbnb.nl
@@ -1345,6 +1360,7 @@ sarpiagenzia18.it
 sarpifamagosta.it
 savileontheroe.com
 savills.co.uk
+schneider-immobilienservice.de
 schnuer.at
 schouwenhaghe.com
 schwarz-schuppich.at
@@ -1456,6 +1472,7 @@ swisslife.com
 sycogest-immobilier.com
 synchromakelaardij.nl
 synlab.pt
+südwesthaus.de
 t-k.co.uk
 tagerim.fr
 tandbergeiendom.no
@@ -1534,6 +1551,7 @@ tvw.nl
 twhospitality.com
 txhomebuyingpros.com
 tylervincentrealestate.com
+udo-meyer-immo.de
 ugliottigestioniimmobiliari.it
 uk.com
 ulrich-pur.at
@@ -1596,6 +1614,7 @@ vivendisinmobiliaria.com
 vlieg.nl
 vlkmakelaars.nl
 von-poll.com
+von-poll.de
 voormamillenaar.nl
 vuurtoren.nl
 vvimmobilier.com
