@@ -16,7 +16,6 @@
 7dgroupe.fr
 800king.ca
 88makelaars.nl
-Batilac.ch
 a-demeure.com
 a2mimmo.fr
 a2zproperties.co.uk
@@ -206,6 +205,7 @@ barnes-provence-littoral.com
 barnfields.co.uk
 barrycohenhomes.com
 barthreal.ch
+basis.nl
 bassimmobiliare.it
 batibella.com
 batilac.ch
@@ -213,11 +213,13 @@ battersea9elms.co.uk
 baumann-immo.net
 baustone.com
 baysideproperty.com
+baytibayti.ma
 bcnfinques.com
 bcnpremium.com
 becoimmobiliare.it
 beeldgarage.nl
 begue-immobilier.com
+behomepartners.be
 behrandbutchoff.com
 behroyan.com
 belchakcorin.com
@@ -241,6 +243,7 @@ best-lokal.hr
 best-property.ch
 bestchicagoproperties.com
 beterwoneneuropoort.com
+betistmakelaardij.nl
 bexletts.co.uk
 bfmimmobilier.com
 bgibson.co.uk
@@ -266,7 +269,9 @@ bmc-immobilier.fr
 bnvmakelaars.nl
 bobzhong.com
 boegl-immobilien.de
+bollenstreekmakelaars.nl
 bond-sherwill.com
+bonnike.nl
 borgersmith.nl
 bosaproperties.com
 bosen.es
@@ -279,6 +284,7 @@ bowwindowagency.com
 braithwait.co.uk
 brantjesmakelaars.nl
 bre-group.at
+bremavo.nl
 brennanrealestate.com
 bribarcelona.com
 brickinvestments.it
@@ -365,6 +371,7 @@ cci10.com
 cdf.be
 cdmakelaardij.nl
 cebarvimodrone.it
+cedimmo.be
 centraleimmo.fr
 centrocasacostruzioni.it
 century21-adl-gaillard.com
@@ -432,6 +439,7 @@ cleenmain-immo.fr
 clemilanodue.com
 clerimmo.fr
 clichyimmobilier.fr
+clingendaelvoorschoten.nl
 cluttons.com
 cm-lisboa.pt
 codabel.com
@@ -469,6 +477,7 @@ coprimmo.be
 coronetrealty.ca
 coultons.co.uk
 cousinsestates.co.uk
+covas.be
 cowell-norford.co.uk
 craunot.fr
 crifasi.com
@@ -495,21 +504,26 @@ davril.fr
 dayuanhuan.com
 dcrealty.ca
 ddimmobiliare.it
+debergh-partners.be
 decordier-immobilier.com
 defalcorealty.com
 defforge-immobilier.fr
+deimmobiliers.be
 dekkermakelaars.nl
 delaen.nl
 delaordeninmobiliaria.es
 deltacase.net
 dematos-facilityservices.ch
+demooijmakelaardij.nl
 denederlanden.eu
 dennisandhayes.co.uk
 denrooijenenvanherk.nl
+depater.nl
 deruyters.nl
 descheldegalm.be
 deskeo.com
 desormiere-immo.com
+destryker.be
 develo-immobilien.de
 devenports.co.uk
 dewaele.com
@@ -544,6 +558,7 @@ dpimmobiliareroma.it
 draker.co.uk
 druryestates.co.uk
 dtz.nl
+dubufmakelaardij.nl
 dumuid-immobilier.ch
 dupleix.com
 dutchanddutch.com
@@ -578,6 +593,7 @@ elliman.com
 ellisandco.co.uk
 emeraldmanagement.com
 emilegarcin.fr
+emilmakelaars.nl
 emmanuelaxelrad.com
 empa.ch
 empirelets.com
@@ -744,6 +760,7 @@ globalpiso.es
 globalrealty.co.uk
 globeapt.com
 globexs.com
+globiss.be
 gmhomestyle.it
 gogriffins.com
 goodbyeland.com
@@ -807,12 +824,14 @@ hartig-und-kollegen.de
 harveyscott.com
 harveywheeler.com
 haskrediet-verzekeringen.be
+hause.ink
 hauseratelier.com
 hausimobiliaria.pt
 hauslloguer.com
 hausverwaltung-mayr.at
 hawkandeagle.co.uk
 hawobau.de
+hbhousing.nl
 hci-immobilien.de
 heemborgh.nl
 heer-immobilien.com
@@ -849,6 +868,7 @@ home-estate.be
 home-solution.nl
 home.dk
 home2u.co.uk
+home4you.nu
 homecompany.de
 homeconseilsparis.com
 homeestateagents.com
@@ -880,11 +900,13 @@ housepartners.immo
 housesolutionshq.com
 howellandco.co.uk
 hpgreenfield.com
+huisvanhetboek.nl
 huizenstede.nl
 human-immobilier.fr
 hunterappraisal.com
 hunters.com
 huysewinkel.be
+hv1854.nl
 hvmvastgoed.nl
 hydro-cleansing.com
 hypotheekshop.nl
@@ -905,6 +927,7 @@ iencuentro.es
 ifacservice.be
 ifomob.ch
 ikasa.es
+ikganaarvmk.nl
 illinoisproperty.com
 ilmarsrl.com
 ilmq.it
@@ -988,6 +1011,7 @@ immoseeker.ch
 immosol.ch
 immostate.at
 immovate.com
+immovercammen.be
 immovermast.be
 immovermeulen.be
 immowunsch.com
@@ -1036,6 +1060,7 @@ irres.be
 isaak.nl
 ish-immobilien.de
 isodiag.fr
+ivovanderleek.nl
 ivyparkhomes.com
 jackson-stops.co.uk
 jacksonfuller.com
@@ -1108,7 +1133,11 @@ knightfrank.co.uk
 knightsandcoestateagent.co.uk
 kochreal.at
 koenigimmobilien.at
+kooitje.nl
+koolvandentoren.nl
 koophuis.nl
+kooyman.com
+koppesmakelaardij.nl
 kravens.co.uk
 kreuz-immobilien.de
 krogsveen.no
@@ -1240,6 +1269,7 @@ luxurymtl.com
 lwwonen.info
 lyonslondon.co.uk
 m-oi.fr
+maartenmakelaardij.nl
 mabro.lu
 macrealty.com
 madisonbrook.com
@@ -1345,6 +1375,7 @@ mqgaston.com
 mremmerswaal.nl
 msimmobiliare.it
 msimond.fr
+mskgroep.nl
 mudde-makelaardij.nl
 mude.pt
 multiburo.com
@@ -1416,6 +1447,7 @@ onestopestates.com
 onixrenta.com
 onkenhoutmakelaars.nl
 onlineestateagents.org.uk
+onns.nl
 ooms.com
 oralia.fr
 orian.co.uk
@@ -1469,6 +1501,7 @@ picaimmobiliare.com
 pierres-sa.fr
 piesy-immobilier.fr
 pietrapolis.fr
+pietwarmerdammakelaardij.nl
 pilz-immobilien.at
 pinnacle-property.co.uk
 pisos.cc
@@ -1529,6 +1562,7 @@ puga.pt
 puntocasa.net
 puntomediodespachos.com
 puurmakelaars.nl
+qmakelaars.nl
 quadrifoglioimmobiliare.com
 qualitybeheer.be
 quantumproperties.ca
@@ -1586,6 +1620,7 @@ remax.pt
 remaxaffiliates.ca
 remaxhallmark.com
 remoimmobilien.ch
+rent2day.nl
 rentals.ca
 renthouserealestate.com
 rentivy.com
@@ -1601,6 +1636,7 @@ rgreform.com
 richard-james.com
 richardsontxrealestate.com
 rickmanproperties.com
+riggelingmakelaars.nl
 rijnstaete.nl
 rimontgo.es
 rina.pt
@@ -1620,6 +1656,7 @@ rogplus.com
 rootrealty.com
 rosenbergimmobilier.fr
 rosenstengel-immobilien.de
+rosini.be
 rosseel.be
 rotsvast.nl
 rotterdamhostbnb.nl
@@ -1668,6 +1705,7 @@ savoysproperties.co.uk
 saxonyapartments.com
 schneider-immobilienservice.de
 schnuer.at
+schonbergerenvanherk.nl
 schotsmanmakelaardij.nl
 schouwenhaghe.com
 schwarz-schuppich.at
@@ -1735,6 +1773,7 @@ square-properties.be
 squarehabitat.fr
 sreal.at
 sro.nl
+stadenlanddordrecht.nl
 stadgenoot.nl
 stamverhuur.nl
 starreal.at
@@ -1826,6 +1865,7 @@ terrassedusud.com
 tetris.as
 texassellmyhouse.com
 thebeverlyateam.com
+thebridge.be
 theclovecondos.com
 thecoronadoapartment.com
 thehomecollectivebrooklyn.com
@@ -1854,6 +1894,7 @@ topbinzco.com
 topcalgaryrealestate.com
 topdd.at
 toplocations.it
+torox.be
 torus.co.uk
 toscano.it
 totemsrl.org
@@ -1908,6 +1949,7 @@ vallesrealestate.com
 valorespaco.com
 vanakproperties.com
 vanbaerlemakelaars.nl
+vanderhoekmakelaars.nl
 vanderlaarse-makelaardij.nl
 vandullink.nl
 vaneau.fr
@@ -1916,6 +1958,7 @@ vanhuisuit-makelaars.nl
 vanoverbeek.nl
 vanpaaschen.nl
 vanquishrealestate.com
+vanravens.nl
 vanreethvastgoed.be
 vanregteren.nl
 vanthof.nl
@@ -1934,6 +1977,7 @@ veermanmakelaars.nl
 veigas.eu
 vellcan.com
 veniceproperties.co
+verimass.be
 verlaanmakelaardij.nl
 verlat.be
 viabilis.be
@@ -1942,8 +1986,10 @@ viager.fr
 viagerlodelparis.com
 vianelli-immobili.com
 vianovaimmobilier.com
+viavesta.nl
 victoire.be
 victormichael.com
+vijfvinkel.nl
 vincentisi.com
 viplar.pt
 virani.ca
@@ -1968,6 +2014,8 @@ waartsmakelaars.nl
 wado.nl
 wag.at
 walls.be
+waltmann.com
+waltmann.nu
 wanson.ca
 wardsofkent.co.uk
 wateenleukhuis.nl
@@ -1979,6 +2027,7 @@ weknowottawa.com
 weletproperties.co.uk
 welinvest.ch
 welkomthuis.be
+welkomthuismakelaardij.nl
 wellimmo.net
 welpmakelaardij.nl
 west-riding.co.uk
