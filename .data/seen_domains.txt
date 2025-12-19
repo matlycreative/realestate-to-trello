@@ -3,6 +3,7 @@
 18montenapoleone.it
 1a-wohnen.net
 1stavenue.co.uk
+21inmobiliarias.com
 222estates.co.uk
 28.estate
 2a-xpert.be
@@ -16,7 +17,6 @@
 7dgroupe.fr
 800king.ca
 88makelaars.nl
-Batilac.ch
 a-demeure.com
 a2mimmo.fr
 a2zproperties.co.uk
@@ -778,6 +778,7 @@ gracewoodgroup.com
 grafimmobilien.ch
 granberryproperties.com
 grandgeneve-immo.com
+grandicase.com
 granvale.co.uk
 gravestate.com
 grawe-immobilien.at
