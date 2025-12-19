@@ -62,7 +62,7 @@ SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 # Batch rotation
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
-    "a monday 4",
+    "m monday 4",
     "m thursday",
     "a thursday",
     "m friday",
