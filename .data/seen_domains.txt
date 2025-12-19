@@ -47,6 +47,7 @@ activaproperties.com
 activexpertise-aix-sud.fr
 activexpertise-aubagne.fr
 activexpertise-thonon-les-bains.fr
+ada-lux.lu
 adaix.com
 adam-hayes.co.uk
 addisontownsend.co.uk
@@ -108,6 +109,7 @@ alex-jones.co.uk
 alexandersestateagents.co.uk
 alexandregouinimmobilier.com
 aleximmo.fr
+alfa-immobilier.lu
 alhabtoorrealestate.com
 alienti.be
 alkimmo.com
@@ -129,6 +131,8 @@ amberandco.co.uk
 amberden.co.uk
 ammproperties.com
 amri-immobilien.ch
+amrimmo.com
+ams-promotions.eu
 amstelmakelaardij.nl
 anchorproperties.co.uk
 andelsbutikken.dk
@@ -162,6 +166,7 @@ architektur-ag.ch
 ardenestates.co.uk
 are.lu
 are.nl
+arend-fischbach.lu
 arimco.ch
 arkaden.at
 arlim-prestige.com
@@ -476,6 +481,7 @@ comune.roma.it
 concord-london.com
 condoblackbook.com
 condowong.ca
+confiance.lu
 connexion-immobilier.com
 connexion.immo
 consult-im.com
@@ -495,6 +501,7 @@ cowell-norford.co.uk
 craunot.fr
 crifasi.com
 csimakler.de
+ctnimmo.com
 cubittandwest.co.uk
 curchods.com
 curriegreen.ca
@@ -643,6 +650,7 @@ eurim-toulouse.com
 eurofa.be
 eurofincas.es
 eurosuisse-immobilier.com
+eurovilla.hr
 evansnyc.com
 evcanada.com
 eveleens.nl
@@ -815,6 +823,7 @@ grocasa.es
 grootewaard.nl
 grosschaedl-immo.at
 groupe-mercure.fr
+groupearcade.be
 groveresidential.co.uk
 growing.be
 grupoapisa.com
@@ -891,6 +900,7 @@ hoffstetter.lu
 hogenboommakelaardij.nl
 home-consult.be
 home-estate.be
+home-invest.lu
 home-solution.nl
 home.dk
 home2u.co.uk
@@ -955,6 +965,7 @@ ifacservice.be
 ifomob.ch
 ikasa.es
 ikganaarvmk.nl
+iksl.lu
 illinoisproperty.com
 ilmarsrl.com
 ilmq.it
@@ -963,9 +974,12 @@ iltiger.de
 imcosrl.it
 immo-anderlecht.be
 immo-b.com
+immo-biewer.lu
+immo-breny.be
 immo-company.at
 immo-cvh.be
 immo-declic.com
+immo-diederich.lu
 immo-domus.lu
 immo-elite.com
 immo-gross.de
@@ -1039,6 +1053,7 @@ immojoy.com
 immoklub.fr
 immolangeveld.be
 immoliaison.fr
+immonordstrooss.lu
 immopolis-investissement.fr
 immoprestige.lu
 immoquartier.be
@@ -1046,6 +1061,7 @@ immoroelands.be
 immoruelens.be
 immoseeker.ch
 immosir.be
+immosl.lu
 immosol.ch
 immostate.at
 immothekerfinotheker.be
@@ -1304,6 +1320,7 @@ lunainmo.es
 lunallar.com
 lunionimmo.com
 lurotbrand.co.uk
+lux-immo.lu
 luxecasa.co.uk
 luxeresidential.co.uk
 luxurycroatia.net
@@ -1324,6 +1341,7 @@ mahadeos.co.uk
 maia-andrade.pt
 main-estate.de
 mainandmain.co.uk
+mainstreet.lu
 maisconsultores.pt
 makelaarbert.nu
 makelaardijvdberg.nl
@@ -1593,6 +1611,7 @@ prometeoagenziaimmobiliare.it
 promogim.fr
 promomidi.com
 promovalimmo.com
+promsca.lu
 propertiesactually.co.uk
 propertieslife.it
 property-immobilien.at
@@ -1667,6 +1686,7 @@ remax.com
 remax.es
 remax.hr
 remax.it
+remax.lu
 remax.pt
 remaxaffiliates.ca
 remaxhallmark.com
@@ -1936,6 +1956,7 @@ theproperty.pt
 thestudenthousingcompany.com
 thevillagedallas.com
 thevincent.ca
+thewes-reuter.lu
 theydons.com
 thinkrealty.ae
 thomas-graf.ch
