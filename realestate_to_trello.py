@@ -12,6 +12,11 @@
 # - DNS fallback: if HTTP fails, accept if domain resolves
 # - Robots OFF by default (won't block leads); enable with CHECK_ROBOTS=1
 # - tldextract offline: avoid downloading suffix list in CI
+#
+# Rotation fix (Option A):
+# - Store rotation state in .data/batch_state.json (cached by GitHub Actions)
+# - Rotation advances ONCE per successful run (when at least 1 lead is pushed)
+# - NOT dependent on day/time
 
 import os, re, json, time, random, csv, pathlib, math, socket
 from datetime import date, datetime
@@ -57,10 +62,17 @@ def env_on(name, default=False):
 DAILY_LIMIT      = env_int("DAILY_LIMIT", 31)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.8)
-SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 
-# Batch rotation
-BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
+# Persisted state folder (cached in GitHub Actions)
+DATA_DIR = os.getenv("DATA_DIR", ".data").strip() or ".data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Seen domains (append-only)
+SEEN_FILE = os.getenv("SEEN_FILE", os.path.join(DATA_DIR, "seen_domains.txt"))
+
+# Batch rotation (cached JSON state)
+BATCH_FILE = os.getenv("BATCH_FILE", os.path.join(DATA_DIR, "batch_state.json"))
+
 BATCH_SLOTS = [
     "a friday 5",
     "m thursday",
@@ -83,21 +95,50 @@ BATCH_SLOTS = [
     "a friday 2",
 ]
 
+def _atomic_write_text(path: str, text: str) -> None:
+    try:
+        p = pathlib.Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(p) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, str(p))
+    except Exception:
+        pass
+
 def load_batch_index() -> int:
+    """
+    Loads batch index from cached JSON.
+    Safe defaults to 0.
+    """
     try:
         with open(BATCH_FILE, "r", encoding="utf-8") as f:
-            idx = int((f.read() or "").strip())
-            if 0 <= idx < len(BATCH_SLOTS):
-                return idx
+            raw = (f.read() or "").strip()
+        if not raw:
+            return 0
+        js = json.loads(raw)
+        idx = int(js.get("idx", 0))
+        if 0 <= idx < len(BATCH_SLOTS):
+            return idx
     except Exception:
         pass
     return 0
 
 def save_batch_index(idx: int) -> None:
+    """
+    Saves batch index to cached JSON (atomic write).
+    """
     try:
-        os.makedirs(os.path.dirname(BATCH_FILE) or ".", exist_ok=True)
-        with open(BATCH_FILE, "w", encoding="utf-8") as f:
-            f.write(str(idx))
+        idx = int(idx)
+        if idx < 0:
+            idx = 0
+        if idx >= len(BATCH_SLOTS):
+            idx = idx % len(BATCH_SLOTS)
+        payload = {
+            "idx": idx,
+            "updated_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        }
+        _atomic_write_text(BATCH_FILE, json.dumps(payload, indent=2) + "\n")
     except Exception:
         pass
 
@@ -315,7 +356,7 @@ def fetch_site_ok(url: str) -> bool:
     - Hard fail only on 404/410
     - Treat 2xx/3xx as OK
     - Treat 401/403/405/406/429 as SOFT OK (datacenter/bot blocks)
-    - If HTTP fails, accept if DNS resolves
+    - If HTTP fails, accept if domain resolves
     """
     try:
         r = SESS.get(
@@ -342,7 +383,6 @@ def fetch_site_ok(url: str) -> bool:
             STATS["fetch_soft_ok"] += 1
             return True
 
-        # For everything else (500 etc), fall back to DNS:
         if _dns_resolves(url):
             STATS["fetch_dns_ok"] += 1
             return True
@@ -640,7 +680,7 @@ def _norm_name(s: str) -> str:
     return " ".join(parts)
 
 def _escape_overpass_regex(s: str) -> str:
-    return re.sub(r'([.^$*+?{}$begin:math:display$$end:math:display$\\|()])', r'\\\1', s)
+    return re.sub(r'([.^$*+?{}\\|()])', r'\\\1', s)
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     if None in (lat1, lon1, lat2, lon2):
@@ -1234,31 +1274,31 @@ def ensure_min_blank_templates(list_id: str, template_id: str, need: int):
         clone_template_into_list(template_id, list_id, name=f"Lead (auto) {int(time.time())%100000}-{i+1}")
         time.sleep(1.0)
 
-# ---------- seen + CSV ----------
-def load_seen():
+# ---------- seen (append-only) + CSV ----------
+def load_seen() -> set:
     try:
         with open(SEEN_FILE, "r", encoding="utf-8") as f:
             return set(l.strip().lower() for l in f if l.strip())
     except Exception:
         return set()
 
-def seen_domain_write(domain: str):
+def seen_domain_write(domain: str, seen: set) -> None:
+    """
+    Append-only write.
+    Prevent duplicates (based on in-memory 'seen' set).
+    """
     if not domain:
         return
     d = domain.strip().lower()
+    if not d:
+        return
+    if d in seen:
+        return
     try:
         os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
         with open(SEEN_FILE, "a", encoding="utf-8") as f:
             f.write(d + "\n")
-    except Exception:
-        pass
-
-def save_seen(seen: set):
-    try:
-        os.makedirs(os.path.dirname(SEEN_FILE) or ".", exist_ok=True)
-        with open(SEEN_FILE, "w", encoding="utf-8") as f:
-            for d in sorted(seen):
-                f.write(d + "\n")
+        seen.add(d)
     except Exception:
         pass
 
@@ -1349,8 +1389,7 @@ def main():
             leads.append({"Company": biz["business_name"], "Website": website})
 
             if site_dom:
-                seen_domain_write(site_dom)
-                seen.add(site_dom)
+                seen_domain_write(site_dom, seen)
 
             _sleep()
 
@@ -1405,8 +1444,7 @@ def main():
                 leads.append({"Company": biz["business_name"], "Website": website})
 
                 if site_dom:
-                    seen_domain_write(site_dom)
-                    seen.add(site_dom)
+                    seen_domain_write(site_dom, seen)
 
                 _sleep()
 
@@ -1447,18 +1485,21 @@ def main():
 
         dom = etld1_from_url(lead.get("Website") or "")
         if dom:
-            seen_domain_write(dom)
-            seen.add(dom)
+            seen_domain_write(dom, seen)
 
         if changed:
-            print(f"PUSHED ✅ — {lead['Company']} — {lead['Website']}", flush=True)
+            print(f"PUSHED ✅ — {lead['Company']} — {lead['Website']} — batch='{batch_label}'", flush=True)
         else:
-            print(f"UNCHANGED ℹ️ — {lead['Company']}", flush=True)
+            print(f"UNCHANGED ℹ️ — {lead['Company']} — batch='{batch_label}'", flush=True)
         return True
 
     batch_idx = load_batch_index()
     batch_label = BATCH_SLOTS[batch_idx]
     next_batch_idx = (batch_idx + 1) % len(BATCH_SLOTS)
+
+    print(f"[batch] current idx={batch_idx} label='{batch_label}' | next idx={next_batch_idx}", flush=True)
+    print(f"[state] BATCH_FILE={os.path.abspath(BATCH_FILE)}", flush=True)
+    print(f"[state] SEEN_FILE={os.path.abspath(SEEN_FILE)}", flush=True)
 
     pushed = 0
     for lead in leads:
@@ -1469,16 +1510,15 @@ def main():
             pushed += 1
             time.sleep(max(0, PUSH_INTERVAL_S) + max(0, BUTLER_GRACE_S))
 
+    # Advance rotation ONCE per run, only if something was pushed
     if pushed > 0:
         save_batch_index(next_batch_idx)
+        print(f"[batch] advanced -> idx={next_batch_idx} label='{BATCH_SLOTS[next_batch_idx]}'", flush=True)
+    else:
+        print("[batch] not advanced (0 pushed).", flush=True)
 
-    # Always print stats
     print("Stats:", json.dumps(STATS, indent=2), flush=True)
-
-    save_seen(seen)
-
-    print(f"SEEN_FILE path: {os.path.abspath(SEEN_FILE)} — total domains in set: {len(seen)}", flush=True)
-    print(f"Done. Leads pushed: {pushed}/{len(leads)}", flush=True)
+    print(f"Done. Leads pushed: {pushed}/{len(leads)} | total seen domains in memory: {len(seen)}", flush=True)
 
 if __name__ == "__main__":
     main()
