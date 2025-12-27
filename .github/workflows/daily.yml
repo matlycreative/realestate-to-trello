@@ -51,7 +51,7 @@ jobs:
       # Persisted state dir (cached)
       DATA_DIR: .data
       SEEN_FILE: .data/seen_domains.txt
-      BATCH_FILE: .data/batch_state.json
+      BATCH_FILE: .data/batch_state.txt
 
     steps:
       - name: Checkout
