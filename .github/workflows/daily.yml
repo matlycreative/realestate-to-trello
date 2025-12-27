@@ -35,17 +35,17 @@ jobs:
       FOURSQUARE_API_KEY: ${{ secrets.FOURSQUARE_API_KEY }}
 
       # Disable official sources (speed)
-      USE_COMPANIES_HOUSE: "0"
-      USE_SIRENE: "0"
-      USE_OPENCORP: "0"
-      USE_ZEFIX: "0"
+      USE_COMPANIES_HOUSE: "1"
+      USE_SIRENE: "1"
+      USE_OPENCORP: "1"
+      USE_ZEFIX: "1"
 
       # Tuning
       DAILY_LIMIT: "1"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "0.8"
-      CITY_HOPS: "6"
-      OSM_RADIUS_M: "5000"
+      CITY_HOPS: "14"
+      OSM_RADIUS_M: "25000"
       BUTLER_GRACE_S: "15"
 
       # Persisted state dir (cached + committed)
