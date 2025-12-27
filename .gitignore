@@ -1,2 +1,4 @@
 .data/*
+!.data/
 !.data/seen_domains.txt
+!.data/batch_state.json
