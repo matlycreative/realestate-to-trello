@@ -240,31 +240,281 @@ COUNTRY_WHITELIST = [s.strip() for s in (os.getenv("COUNTRY_WHITELIST") or "").s
 CITY_MODE     = os.getenv("CITY_MODE", "rotate")  # rotate | random | force
 FORCE_COUNTRY = (os.getenv("FORCE_COUNTRY") or "").strip()
 FORCE_CITY    = (os.getenv("FORCE_CITY") or "").strip()
-CITY_HOPS     = env_int("CITY_HOPS", 8)
-OSM_RADIUS_M  = env_int("OSM_RADIUS_M", 2500)
+CITY_HOPS     = env_int("CITY_HOPS", 20)
+OSM_RADIUS_M  = env_int("OSM_RADIUS_M", 25000)
 
 CITY_ROTATION = [
+    # =========================
+    # Switzerland
+    # =========================
     ("Zurich","Switzerland"), ("Geneva","Switzerland"), ("Basel","Switzerland"), ("Lausanne","Switzerland"),
-    ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Edinburgh","United Kingdom"),
-    ("New York","United States"), ("Los Angeles","United States"), ("Chicago","United States"),
-    ("Miami","United States"), ("San Francisco","United States"), ("Dallas","United States"),
-    ("Paris","France"), ("Lyon","France"), ("Marseille","France"), ("Toulouse","France"),
-    ("Berlin","Germany"), ("Munich","Germany"), ("Hamburg","Germany"), ("Frankfurt","Germany"),
-    ("Milan","Italy"), ("Rome","Italy"), ("Naples","Italy"), ("Turin","Italy"),
-    ("Oslo","Norway"), ("Bergen","Norway"),
-    ("Copenhagen","Denmark"), ("Aarhus","Denmark"),
-    ("Vienna","Austria"), ("Salzburg","Austria"), ("Graz","Austria"),
-    ("Madrid","Spain"), ("Barcelona","Spain"), ("Valencia","Spain"),
-    ("Lisbon","Portugal"), ("Porto","Portugal"),
-    ("Amsterdam","Netherlands"), ("Rotterdam","Netherlands"), ("The Hague","Netherlands"),
-    ("Brussels","Belgium"), ("Antwerp","Belgium"), ("Ghent","Belgium"),
-    ("Luxembourg City","Luxembourg"),
-    ("Zagreb","Croatia"), ("Split","Croatia"), ("Rijeka","Croatia"),
-    ("Dubai","United Arab Emirates"),
-    ("Jakarta","Indonesia"), ("Surabaya","Indonesia"), ("Bandung","Indonesia"), ("Denpasar","Indonesia"),
-    ("Toronto","Canada"), ("Vancouver","Canada"), ("Montreal","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
-]
+    ("Bern","Switzerland"), ("Winterthur","Switzerland"), ("Lucerne","Switzerland"), ("St. Gallen","Switzerland"),
+    ("Lugano","Switzerland"), ("Biel/Bienne","Switzerland"), ("Thun","Switzerland"), ("Fribourg","Switzerland"),
+    ("Schaffhausen","Switzerland"), ("Chur","Switzerland"), ("Neuchatel","Switzerland"), ("Zug","Switzerland"),
+    ("Sion","Switzerland"), ("La Chaux-de-Fonds","Switzerland"), ("Rapperswil-Jona","Switzerland"),
+    ("Solothurn","Switzerland"), ("Bellinzona","Switzerland"), ("Aarau","Switzerland"), ("Yverdon-les-Bains","Switzerland"),
+    ("Montreux","Switzerland"), ("Vevey","Switzerland"), ("Nyon","Switzerland"), ("Liestal","Switzerland"),
+    ("Kreuzlingen","Switzerland"), ("Davos","Switzerland"), ("St. Moritz","Switzerland"),
 
+    # =========================
+    # United Kingdom
+    # =========================
+    ("London","United Kingdom"), ("Manchester","United Kingdom"), ("Birmingham","United Kingdom"), ("Leeds","United Kingdom"),
+    ("Liverpool","United Kingdom"), ("Sheffield","United Kingdom"), ("Bristol","United Kingdom"), ("Edinburgh","United Kingdom"),
+    ("Glasgow","United Kingdom"), ("Cardiff","United Kingdom"), ("Belfast","United Kingdom"), ("Newcastle upon Tyne","United Kingdom"),
+    ("Nottingham","United Kingdom"), ("Leicester","United Kingdom"), ("Coventry","United Kingdom"), ("Reading","United Kingdom"),
+    ("Cambridge","United Kingdom"), ("Oxford","United Kingdom"), ("Brighton","United Kingdom"), ("Southampton","United Kingdom"),
+    ("Portsmouth","United Kingdom"), ("Norwich","United Kingdom"), ("York","United Kingdom"), ("Exeter","United Kingdom"),
+    ("Bath","United Kingdom"), ("Milton Keynes","United Kingdom"), ("Luton","United Kingdom"), ("Plymouth","United Kingdom"),
+    ("Aberdeen","United Kingdom"), ("Dundee","United Kingdom"), ("Stirling","United Kingdom"), ("Swansea","United Kingdom"),
+    ("Bournemouth","United Kingdom"), ("Cheltenham","United Kingdom"), ("Guildford","United Kingdom"), ("Windsor","United Kingdom"),
+    ("Canterbury","United Kingdom"), ("Ipswich","United Kingdom"), ("Derby","United Kingdom"), ("Hull","United Kingdom"),
+    ("Stoke-on-Trent","United Kingdom"), ("Wolverhampton","United Kingdom"), ("Preston","United Kingdom"),
+    ("Middlesbrough","United Kingdom"), ("Bradford","United Kingdom"), ("Slough","United Kingdom"),
+    ("Watford","United Kingdom"), ("Croydon","United Kingdom"), ("Kingston upon Thames","United Kingdom"),
+    ("Richmond","United Kingdom"),
+
+    # =========================
+    # Ireland
+    # =========================
+    ("Dublin","Ireland"), ("Cork","Ireland"), ("Galway","Ireland"), ("Limerick","Ireland"), ("Waterford","Ireland"),
+    ("Drogheda","Ireland"), ("Sligo","Ireland"), ("Kilkenny","Ireland"), ("Wexford","Ireland"),
+
+    # =========================
+    # France
+    # =========================
+    ("Paris","France"), ("Marseille","France"), ("Lyon","France"), ("Toulouse","France"), ("Nice","France"),
+    ("Nantes","France"), ("Montpellier","France"), ("Strasbourg","France"), ("Bordeaux","France"), ("Lille","France"),
+    ("Rennes","France"), ("Reims","France"), ("Le Havre","France"), ("Saint-Etienne","France"), ("Toulon","France"),
+    ("Grenoble","France"), ("Dijon","France"), ("Angers","France"), ("Nimes","France"), ("Villeurbanne","France"),
+    ("Clermont-Ferrand","France"), ("Aix-en-Provence","France"), ("Brest","France"), ("Tours","France"),
+    ("Limoges","France"), ("Amiens","France"), ("Perpignan","France"), ("Metz","France"), ("Besancon","France"),
+    ("Orleans","France"), ("Mulhouse","France"), ("Rouen","France"), ("Caen","France"), ("Nancy","France"),
+    ("Annecy","France"), ("Chambery","France"), ("Avignon","France"), ("Cannes","France"),
+    ("Saint-Malo","France"), ("La Rochelle","France"), ("Biarritz","France"), ("Bayonne","France"),
+    ("Antibes","France"), ("Menton","France"), ("Monaco","France"), ("Saint-Tropez","France"),
+
+    # =========================
+    # Germany
+    # =========================
+    ("Berlin","Germany"), ("Hamburg","Germany"), ("Munich","Germany"), ("Cologne","Germany"), ("Frankfurt","Germany"),
+    ("Stuttgart","Germany"), ("Dusseldorf","Germany"), ("Dortmund","Germany"), ("Essen","Germany"), ("Leipzig","Germany"),
+    ("Bremen","Germany"), ("Dresden","Germany"), ("Hanover","Germany"), ("Nuremberg","Germany"), ("Duisburg","Germany"),
+    ("Bochum","Germany"), ("Wuppertal","Germany"), ("Bielefeld","Germany"), ("Bonn","Germany"), ("Munster","Germany"),
+    ("Karlsruhe","Germany"), ("Mannheim","Germany"), ("Augsburg","Germany"), ("Wiesbaden","Germany"),
+    ("Freiburg im Breisgau","Germany"), ("Mainz","Germany"), ("Heidelberg","Germany"), ("Kiel","Germany"),
+    ("Saarbrucken","Germany"), ("Regensburg","Germany"), ("Ingolstadt","Germany"), ("Potsdam","Germany"),
+    ("Lubeck","Germany"), ("Erfurt","Germany"), ("Jena","Germany"), ("Oldenburg","Germany"),
+    ("Osnabruck","Germany"), ("Wurzburg","Germany"), ("Ulm","Germany"), ("Halle (Saale)","Germany"),
+    ("Kassel","Germany"), ("Braunschweig","Germany"), ("Magdeburg","Germany"),
+
+    # =========================
+    # Netherlands
+    # =========================
+    ("Amsterdam","Netherlands"), ("Rotterdam","Netherlands"), ("The Hague","Netherlands"), ("Utrecht","Netherlands"),
+    ("Eindhoven","Netherlands"), ("Groningen","Netherlands"), ("Tilburg","Netherlands"), ("Almere","Netherlands"),
+    ("Breda","Netherlands"), ("Nijmegen","Netherlands"), ("Haarlem","Netherlands"), ("Arnhem","Netherlands"),
+    ("Enschede","Netherlands"), ("Zwolle","Netherlands"), ("Maastricht","Netherlands"), ("Leiden","Netherlands"),
+    ("Amersfoort","Netherlands"), ("Delft","Netherlands"), ("Den Bosch","Netherlands"),
+    ("Amstelveen","Netherlands"), ("Hilversum","Netherlands"), ("Haarlemmermeer","Netherlands"),
+    ("Apeldoorn","Netherlands"), ("Leeuwarden","Netherlands"),
+
+    # =========================
+    # Belgium + Luxembourg
+    # =========================
+    ("Brussels","Belgium"), ("Antwerp","Belgium"), ("Ghent","Belgium"), ("Bruges","Belgium"), ("Liege","Belgium"),
+    ("Leuven","Belgium"), ("Namur","Belgium"), ("Charleroi","Belgium"), ("Mons","Belgium"),
+    ("Mechelen","Belgium"), ("Hasselt","Belgium"), ("Kortrijk","Belgium"), ("Ostend","Belgium"),
+    ("Luxembourg City","Luxembourg"),
+
+    # =========================
+    # Spain
+    # =========================
+    ("Madrid","Spain"), ("Barcelona","Spain"), ("Valencia","Spain"), ("Seville","Spain"), ("Zaragoza","Spain"),
+    ("Malaga","Spain"), ("Murcia","Spain"), ("Palma","Spain"), ("Las Palmas","Spain"), ("Bilbao","Spain"),
+    ("Alicante","Spain"), ("Cordoba","Spain"), ("Valladolid","Spain"), ("Vigo","Spain"), ("Gijon","Spain"),
+    ("Granada","Spain"), ("A Coruna","Spain"), ("San Sebastian","Spain"), ("Salamanca","Spain"), ("Toledo","Spain"),
+    ("Marbella","Spain"), ("Ibiza","Spain"), ("Tenerife","Spain"), ("Santander","Spain"),
+    ("Cadiz","Spain"), ("Jerez de la Frontera","Spain"), ("Pamplona","Spain"), ("Tarragona","Spain"),
+    ("Castellon de la Plana","Spain"), ("Benidorm","Spain"), ("Sitges","Spain"),
+
+    # =========================
+    # Portugal
+    # =========================
+    ("Lisbon","Portugal"), ("Porto","Portugal"), ("Braga","Portugal"), ("Coimbra","Portugal"), ("Faro","Portugal"),
+    ("Funchal","Portugal"), ("Aveiro","Portugal"), ("Setubal","Portugal"), ("Cascais","Portugal"),
+    ("Sintra","Portugal"), ("Lagos","Portugal"), ("Albufeira","Portugal"),
+
+    # =========================
+    # Italy
+    # =========================
+    ("Milan","Italy"), ("Rome","Italy"), ("Naples","Italy"), ("Turin","Italy"), ("Bologna","Italy"),
+    ("Florence","Italy"), ("Venice","Italy"), ("Genoa","Italy"), ("Verona","Italy"), ("Palermo","Italy"),
+    ("Catania","Italy"), ("Bari","Italy"), ("Padua","Italy"), ("Trieste","Italy"), ("Parma","Italy"),
+    ("Modena","Italy"), ("Bergamo","Italy"), ("Brescia","Italy"), ("Bolzano","Italy"), ("Trento","Italy"),
+    ("Pisa","Italy"), ("Siena","Italy"), ("Cagliari","Italy"), ("Rimini","Italy"), ("Ravenna","Italy"),
+    ("Salerno","Italy"), ("Lecce","Italy"), ("Como","Italy"), ("Monza","Italy"),
+
+    # =========================
+    # Austria
+    # =========================
+    ("Vienna","Austria"), ("Graz","Austria"), ("Linz","Austria"), ("Salzburg","Austria"), ("Innsbruck","Austria"),
+    ("Klagenfurt","Austria"), ("Bregenz","Austria"), ("St. Polten","Austria"),
+
+    # =========================
+    # Nordics
+    # =========================
+    ("Oslo","Norway"), ("Bergen","Norway"), ("Trondheim","Norway"), ("Stavanger","Norway"), ("Drammen","Norway"),
+    ("Stockholm","Sweden"), ("Gothenburg","Sweden"), ("Malmo","Sweden"), ("Uppsala","Sweden"), ("Vasteras","Sweden"),
+    ("Helsingborg","Sweden"), ("Linkoping","Sweden"), ("Orebro","Sweden"), ("Lund","Sweden"),
+    ("Copenhagen","Denmark"), ("Aarhus","Denmark"), ("Odense","Denmark"), ("Aalborg","Denmark"), ("Esbjerg","Denmark"),
+    ("Helsinki","Finland"), ("Espoo","Finland"), ("Tampere","Finland"), ("Turku","Finland"), ("Oulu","Finland"),
+    ("Vaasa","Finland"), ("Jyväskylä","Finland"),
+    ("Reykjavik","Iceland"),
+
+    # =========================
+    # Central / Eastern Europe
+    # =========================
+    ("Warsaw","Poland"), ("Krakow","Poland"), ("Wroclaw","Poland"), ("Gdansk","Poland"), ("Poznan","Poland"),
+    ("Lodz","Poland"), ("Szczecin","Poland"), ("Katowice","Poland"), ("Gdynia","Poland"),
+    ("Prague","Czech Republic"), ("Brno","Czech Republic"), ("Ostrava","Czech Republic"),
+    ("Budapest","Hungary"), ("Debrecen","Hungary"), ("Szeged","Hungary"),
+    ("Bucharest","Romania"), ("Cluj-Napoca","Romania"), ("Timisoara","Romania"), ("Iasi","Romania"),
+    ("Sofia","Bulgaria"), ("Plovdiv","Bulgaria"), ("Varna","Bulgaria"),
+    ("Athens","Greece"), ("Thessaloniki","Greece"), ("Patras","Greece"), ("Heraklion","Greece"),
+    ("Ljubljana","Slovenia"), ("Maribor","Slovenia"),
+    ("Bratislava","Slovakia"), ("Kosice","Slovakia"),
+    ("Tallinn","Estonia"), ("Tartu","Estonia"),
+    ("Riga","Latvia"), ("Daugavpils","Latvia"),
+    ("Vilnius","Lithuania"), ("Kaunas","Lithuania"),
+    ("Zagreb","Croatia"), ("Split","Croatia"), ("Rijeka","Croatia"), ("Dubrovnik","Croatia"), ("Zadar","Croatia"),
+    ("Sarajevo","Bosnia and Herzegovina"),
+    ("Belgrade","Serbia"), ("Novi Sad","Serbia"),
+    ("Podgorica","Montenegro"),
+    ("Skopje","North Macedonia"),
+    ("Tirana","Albania"),
+
+    # =========================
+    # USA (very large coverage)
+    # =========================
+    ("New York","United States"), ("Los Angeles","United States"), ("Chicago","United States"), ("Houston","United States"),
+    ("Phoenix","United States"), ("Philadelphia","United States"), ("San Antonio","United States"), ("San Diego","United States"),
+    ("Dallas","United States"), ("San Jose","United States"), ("Austin","United States"), ("Jacksonville","United States"),
+    ("San Francisco","United States"), ("Columbus","United States"), ("Fort Worth","United States"), ("Charlotte","United States"),
+    ("Indianapolis","United States"), ("Seattle","United States"), ("Denver","United States"), ("Washington","United States"),
+    ("Boston","United States"), ("Nashville","United States"), ("Detroit","United States"), ("Portland","United States"),
+    ("Las Vegas","United States"), ("Miami","United States"), ("Atlanta","United States"), ("Minneapolis","United States"),
+    ("Tampa","United States"), ("Orlando","United States"), ("Cleveland","United States"), ("Pittsburgh","United States"),
+    ("Cincinnati","United States"), ("St. Louis","United States"), ("Kansas City","United States"), ("Sacramento","United States"),
+    ("Oakland","United States"), ("Baltimore","United States"), ("Milwaukee","United States"), ("Albuquerque","United States"),
+    ("Tucson","United States"), ("Fresno","United States"), ("Mesa","United States"), ("Colorado Springs","United States"),
+    ("Raleigh","United States"), ("Omaha","United States"), ("Virginia Beach","United States"), ("New Orleans","United States"),
+    ("Honolulu","United States"), ("Salt Lake City","United States"), ("San Juan","United States"),
+    ("Buffalo","United States"), ("Rochester","United States"), ("Hartford","United States"), ("New Haven","United States"),
+    ("Providence","United States"), ("Richmond","United States"), ("Norfolk","United States"), ("Charleston","United States"),
+    ("Savannah","United States"), ("Knoxville","United States"), ("Chattanooga","United States"),
+    ("Birmingham","United States"), ("Montgomery","United States"), ("Mobile","United States"),
+    ("Little Rock","United States"), ("Boise","United States"), ("Spokane","United States"),
+    ("Tacoma","United States"), ("Bellevue","United States"), ("Olympia","United States"),
+    ("Reno","United States"), ("Henderson","United States"),
+    ("Scottsdale","United States"), ("Tempe","United States"),
+    ("Fort Lauderdale","United States"), ("West Palm Beach","United States"), ("Boca Raton","United States"),
+    ("Sarasota","United States"), ("Naples","United States"), ("Key West","United States"),
+    ("Palm Beach","United States"), ("Coral Gables","United States"),
+    ("Santa Monica","United States"), ("Beverly Hills","United States"), ("Malibu","United States"),
+    ("Newport Beach","United States"), ("Irvine","United States"), ("Laguna Beach","United States"),
+    ("Santa Barbara","United States"), ("Pasadena","United States"),
+    ("Palo Alto","United States"), ("San Mateo","United States"), ("Mountain View","United States"),
+    ("Berkeley","United States"), ("San Rafael","United States"),
+    ("Greenwich","United States"), ("Stamford","United States"),
+    ("Jersey City","United States"), ("Hoboken","United States"),
+    ("Aspen","United States"), ("Boulder","United States"), ("Vail","United States"),
+    ("Plano","United States"), ("Frisco","United States"), ("Irving","United States"),
+    ("Arlington","United States"), ("Fort Myers","United States"), ("St. Petersburg","United States"),
+
+    # =========================
+    # Canada
+    # =========================
+    ("Toronto","Canada"), ("Montreal","Canada"), ("Vancouver","Canada"), ("Calgary","Canada"), ("Ottawa","Canada"),
+    ("Edmonton","Canada"), ("Winnipeg","Canada"), ("Quebec City","Canada"), ("Hamilton","Canada"), ("Kitchener","Canada"),
+    ("London","Canada"), ("Victoria","Canada"), ("Halifax","Canada"), ("Saskatoon","Canada"), ("Regina","Canada"),
+    ("St. John's","Canada"), ("Kelowna","Canada"), ("Mississauga","Canada"), ("Brampton","Canada"),
+    ("Markham","Canada"), ("Vaughan","Canada"), ("Surrey","Canada"), ("Burnaby","Canada"),
+    ("Richmond","Canada"), ("North Vancouver","Canada"), ("Laval","Canada"), ("Gatineau","Canada"),
+    ("Sherbrooke","Canada"), ("Moncton","Canada"), ("Charlottetown","Canada"),
+
+    # =========================
+    # Australia
+    # =========================
+    ("Sydney","Australia"), ("Melbourne","Australia"), ("Brisbane","Australia"), ("Perth","Australia"),
+    ("Adelaide","Australia"), ("Canberra","Australia"), ("Gold Coast","Australia"), ("Newcastle","Australia"),
+    ("Hobart","Australia"), ("Darwin","Australia"), ("Sunshine Coast","Australia"), ("Wollongong","Australia"),
+    ("Geelong","Australia"), ("Townsville","Australia"), ("Cairns","Australia"),
+
+    # =========================
+    # New Zealand
+    # =========================
+    ("Auckland","New Zealand"), ("Wellington","New Zealand"), ("Christchurch","New Zealand"), ("Hamilton","New Zealand"),
+    ("Dunedin","New Zealand"), ("Tauranga","New Zealand"), ("Queenstown","New Zealand"),
+
+    # =========================
+    # UAE + Gulf
+    # =========================
+    ("Dubai","United Arab Emirates"), ("Abu Dhabi","United Arab Emirates"), ("Sharjah","United Arab Emirates"),
+    ("Doha","Qatar"), ("Manama","Bahrain"), ("Kuwait City","Kuwait"),
+    ("Riyadh","Saudi Arabia"), ("Jeddah","Saudi Arabia"), ("Dammam","Saudi Arabia"),
+    ("Muscat","Oman"),
+
+    # =========================
+    # Singapore / Hong Kong
+    # =========================
+    ("Singapore","Singapore"),
+    ("Hong Kong","Hong Kong"),
+
+    # =========================
+    # Japan
+    # =========================
+    ("Tokyo","Japan"), ("Osaka","Japan"), ("Yokohama","Japan"), ("Nagoya","Japan"),
+    ("Sapporo","Japan"), ("Fukuoka","Japan"), ("Kobe","Japan"), ("Kyoto","Japan"),
+    ("Hiroshima","Japan"), ("Sendai","Japan"), ("Kawasaki","Japan"),
+
+    # =========================
+    # South Korea
+    # =========================
+    ("Seoul","South Korea"), ("Busan","South Korea"), ("Incheon","South Korea"), ("Daegu","South Korea"),
+    ("Daejeon","South Korea"), ("Gwangju","South Korea"),
+
+    # =========================
+    # Turkey
+    # =========================
+    ("Istanbul","Turkey"), ("Ankara","Turkey"), ("Izmir","Turkey"), ("Antalya","Turkey"), ("Bursa","Turkey"),
+
+    # =========================
+    # Mexico
+    # =========================
+    ("Mexico City","Mexico"), ("Guadalajara","Mexico"), ("Monterrey","Mexico"), ("Tijuana","Mexico"),
+    ("Cancun","Mexico"), ("Merida","Mexico"), ("Playa del Carmen","Mexico"),
+
+    # =========================
+    # Brazil
+    # =========================
+    ("Sao Paulo","Brazil"), ("Rio de Janeiro","Brazil"), ("Brasilia","Brazil"), ("Belo Horizonte","Brazil"),
+    ("Curitiba","Brazil"), ("Porto Alegre","Brazil"), ("Florianopolis","Brazil"), ("Salvador","Brazil"),
+
+    # =========================
+    # Argentina / Chile / Colombia / Peru
+    # =========================
+    ("Buenos Aires","Argentina"), ("Cordoba","Argentina"), ("Rosario","Argentina"),
+    ("Santiago","Chile"), ("Valparaiso","Chile"), ("Vina del Mar","Chile"),
+    ("Bogota","Colombia"), ("Medellin","Colombia"), ("Cali","Colombia"), ("Cartagena","Colombia"),
+    ("Lima","Peru"), ("Cusco","Peru"),
+
+    # =========================
+    # South Africa
+    # =========================
+    ("Cape Town","South Africa"), ("Johannesburg","South Africa"), ("Durban","South Africa"),
+    ("Pretoria","South Africa"), ("Stellenbosch","South Africa"),
+]
 def iter_cities():
     pool = CITY_ROTATION[:]
     if COUNTRY_WHITELIST:
