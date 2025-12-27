@@ -74,25 +74,11 @@ SEEN_FILE = os.getenv("SEEN_FILE", os.path.join(DATA_DIR, "seen_domains.txt"))
 BATCH_FILE = os.getenv("BATCH_FILE", os.path.join(DATA_DIR, "batch_state.json"))
 
 BATCH_SLOTS = [
-    "a friday 5",
-    "m thursday",
-    "a thursday",
-    "m friday",
-    "a friday",
-    "m monday",
-    "a monday",
-    "m tuesday",
-    "a tuesday",
-    "m monday 2",
-    "a monday 2",
-    "m tuesday 2",
-    "a tuesday 2",
-    "m wednesday 2",
-    "a wednesday 2",
-    "m thursday 2",
-    "a thursday 2",
-    "m friday 2",
-    "a friday 2",
+  "m monday","a monday","m tuesday","a tuesday","m wednesday","a wednesday","m thursday","a thursday","m friday","a friday",
+  "m monday 2","a monday 2","m tuesday 2","a tuesday 2","m wednesday 2","a wednesday 2","m thursday 2","a thursday 2","m friday 2","a friday 2",
+  "m monday 3","a monday 3","m tuesday 3","a tuesday 3","m wednesday 3","a wednesday 3","m thursday 3","a thursday 3","m friday 3","a friday 3",
+  "m monday 4","a monday 4","m tuesday 4","a tuesday 4","m wednesday 4","a wednesday 4","m thursday 4","a thursday 4","m friday 4","a friday 4",
+  "m monday 5","a monday 5","m tuesday 5","a tuesday 5","m wednesday 5","a wednesday 5","m thursday 5","a thursday 5","m friday 5","a friday 5",
 ]
 
 def _atomic_write_text(path: str, text: str) -> None:
