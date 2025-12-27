@@ -124,7 +124,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add -A .data/seen_domains.json .data/batch_state.json
+          git add -A .data/seen_domains.txt .data/batch_state.json
 
           if git diff --cached --quiet; then
             echo "No state changes to commit."
