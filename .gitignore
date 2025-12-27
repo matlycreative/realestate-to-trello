@@ -1,0 +1,3 @@
+.data/*
+!.data/seen_domains.txt
+!.data/
