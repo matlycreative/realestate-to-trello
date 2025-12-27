@@ -7,7 +7,7 @@ on:
     - cron: "0 2 * * 0"   # Sun
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: daily-realestate-${{ github.ref_name }}
@@ -48,19 +48,27 @@ jobs:
       OSM_RADIUS_M: "25000"
       BUTLER_GRACE_S: "15"
 
-      # Robots is OFF by default in the script (recommended)
-      # If you ever want it ON:
-      # CHECK_ROBOTS: "1"
-
-      # Persist
+      # Persisted state dir (cached)
+      DATA_DIR: .data
       SEEN_FILE: .data/seen_domains.txt
+      BATCH_FILE: .data/batch_state.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
           fetch-depth: 0
+
+      - name: Restore cached state (.data)
+        uses: actions/cache/restore@v4
+        with:
+          path: .data
+          key: realestate-state-v1-${{ github.run_id }}
+          restore-keys: |
+            realestate-state-v1-
+
+      - name: Prepare data dir
+        run: mkdir -p .data
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,9 +80,6 @@ jobs:
           set -e
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Prepare data dir
-        run: mkdir -p .data
 
       - name: Prepare tldextract cache dir
         run: mkdir -p ~/.cache/tldextract
@@ -102,18 +107,8 @@ jobs:
           set -euo pipefail
           python realestate_to_trello.py || (echo "retrying in 15s..." && sleep 15 && python realestate_to_trello.py)
 
-      - name: Commit seen_domains.txt if changed
-        run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add -A .data/seen_domains.txt
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: update .data/seen_domains.txt [skip ci]"
-          git pull --rebase --autostash
-          git push
+      - name: Save cached state (.data)
+        uses: actions/cache/save@v4
+        with:
+          path: .data
+          key: realestate-state-v1-${{ github.run_id }}
