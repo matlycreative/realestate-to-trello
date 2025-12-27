@@ -44,7 +44,8 @@ jobs:
       DAILY_LIMIT: "50"
       PUSH_INTERVAL_S: "20"
       REQUEST_DELAY_S: "1.4"
-      CITY_HOPS: "20"
+      CITY_MODE: "random"
+      CITY_HOPS: "30"
       OSM_RADIUS_M: "25000"
       BUTLER_GRACE_S: "15"
 
