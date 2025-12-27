@@ -73,7 +73,7 @@ jobs:
           mkdir -p .data
           # Create files if missing (keeps script happy on first run)
           test -f .data/seen_domains.txt || touch .data/seen_domains.txt
-          test -f .data/batch_state.txt || echo "0" > .data/batch_state.txt
+          test -f .data/batch_state.json || echo "0" > .data/batch_state.json
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -124,7 +124,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add -A .data/seen_domains.txt .data/batch_state.txt
+          git add -A .data/seen_domains.json .data/batch_state.json
 
           if git diff --cached --quiet; then
             echo "No state changes to commit."
