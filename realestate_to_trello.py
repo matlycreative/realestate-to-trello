@@ -54,7 +54,7 @@ def env_on(name, default=False):
     return bool(default)
 
 # ---------- config ----------
-DAILY_LIMIT      = env_int("DAILY_LIMIT", 50)
+DAILY_LIMIT      = env_int("DAILY_LIMIT", 31)
 PUSH_INTERVAL_S  = env_int("PUSH_INTERVAL_S", 20)
 REQUEST_DELAY_S  = env_float("REQUEST_DELAY_S", 0.8)
 SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
@@ -62,7 +62,7 @@ SEEN_FILE        = os.getenv("SEEN_FILE", "seen_domains.txt")
 # Batch rotation
 BATCH_FILE = os.getenv("BATCH_FILE", "batch_state.txt")
 BATCH_SLOTS = [
-    "m thursday 5",
+    "a friday 5",
     "m thursday",
     "a thursday",
     "m friday",
