@@ -3,8 +3,11 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
+  # +1 / 2 hours in Switzerland
     - cron: "0 2 * * 1-6" # Tue–Sat
     - cron: "0 2 * * 0"   # Sun
+    - cron: "0 14 * * 1-6" # Tue–Sat
+    - cron: "0 14 * * 0"   # Sun
 
 permissions:
   contents: write
