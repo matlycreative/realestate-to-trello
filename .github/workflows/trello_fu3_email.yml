@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   schedule:
     # 08:55 GMT+2 → 06:55 UTC
-    - cron: "55 6 * * 1-5"
+    - cron: "45 6 * * 1-5"
     # 16:55 GMT+2 → 14:55 UTC
-    - cron: "55 14 * * 1-5"
+    - cron: "45 14 * * 1-5"
 
 permissions:
   contents: read
