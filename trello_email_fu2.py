@@ -437,18 +437,14 @@ def main():
             from_name=FROM_NAME, link=chosen_link
         )
 
-        extra_ready = "There’s already a free sample live using your own footage."
-        extra_wait  = (
-            "If you’d like to see how this would look on one of your own listings, "
-            "send over 2–3 raw clips and I can cut a free sample — you can upload them [here]."
+        body = fill_template(
+        body_tpl,
+        company=company,
+        first=first,
+        from_name=FROM_NAME,
+        link=chosen_link,
         )
-
-        body = fill_with_two_extras(
-            body_tpl, company=company, first=first, from_name=FROM_NAME,
-            link=chosen_link, is_ready=ready,
-            extra_ready=extra_ready, extra_wait=extra_wait,
-        )
-
+      
         link_label = "" if ready else LINK_TEXT
 
         try:
