@@ -4,18 +4,13 @@
 FU1 — Minimal sender (Day-0 base) with URLs + markers.
 
 PLAIN TEXT ONLY
-- No HTML, no visuals
-- Reads cards from TRELLO_LIST_ID_FU1
-- Sends simple email with: Company, First (if present), URLs
-- Always includes URLs (so they stay clickable in plain text):
-    - Personal page: <PUBLIC_BASE>/p/?id=<id>
-    - Portfolio    : <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
-    - Upload       : <UPLOAD_URL>
+- Keeps your exact SUBJECT/BODY copy
+- Adds hard-debug so we can prove what happens when First is present:
+  - FORCE_TO (optional) to send ALL emails to one inbox for testing
+  - Always UTF-8 body (consistent MIME even with accents)
+  - Logs refused recipients (SMTP-level)
+  - Adds trace headers: X-Card-Id, X-Debug-First, X-Debug-Greeting
 - Keeps cache + Trello marker to avoid double sends
-
-Optional debug overrides:
-- IGNORE_SENT=1  -> ignore cache + marker and resend (use carefully)
-- MAX_SEND_PER_RUN=N -> limit sends per run
 """
 
 import os, re, time, json, html, unicodedata
@@ -39,13 +34,26 @@ def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 def clean_one_line(s: str) -> str:
-    """Critical: prevent hidden newlines breaking EmailMessage headers."""
+    """Remove CR/LF/tabs and collapse whitespace."""
     if s is None:
         return ""
     s = html.unescape(str(s))
     s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
     s = re.sub(r"\s{2,}", " ", s).strip()
     return s
+
+def clean_first_name(s: str) -> str:
+    """Normalize first name (doesn't change normal names; prevents hidden unicode junk)."""
+    s = clean_one_line(s)
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKC", s)
+    # remove zero-width + BOM
+    s = s.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "")
+    s = "".join(ch for ch in s if ch.isprintable())
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    # keep it reasonable
+    return s[:60]
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -84,6 +92,8 @@ SMTP_USE_TLS = (_get_env("SMTP_USE_TLS", "smtp_use_tls", default="1") or "").low
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
+
+# NOTE: We do NOT set a Bcc header (we deliver BCC via envelope only)
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
 PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # required
@@ -95,7 +105,11 @@ SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 IGNORE_SENT      = _env_bool("IGNORE_SENT", "0")
 
-# Email copy (single template, no branching)
+# HARD DEBUG:
+# If set, all sends go to this address (so you can compare “with First” vs “without First”)
+FORCE_TO          = clean_one_line(_get_env("FORCE_TO", default=""))
+
+# Email copy (your exact copy)
 SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up about {Company}")
 BODY_TPL    = _get_env("BODY", default=
 """Hey {FirstLine}
@@ -115,10 +129,10 @@ Best,
 )
 
 log(f"[env] LIST_ID={LIST_ID} | PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL}")
-log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | IGNORE_SENT={IGNORE_SENT}")
+log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | IGNORE_SENT={IGNORE_SENT} | FORCE_TO={FORCE_TO or '(off)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1-min/1.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1-min/1.1-proof (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -205,7 +219,7 @@ def fill(tpl: str, mapping: dict) -> str:
     return re.sub(r"\{([A-Za-z0-9_]+)\}", repl, tpl or "")
 
 # ----------------- sender -----------------
-def send_email(to_email: str, subject: str, body_text: str):
+def send_email(to_email: str, subject: str, body_text: str, *, card_id: str, first: str, greeting: str):
     from email.message import EmailMessage
     import smtplib
 
@@ -213,14 +227,24 @@ def send_email(to_email: str, subject: str, body_text: str):
     subject  = sanitize_subject(subject)
     body_pt  = (body_text or "").strip() + "\n"
 
+    # Build envelope recipients (to + bcc) WITHOUT adding Bcc header
+    to_addrs = [to_email]
+    if BCC_TO:
+        bccs = [clean_one_line(x) for x in BCC_TO.split(",") if clean_one_line(x)]
+        to_addrs.extend(bccs)
+
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = subject
-    msg.set_content(body_pt)
 
-    if BCC_TO:
-        msg["Bcc"] = BCC_TO
+    # Trace headers (helps you prove which version arrived)
+    msg["X-Card-Id"] = str(card_id)
+    msg["X-Debug-First"] = first
+    msg["X-Debug-Greeting"] = greeting
+
+    # Force UTF-8 always (so “First name present” never changes charset behavior)
+    msg.set_content(body_pt, charset="utf-8")
 
     for attempt in range(3):
         try:
@@ -230,7 +254,11 @@ def send_email(to_email: str, subject: str, body_text: str):
                 if SMTP_USE_TLS:
                     s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-                s.send_message(msg)
+
+                refused = s.send_message(msg, from_addr=FROM_EMAIL, to_addrs=to_addrs)
+                if refused:
+                    # This is a REAL SMTP-level refusal (not “spam later”)
+                    raise RuntimeError(f"SMTP refused: {refused}")
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
@@ -297,7 +325,7 @@ def main():
         fields = parse_header(desc)
 
         company = clean_one_line((fields.get("Company") or "").strip()) or clean_one_line(title)
-        first   = clean_one_line((fields.get("First") or "").strip())
+        first   = clean_first_name((fields.get("First") or "").strip())
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
 
         if not email_v:
@@ -305,32 +333,36 @@ def main():
             continue
 
         pid = choose_id(company, email_v)
-        personal_url = f"{PUBLIC_BASE}/p/?id={pid}" if PUBLIC_BASE else ""
         portfolio_url = PORTFOLIO_URL
         upload_url = UPLOAD_URL
+        personal_url = f"{PUBLIC_BASE}/p/?id={pid}" if PUBLIC_BASE else ""
 
-        first_line = (first + ",") if first else "there,"
+        # Your original greeting style: "Hey Alize," or "Hey there,"
+        greeting = f"Hey {first}," if first else "Hey there,"
 
         mapping = {
             "Company": company,
             "First": first,
-            "FirstLine": first_line,
+            "FirstLine": (first + ",") if first else "there,",
             "FromName": FROM_NAME,
             "PersonalUrl": personal_url,
             "PortfolioUrl": portfolio_url,
             "UploadUrl": upload_url,
+            "Greeting": greeting,
         }
 
         subject = fill(SUBJECT_TPL, mapping)
         body    = fill(BODY_TPL, mapping).strip()
 
-        log(f"[send] to={email_v} | company='{company}' | first='{first}' | pid={pid}")
+        target = FORCE_TO or email_v
+        log(f"[send] card='{title}' id={card_id} to={target} (orig_to={email_v}) first='{first}' greeting='{greeting}'")
+
         try:
-            send_email(email_v, subject, body)
+            send_email(target, subject, body, card_id=card_id, first=first, greeting=greeting)
             processed += 1
             log(f"[ok] Sent — '{title}'")
         except Exception as e:
-            log(f"[FAIL] Send failed for '{title}' to {email_v}: {e}")
+            log(f"[FAIL] Send failed for '{title}' to {target}: {e}")
             continue
 
         if not IGNORE_SENT:
