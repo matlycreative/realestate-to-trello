@@ -113,7 +113,7 @@ if USE_ENV_TEMPLATES:
 """Hi there,
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 2–3 raw clips [here]
+You can drop 4-5 raw clips [here]
 
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
@@ -125,7 +125,7 @@ Matthieu from Matly""")
 """Hey {first},
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 2–3 raw clips [here]
+You can drop 4-5 raw clips [here]
 
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
@@ -139,7 +139,7 @@ else:
     BODY_A = """Hi there,
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 2–3 raw clips [here]
+You can drop 4-5 raw clips [here]
 
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
@@ -150,7 +150,7 @@ Matthieu from Matly"""
     BODY_B = """Hey {first},
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 2–3 raw clips [here]
+You can drop 4-5 raw clips [here]
 
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
