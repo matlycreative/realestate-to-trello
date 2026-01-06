@@ -3,18 +3,14 @@
 """
 FU1 — Poll Trello and send one email per card.
 
-PLAIN TEXT ONLY + REPLY-OPTIMIZED COPY
-- No HTML
-- No logo
-- No card / background / borders
-- Keeps original Trello parsing (Company/First/Email/Variant/etc.)
-- Keeps caching + Trello marker to avoid resends
-- Keeps readiness check:
-    READY     -> link to personal page : <PUBLIC_BASE>/p/?id=<id>
-    NOT READY -> link to portfolio     : <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
-- With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
-- In NOT READY path, includes [here] placeholder which becomes UPLOAD_URL in plain text.
-- IMPORTANT: Plain text keeps the literal URL (so it’s clickable).
+PLAIN TEXT ONLY
+- No HTML / logo / visuals
+- Keeps Trello parsing + caching + marker
+- READY     -> <PUBLIC_BASE>/p/?id=<id>
+- NOT READY -> <PORTFOLIO_URL>
+- NOT READY includes [here] -> UPLOAD_URL
+- IMPORTANT: Plain text keeps the literal URL in-body so it stays clickable.
+- IMPORTANT: Sanitizes First/Company to prevent header failures (newlines etc.).
 """
 
 import os, re, time, json, html, unicodedata
@@ -59,7 +55,20 @@ def _norm_base(u: str) -> str:
     return u.rstrip("/")
 
 def sanitize_subject(s: str) -> str:
+    # Kill any line breaks to avoid header errors
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+
+def clean_one_line(s: str) -> str:
+    """
+    Make a field safe for use in headers/body personalization.
+    Removes CR/LF/tabs, collapses spaces, strips.
+    """
+    if not s:
+        return ""
+    s = html.unescape(str(s))
+    s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
 
 # ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
@@ -81,17 +90,14 @@ PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreati
 PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
 UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
 
-# Pointer readiness (optional)
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
-# Link control (kept for compatibility)
-# Default to showing the literal URL in plain text.
+# Keep compatibility, but default to keeping URLs visible
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "1")
-LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
-LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")  # unused in plain text
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")  # unused in plain text now, kept
+LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")       # unused, kept
 
-# Send control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
@@ -99,69 +105,68 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1/7.1-plain (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/7.2-plain (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
-# ----------------- templates -----------------
+# ----------------- templates (shorter vibe) -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up")
-    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first}")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up, {first}")
+
+    # NOTE: {extra} is intentionally in the template so the ready/wait line appears.
     BODY_A = _get_env("BODY_A", default=
-"""Hi there,
-Just bumping this in case it got buried.
+"""Hey there,
 
-We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+Just following up in case my last email got buried.
 
-Here are some examples:
+If video isn’t a priority for {Company}, no worries.
+If it is, here are a couple examples:
 {link}
 
-If {Company} has a busy pipeline right now, this could take some weight off your plate.
-Open to a quick test?
+{extra}
 
 Best,
 Matthieu from Matly""")
+
     BODY_B = _get_env("BODY_B", default=
 """Hey {first},
-Just bumping this in case it got buried.
 
-We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+Just following up in case my last email got buried.
 
-Here are some examples:
+If video isn’t a priority for {Company}, no worries.
+If it is, here are a couple examples:
 {link}
 
-If {Company} has a busy pipeline right now, this could take some weight off your plate.
-Open to a quick test?
+{extra}
 
 Best,
 Matthieu from Matly""")
 else:
     SUBJECT_A = "Quick follow-up"
-    SUBJECT_B = "Quick follow-up for {first}"
-    BODY_A = """Hi there,
-Just bumping this in case it got buried.
+    SUBJECT_B = "Quick follow-up, {first}"
+    BODY_A = """Hey there,
 
-We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+Just following up in case my last email got buried.
 
-Here are some examples:
+If video isn’t a priority for {Company}, no worries.
+If it is, here are a couple examples:
 {link}
 
-If {Company} has a busy pipeline right now, this could take some weight off your plate.
-Open to a quick test?
+{extra}
 
 Best,
 Matthieu from Matly"""
     BODY_B = """Hey {first},
-Just bumping this in case it got buried.
 
-We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+Just following up in case my last email got buried.
 
-Here are some examples:
+If video isn’t a priority for {Company}, no worries.
+If it is, here are a couple examples:
 {link}
 
-If {Company} has a busy pipeline right now, this could take some weight off your plate.
-Open to a quick test?
+{extra}
 
 Best,
 Matthieu from Matly"""
@@ -187,7 +192,8 @@ def parse_header(desc: str) -> dict:
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
                         val = nxt.strip()
                         i += 1
-                out[lab] = val
+                # hard-stop at first line (defensive)
+                out[lab] = (val.splitlines()[0] if val else "").strip()
                 break
         i += 1
     return out
@@ -242,7 +248,6 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
 
 # ----------------- readiness -----------------
 def _pointer_ready(pid: str) -> bool:
-    """Pointer must exist, be fresh, AND filename must include 'sample'."""
     base = MATLY_POINTER_BASE
     if not base:
         return False
@@ -269,7 +274,6 @@ def _pointer_ready(pid: str) -> bool:
         return False
 
 def _api_ready(pid: str) -> bool:
-    """Fallback: /api/sample must 200 with a playable src."""
     check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
     try:
         r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
@@ -279,12 +283,7 @@ def _api_ready(pid: str) -> bool:
         if not isinstance(data, dict) or str(data.get("error","")).strip():
             return False
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
-        if not src:
-            return False
-        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
-        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
-        return False
+        return bool(src)
     except Exception:
         return False
 
@@ -310,47 +309,20 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str,
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
-def fill_template_skip_extra(tpl: str, *, company: str, first: str,
-                             from_name: str, link: str) -> str:
-    def repl(m):
-        key = m.group(1).strip().lower()
-        if key == "company":   return company or ""
-        if key == "first":     return first or ""
-        if key == "from_name": return from_name or ""
-        if key == "link":      return link or ""
-        return m.group(0)
-    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
-
-EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
-
-def fill_with_two_extras(
-    tpl: str, *, company: str, first: str, from_name: str,
-    link: str, is_ready: bool, extra_ready: str, extra_wait: str
-) -> str:
-    base = fill_template_skip_extra(
-        tpl, company=company, first=first, from_name=from_name, link=link
-    )
-    if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
-    else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
-    final = EXTRA_TOKEN.sub("", step2)
-    final = re.sub(r"\n{3,}", "\n\n", final).strip()
-    return final
-
 # ----------------- sender (PLAIN TEXT ONLY) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
                link_url: str, link_text: str, link_color: str):
     """
     Plain-text only.
 
-    Fix: keep literal URL in the email body (do NOT replace it with "See examples"/"our portfolio"),
-    so clients can auto-link it and it stays clickable.
+    Critical:
+    - Keep literal URLs in the body (clickable).
+    - Expand [here] -> UPLOAD_URL.
     """
     from email.message import EmailMessage
     import smtplib
+
+    to_email = clean_one_line(to_email)
 
     full = (link_url or "").strip()
     if full and not re.match(r"^https?://", full, flags=re.I):
@@ -358,14 +330,12 @@ def send_email(to_email: str, subject: str, body_text: str, *,
 
     body_pt = (body_text or "").strip()
 
-    # Expand [here] -> UPLOAD_URL (plain-text; clients auto-link it)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
-    # If you ever want to force-append the URL instead of relying on {link}, keep this:
-    if INCLUDE_PLAIN_URL and full:
-        if full not in body_pt:
-            body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+    # Safety append (in case someone removes {link} from templates)
+    if INCLUDE_PLAIN_URL and full and (full not in body_pt):
+        body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
@@ -440,8 +410,8 @@ def main():
         desc   = c.get("desc") or ""
         fields = parse_header(desc)
 
-        company = (fields.get("Company") or "").strip() or title
-        first   = (fields.get("First")   or "").strip()
+        company = clean_one_line((fields.get("Company") or "").strip()) or clean_one_line(title)
+        first   = clean_one_line((fields.get("First") or "").strip())
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
 
         if not email_v:
@@ -456,39 +426,24 @@ def main():
         pid   = choose_id(company, email_v)
         ready = is_sample_ready(pid)
         chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
-        log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
+        log(f"[decide] id={pid} ready={ready} -> link={chosen_link} first='{first}'")
 
         use_b    = bool(first)
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        subject = fill_template(
-            subj_tpl, company=company, first=first,
-            from_name=FROM_NAME, link=chosen_link
-        )
+        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
-        extra_ready = "There’s also a free sample made with your content."
-        extra_wait  = (
-            "If you can send over 2–3 raw clips, I can cut a free sample so you can see how it "
-            "would look on one of your own listings — you can upload them [here]."
-        )
+        extra_ready = "PS: I also put together a quick sample using your content."
+        extra_wait  = "If you send 2–3 raw clips, I can cut a free sample — upload them [here]."
+        extra = extra_ready if ready else extra_wait
 
-        body = fill_with_two_extras(
-            body_tpl, company=company, first=first, from_name=FROM_NAME,
-            link=chosen_link, is_ready=ready,
-            extra_ready=extra_ready, extra_wait=extra_wait,
-        )
-
-        # Label is irrelevant now for plain text (URL stays as-is), kept for compatibility.
-        link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
+        body = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link, extra=extra).strip()
 
         try:
-            send_email(
-                email_v, subject, body,
-                link_url=chosen_link, link_text=link_label, link_color=LINK_COLOR
-            )
+            send_email(email_v, subject, body, link_url=chosen_link, link_text=LINK_TEXT, link_color=LINK_COLOR)
             processed += 1
-            log(f"Sent to {email_v} — '{title}' — ready={ready} link={chosen_link}")
+            log(f"Sent to {email_v} — '{title}' — ready={ready}")
         except Exception as e:
             log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
