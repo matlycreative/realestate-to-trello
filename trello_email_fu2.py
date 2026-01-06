@@ -71,7 +71,10 @@ SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
 SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
 SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
-SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
+
+# ✅ FIX: use FROM_EMAIL value as the default (not the literal string "FROM_EMAIL")
+SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", default=FROM_EMAIL)
+
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
@@ -94,6 +97,7 @@ SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu2.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
+log(f"[env] SMTP_HOST={SMTP_HOST} SMTP_PORT={SMTP_PORT} SMTP_USE_TLS={SMTP_USE_TLS} SMTP_USER={SMTP_USER}")
 
 # ----------------- HTTP -----------------
 UA = f"TrelloEmailer-FU2/6.1 (+{FROM_EMAIL or 'no-email'})"
@@ -228,7 +232,6 @@ def mark_sent(card_id: str, marker: str, extra: str = ""):
 
 # ----------------- readiness -----------------
 def _pointer_ready(pid: str) -> bool:
-    """Pointer must exist, be fresh, AND filename must include 'sample'."""
     base = MATLY_POINTER_BASE
     if not base:
         return False
@@ -255,7 +258,6 @@ def _pointer_ready(pid: str) -> bool:
         return False
 
 def _api_ready(pid: str) -> bool:
-    """Fallback: /api/sample must 200 with a playable src."""
     check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
     try:
         r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
@@ -336,10 +338,7 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     from email.message import EmailMessage
     import smtplib
 
-    # Plain text body only (do NOT inject/append any extra links)
     body_pt = body_text or ""
-
-    # Expand [here] → UPLOAD_URL (clickable in plain text clients)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
@@ -363,7 +362,7 @@ def send_email(to_email: str, subject: str, body_text: str, *,
                 s.send_message(msg)
             return
         except Exception as e:
-            log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
+            log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {repr(e)}")
             if attempt == 2:
                 raise
             time.sleep(1.0 * (attempt + 1))
@@ -406,7 +405,13 @@ def main():
         if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
             break
         card_id = c.get("id"); title = c.get("name","(no title)")
-        if not card_id or card_id in sent_cache:
+
+        if not card_id:
+            continue
+
+        # ✅ visibility only (no behavior change)
+        if card_id in sent_cache:
+            log(f"Skip (cache): {title} ({card_id})")
             continue
 
         desc = c.get("desc") or ""
@@ -438,13 +443,13 @@ def main():
         )
 
         body = fill_template(
-        body_tpl,
-        company=company,
-        first=first,
-        from_name=FROM_NAME,
-        link=chosen_link,
+            body_tpl,
+            company=company,
+            first=first,
+            from_name=FROM_NAME,
+            link=chosen_link,
         )
-      
+
         link_label = "" if ready else LINK_TEXT
 
         try:
@@ -455,7 +460,7 @@ def main():
             processed += 1
             log(f"Sent to {email_v} — '{title}' — ready={ready} link={chosen_link}")
         except Exception as e:
-            log(f"Send failed for '{title}' to {email_v}: {e}")
+            log(f"Send failed for '{title}' to {email_v}: {repr(e)}")
             continue
 
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
