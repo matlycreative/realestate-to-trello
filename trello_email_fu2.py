@@ -330,28 +330,18 @@ def fill_with_two_extras(
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
-# ----------------- sender (NO DESIGN + CLICKABLE LINKS) -----------------
+# ----------------- sender (NO DESIGN + ONLY TEMPLATE LINKS) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
                link_url: str, link_text: str, link_color: str):
     from email.message import EmailMessage
     import smtplib
 
-    # Plain text body only
+    # Plain text body only (do NOT inject/append any extra links)
     body_pt = body_text or ""
 
-    # Expand [here] → UPLOAD_URL
+    # Expand [here] → UPLOAD_URL (clickable in plain text clients)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
-
-    # Ensure link has scheme and is present as a RAW URL (clickable)
-    full = (link_url or "").strip()
-    if full and not re.match(r"^https?://", full, flags=re.I):
-        full = "https://" + full
-
-    # If the template already included the link, keep it as-is (raw URL).
-    # If it didn't for any reason, append it.
-    if full and full not in body_pt:
-        body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
@@ -447,7 +437,6 @@ def main():
             from_name=FROM_NAME, link=chosen_link
         )
 
-        # FU2 wording:
         extra_ready = "There’s already a free sample live using your own footage."
         extra_wait  = (
             "If you’d like to see how this would look on one of your own listings, "
