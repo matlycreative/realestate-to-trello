@@ -14,6 +14,7 @@ PLAIN TEXT ONLY + REPLY-OPTIMIZED COPY
     NOT READY -> link to portfolio     : <PORTFOLIO_URL> (defaults to <PUBLIC_BASE>/portfolio)
 - With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
 - In NOT READY path, includes [here] placeholder which becomes UPLOAD_URL in plain text.
+- IMPORTANT: Plain text keeps the literal URL (so it’s clickable).
 """
 
 import os, re, time, json, html, unicodedata
@@ -84,10 +85,11 @@ UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
-# Link look / control (kept for compatibility)
-INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+# Link control (kept for compatibility)
+# Default to showing the literal URL in plain text.
+INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "1")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
-LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")  # unused in plain text, kept for env compatibility
+LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")  # unused in plain text
 
 # Send control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
@@ -97,7 +99,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1/7.0-plain (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/7.1-plain (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -112,7 +114,7 @@ Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Examples again:
+Here are some examples:
 {link}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
@@ -126,7 +128,7 @@ Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Examples again:
+Here are some examples:
 {link}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
@@ -142,7 +144,7 @@ Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Examples again:
+Here are some examples:
 {link}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
@@ -155,7 +157,7 @@ Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Examples again:
+Here are some examples:
 {link}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
@@ -335,7 +337,6 @@ def fill_with_two_extras(
         step1 = EXTRA_TOKEN.sub("",         base, count=1)
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
-    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
     final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
 
@@ -343,39 +344,34 @@ def fill_with_two_extras(
 def send_email(to_email: str, subject: str, body_text: str, *,
                link_url: str, link_text: str, link_color: str):
     """
-    Plain-text only. Signature args are kept for compatibility with your pipeline.
+    Plain-text only.
+
+    Fix: keep literal URL in the email body (do NOT replace it with "See examples"/"our portfolio"),
+    so clients can auto-link it and it stays clickable.
     """
     from email.message import EmailMessage
     import smtplib
 
-    label = (link_text or "See examples").strip()
-
     full = (link_url or "").strip()
     if full and not re.match(r"^https?://", full, flags=re.I):
         full = "https://" + full
-    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
 
     body_pt = (body_text or "").strip()
 
-    # Expand [here] -> UPLOAD_URL (plain-text; most clients auto-link it)
+    # Expand [here] -> UPLOAD_URL (plain-text; clients auto-link it)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
-    # Optional: replace displayed URL with label, or append URL
-    if full:
-        if not INCLUDE_PLAIN_URL:
-            for pat in (full, bare):
-                if pat:
-                    body_pt = body_pt.replace(pat, label)
-        else:
-            if full not in body_pt and bare not in body_pt:
-                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+    # If you ever want to force-append the URL instead of relying on {link}, keep this:
+    if INCLUDE_PLAIN_URL and full:
+        if full not in body_pt:
+            body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt + "\n")  # final newline helps some clients
+    msg.set_content(body_pt + "\n")
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
@@ -471,7 +467,6 @@ def main():
             from_name=FROM_NAME, link=chosen_link
         )
 
-        # FU1 wording:
         extra_ready = "There’s also a free sample made with your content."
         extra_wait  = (
             "If you can send over 2–3 raw clips, I can cut a free sample so you can see how it "
@@ -484,6 +479,7 @@ def main():
             extra_ready=extra_ready, extra_wait=extra_wait,
         )
 
+        # Label is irrelevant now for plain text (URL stays as-is), kept for compatibility.
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
         try:
