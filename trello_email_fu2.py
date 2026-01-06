@@ -317,11 +317,9 @@ def fill_with_two_extras(
         tpl, company=company, first=first, from_name=from_name, link=link
     )
     if is_ready:
-        # First {extra} -> extra_ready, second removed
         step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
         step2 = EXTRA_TOKEN.sub("",         step1, count=1)
     else:
-        # First {extra} removed, second -> extra_wait
         step1 = EXTRA_TOKEN.sub("",         base, count=1)
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
@@ -332,213 +330,38 @@ def fill_with_two_extras(
 def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
-def text_to_html(text: str) -> str:
-    """
-    Turn plain text into paragraphs/br with Matly dark style.
-    Returns inner HTML (card wrapper is added later).
-    """
-    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-
-    # Bigger + bolder body text (match Day-0/FU1)
-    p_style = (
-        "margin:0 0 16px 0;"
-        "color:#f5f5f7 !important;"
-        "font-size:16px !important;"
-        "line-height:1.8;"
-        "font-weight:400;"
-    )
-
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
-    return esc
-
-def wrap_html(inner: str) -> str:
-    """
-    Wrap inner HTML in a centered Matly-style dark card,
-    with a colored header box (logo) at the top and a plain bar at the bottom.
-    (Identical visual to Day-0 & FU1, with clickable top logo.)
-    """
-    inner = inner or ""
-    wrapper_style = (
-        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
-        "color:#f5f5f7 !important;"
-        "font-size:16px;"
-        "line-height:1.8;"
-        "font-weight:400;"
-        "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
-    )
-
-    bar_color_top = "#292929"
-    bar_color_bottom = "#292929"
-
-    header_logo_url = (
-        "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    )
-
-    return f"""
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FCFCFC;padding:16px 12px;">
-  <tr>
-    <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:720px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
-        <!-- Top colored box with logo -->
-        <tr>
-          <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
-            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-              <img src="{html.escape(header_logo_url)}"
-                   alt="Matly Creative"
-                   style="max-height:90px;display:inline-block;border:0;">
-            </a>
-          </td>
-        </tr>
-        <!-- Main content -->
-        <tr>
-          <td style="padding:24px 16px 24px 16px;">
-            <div style="{wrapper_style}">
-              {inner}
-            </div>
-          </td>
-        </tr>
-        <!-- Bottom bar (no logo) -->
-        <tr>
-          <td style="padding:0;background:{bar_color_bottom};height:24px;line-height:0;font-size:0;">&nbsp;</td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-""".strip()
-
-# ----------------- signature (no 'Email me' line) -----------------
-SIGNATURE_LOGO_URL    = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "100"))
-SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
-SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
-
-def signature_html(logo_cid: str | None) -> str:
-    # Logo URL used for the signature
-    logo_url = SIGNATURE_LOGO_URL or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    if not logo_url:
-        return ""
-
-    # Use a table row so email clients respect left alignment (same as Day-0/FU1),
-    # with clickable logo to matlycreative.com
-    return (
-        """
-<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
-  <tr>
-    <td align="left" style="padding:0;">
-      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-        <img src="%s"
-             alt="Matly Creative"
-             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
-      </a>
-    </td>
-  </tr>
-</table>
-""" % html.escape(logo_url)
-    )
-
-# ----------------- sender -----------------
+# ----------------- sender (NO DESIGN + CLICKABLE LINKS) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
                link_url: str, link_text: str, link_color: str):
     from email.message import EmailMessage
     import smtplib
 
-    label = (link_text or "").strip()
-    if link_url and not re.match(r"^https?://", link_url, flags=re.I):
-        link_url = "https://" + link_url
+    # Plain text body only
+    body_pt = body_text or ""
 
-    full = link_url
-    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
-    esc_full = html.escape(full, quote=True) if full else ""
-    esc_bare = html.escape(bare, quote=True) if full else ""
-
-    # Plain text: also expand [here] → UPLOAD_URL
-    body_pt = body_text
+    # Expand [here] → UPLOAD_URL
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
-    if full:
-        if not INCLUDE_PLAIN_URL:
-            for pat in (full, bare):
-                if pat:
-                    body_pt = body_pt.replace(pat, label)
-        else:
-            if full not in body_pt and bare not in body_pt:
-                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML with explicit markers
-    MARK = "__LINK_MARKER__"
-    body_marked = body_text
-    for pat in (full, bare):
-        if pat:
-            body_marked = body_marked.replace(pat, MARK)
+    # Ensure link has scheme and is present as a RAW URL (clickable)
+    full = (link_url or "").strip()
+    if full and not re.match(r"^https?://", full, flags=re.I):
+        full = "https://" + full
 
-    html_core_inner = text_to_html(body_marked)
-    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
-    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
+    # If the template already included the link, keep it as-is (raw URL).
+    # If it didn't for any reason, append it.
+    if full and full not in body_pt:
+        body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # Insert main anchor
-    if full:
-        style_attr = (
-            f' style="color:{html.escape(link_color or LINK_COLOR)};'
-            f'text-decoration:underline;"'
-        )
-        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        html_core_inner = (
-            html_core_inner.replace(MARK, anchor)
-            if MARK in html_core_inner
-            else (html_core_inner + f'<p style="margin:0 0 14px 0;">{anchor}</p>')
-        )
-
-    # Convert [here] into clickable upload link
-    if "[here]" in html_core_inner:
-        upload_anchor = (
-            f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
-            f'style="color:{html.escape(link_color or LINK_COLOR)};'
-            f'text-decoration:underline;">here</a>'
-        )
-        html_core_inner = html_core_inner.replace("[here]", upload_anchor)
-
-    # Signature inside the content
-    logo_cid = "siglogo@local"
-    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE else None)
-
-    # Wrap in Matly card (top logo + bottom bar)
-    html_full = wrap_html(html_core_inner + sig_inner)
-
-    # ----- Build message -----
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html")
+
     if BCC_TO:
         msg["Bcc"] = BCC_TO
 
-    # Inline logo embed (if configured)
-    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
-        try:
-            r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
-            r.raise_for_status()
-            data = r.content
-            ctype = (
-                r.headers.get("Content-Type")
-                or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0]
-                or "image/png"
-            )
-            if not ctype.startswith("image/"):
-                ctype = "image/png"
-            maintype, subtype = ctype.split("/", 1)
-            msg.get_payload()[-1].add_related(
-                data, maintype=maintype, subtype=subtype, cid="siglogo@local"
-            )
-        except Exception as e:
-            log(f"Inline logo fetch failed, sending without embed: {e}")
-
-    # ----- Send via SMTP -----
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -626,7 +449,6 @@ def main():
 
         # FU2 wording:
         extra_ready = "There’s already a free sample live using your own footage."
-        # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
         extra_wait  = (
             "If you’d like to see how this would look on one of your own listings, "
             "send over 2–3 raw clips and I can cut a free sample — you can upload them [here]."
