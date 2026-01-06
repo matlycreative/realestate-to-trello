@@ -100,14 +100,15 @@ SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up — {Company}")
 BODY_TPL    = _get_env("BODY", default=
 """Hey {FirstLine}
 
-Just a quick follow-up.
+Just bumping this in case it got buried.
 
-Company: {Company}
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Links:
-Personal page: {PersonalUrl}
-Portfolio: {PortfolioUrl}
-Upload: {UploadUrl}
+Examples again:
+{link}
+
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
 
 Best,
 {FromName}"""
