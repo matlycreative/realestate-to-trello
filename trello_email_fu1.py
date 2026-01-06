@@ -307,25 +307,37 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str,
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
 # ----------------- sender (PLAIN TEXT ONLY) -----------------
-def send_email(to_email: str, subject: str, body_text: str, *,
-               link_url: str, link_text: str, link_color: str):
+def send_email(to_email: str, subject: str, body_text: str):
+    """
+    Plain text only. URLs are clickable by leaving them as raw URLs.
+    [here] is replaced with UPLOAD_URL (raw URL).
+
+    FIX:
+    - Normalize body to safe SMTP-friendly plain text
+    - Remove weird trailing whitespace / mixed newlines that can break sending
+    """
     from email.message import EmailMessage
     import smtplib
 
     body_pt = (body_text or "")
 
-    # Expand [here] → UPLOAD_URL if your template contains it (we do NOT add it)
+    # Normalize newlines (important when BODY_B comes from env/templates)
+    body_pt = body_pt.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Replace token with raw URL
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
-    # Keep raw URLs so they're clickable in plain text.
-    # (No masking to "See examples" anymore.)
+    # Strip trailing whitespace on each line + trim the whole message
+    body_pt = "\n".join(line.rstrip() for line in body_pt.split("\n")).strip() + "\n"
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
+
+    # Explicit charset avoids edge cases on some SMTP servers
+    msg.set_content(body_pt, subtype="plain", charset="utf-8")
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
