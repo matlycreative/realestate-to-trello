@@ -96,7 +96,7 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 IGNORE_SENT      = _env_bool("IGNORE_SENT", "0")
 
 # Email copy (single template, no branching)
-SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up — {Company}")
+SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up about {Company}")
 BODY_TPL    = _get_env("BODY", default=
 """Hey {FirstLine}
 
