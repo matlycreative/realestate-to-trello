@@ -84,7 +84,9 @@ MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
 # Link look (kept for compatibility; not used for styling anymore)
-INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+# IMPORTANT: Force raw URLs so they remain clickable in plain text.
+INCLUDE_PLAIN_URL = True
+
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
 
@@ -276,7 +278,7 @@ def _api_ready(pid: str) -> bool:
         if not src:
             return False
         if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
+        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src, re.I): return True
         if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
         return False
     except Exception:
@@ -310,29 +312,14 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     from email.message import EmailMessage
     import smtplib
 
-    # Plain text
     body_pt = (body_text or "")
 
     # Expand [here] → UPLOAD_URL if your template contains it (we do NOT add it)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
-    # Optional: replace raw URLs with label in plain text (kept from your original behavior)
-    full = (link_url or "").strip()
-    if full and not re.match(r"^https?://", full, flags=re.I):
-        full = "https://" + full
-    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
-
-    label = (link_text or "See examples").strip()
-
-    if full:
-        if not INCLUDE_PLAIN_URL:
-            for pat in (full, bare):
-                if pat:
-                    body_pt = body_pt.replace(pat, label)
-        else:
-            if full not in body_pt and bare not in body_pt:
-                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+    # Keep raw URLs so they're clickable in plain text.
+    # (No masking to "See examples" anymore.)
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
