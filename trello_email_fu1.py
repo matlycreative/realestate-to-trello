@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FU1 — Minimal sender (Day-0 base) with URLs + markers.
+FU1 — Minimal sender (Day-0 base) with URLs + markers + CLICKABLE "Portfolio".
 
-PLAIN TEXT ONLY
-- Keeps your exact SUBJECT/BODY copy
-- Adds hard-debug so we can prove what happens when First is present:
-  - FORCE_TO (optional) to send ALL emails to one inbox for testing
-  - Always UTF-8 body (consistent MIME even with accents)
-  - Logs refused recipients (SMTP-level)
-  - Adds trace headers: X-Card-Id, X-Debug-First, X-Debug-Greeting
-- Keeps cache + Trello marker to avoid double sends
+What you asked:
+- In the email body, under "Here are some exemples:", show the word "Portfolio"
+  and make it clickable to your portfolio URL (hidden URL).
+- Keep everything else: markers/cache, First name, same text, UTF-8 safety.
+
+Implementation:
+- Sends multipart/alternative:
+  - text/plain: includes the literal URL (deliverability + fallback)
+  - text/html : shows clickable "Portfolio" pointing to PORTFOLIO_URL
 """
 
 import os, re, time, json, html, unicodedata
@@ -43,16 +44,14 @@ def clean_one_line(s: str) -> str:
     return s
 
 def clean_first_name(s: str) -> str:
-    """Normalize first name (doesn't change normal names; prevents hidden unicode junk)."""
+    """Normalize first name and remove weird invisible chars."""
     s = clean_one_line(s)
     if not s:
         return ""
     s = unicodedata.normalize("NFKC", s)
-    # remove zero-width + BOM
     s = s.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "")
     s = "".join(ch for ch in s if ch.isprintable())
     s = re.sub(r"\s{2,}", " ", s).strip()
-    # keep it reasonable
     return s[:60]
 
 def _safe_id_from_email(email: str) -> str:
@@ -78,6 +77,14 @@ def _norm_base(u: str) -> str:
         u = "https://" + u
     return u.rstrip("/")
 
+def _ensure_http(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, flags=re.I):
+        url = "https://" + url
+    return url
+
 # ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
@@ -93,20 +100,19 @@ SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_passwor
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
 
-# NOTE: We do NOT set a Bcc header (we deliver BCC via envelope only)
+# NOTE: we do not add a "Bcc:" header; we deliver BCC via envelope only
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
 PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # required
-PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
-UPLOAD_URL    = _get_env("UPLOAD_URL", default=(PUBLIC_BASE + "/upload") if PUBLIC_BASE else "https://matlycreative.com/upload").rstrip("/")
+PORTFOLIO_URL = _ensure_http(_norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio"))
+UPLOAD_URL    = _ensure_http(_get_env("UPLOAD_URL", default=(PUBLIC_BASE + "/upload") if PUBLIC_BASE else "https://matlycreative.com/upload").rstrip("/"))
 
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 IGNORE_SENT      = _env_bool("IGNORE_SENT", "0")
 
-# HARD DEBUG:
-# If set, all sends go to this address (so you can compare “with First” vs “without First”)
+# Optional: send all to one inbox for testing
 FORCE_TO          = clean_one_line(_get_env("FORCE_TO", default=""))
 
 # Email copy (your exact copy)
@@ -119,7 +125,7 @@ Just bumping this in case it got buried.
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
 Here are some exemples:
-
+{PortfolioLine}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
 Open to a quick test?
@@ -132,7 +138,7 @@ log(f"[env] LIST_ID={LIST_ID} | PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTF
 log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | IGNORE_SENT={IGNORE_SENT} | FORCE_TO={FORCE_TO or '(off)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1-min/1.1-proof (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1-min/1.2-portfolio-link (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -218,16 +224,30 @@ def fill(tpl: str, mapping: dict) -> str:
         return str(mapping.get(k, m.group(0)))
     return re.sub(r"\{([A-Za-z0-9_]+)\}", repl, tpl or "")
 
+# ----------------- HTML helpers -----------------
+def text_to_html(text: str) -> str:
+    """
+    Very simple safe conversion: escapes HTML, keeps line breaks.
+    """
+    esc = html.escape(text or "")
+    esc = esc.replace("\r\n", "\n").replace("\r", "\n")
+    parts = esc.split("\n\n")
+    out = []
+    for p in parts:
+        out.append("<p style=\"margin:0 0 14px 0; font-size:16px; line-height:1.6;\">"
+                   + p.replace("\n", "<br>") + "</p>")
+    return "\n".join(out)
+
 # ----------------- sender -----------------
-def send_email(to_email: str, subject: str, body_text: str, *, card_id: str, first: str, greeting: str):
+def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html: str, *,
+               card_id: str, first: str, greeting: str):
     from email.message import EmailMessage
     import smtplib
 
     to_email = clean_one_line(to_email)
     subject  = sanitize_subject(subject)
-    body_pt  = (body_text or "").strip() + "\n"
 
-    # Build envelope recipients (to + bcc) WITHOUT adding Bcc header
+    # Envelope recipients (to + bcc) WITHOUT Bcc header
     to_addrs = [to_email]
     if BCC_TO:
         bccs = [clean_one_line(x) for x in BCC_TO.split(",") if clean_one_line(x)]
@@ -238,13 +258,16 @@ def send_email(to_email: str, subject: str, body_text: str, *, card_id: str, fir
     msg["To"] = to_email
     msg["Subject"] = subject
 
-    # Trace headers (helps you prove which version arrived)
+    # Trace headers
     msg["X-Card-Id"] = str(card_id)
     msg["X-Debug-First"] = first
     msg["X-Debug-Greeting"] = greeting
 
-    # Force UTF-8 always (so “First name present” never changes charset behavior)
-    msg.set_content(body_pt, charset="utf-8")
+    # Plain text part
+    msg.set_content((body_text_plain or "").strip() + "\n", charset="utf-8")
+
+    # HTML part
+    msg.add_alternative(body_text_html, subtype="html", charset="utf-8")
 
     for attempt in range(3):
         try:
@@ -254,10 +277,8 @@ def send_email(to_email: str, subject: str, body_text: str, *, card_id: str, fir
                 if SMTP_USE_TLS:
                     s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-
                 refused = s.send_message(msg, from_addr=FROM_EMAIL, to_addrs=to_addrs)
                 if refused:
-                    # This is a REAL SMTP-level refusal (not “spam later”)
                     raise RuntimeError(f"SMTP refused: {refused}")
             return
         except Exception as e:
@@ -296,7 +317,6 @@ def main():
         raise SystemExit("Missing env: " + ", ".join(missing))
 
     sent_cache = load_sent_cache()
-
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
         log("No cards found or Trello error.")
@@ -333,14 +353,19 @@ def main():
             continue
 
         pid = choose_id(company, email_v)
+        personal_url  = f"{PUBLIC_BASE}/p/?id={pid}" if PUBLIC_BASE else ""
         portfolio_url = PORTFOLIO_URL
-        upload_url = UPLOAD_URL
-        personal_url = f"{PUBLIC_BASE}/p/?id={pid}" if PUBLIC_BASE else ""
+        upload_url    = UPLOAD_URL
 
-        # Your original greeting style: "Hey Alize," or "Hey there,"
         greeting = f"Hey {first}," if first else "Hey there,"
 
-        mapping = {
+        # Plain-text portfolio line MUST contain the literal URL to stay clickable
+        portfolio_line_plain = f"Portfolio: {portfolio_url}"
+
+        # HTML portfolio line: word "Portfolio" is clickable (hidden URL)
+        portfolio_line_html = f'<a href="{html.escape(portfolio_url, quote=True)}" style="text-decoration:underline; color:#111;">Portfolio</a>'
+
+        mapping_plain = {
             "Company": company,
             "First": first,
             "FirstLine": (first + ",") if first else "there,",
@@ -348,17 +373,34 @@ def main():
             "PersonalUrl": personal_url,
             "PortfolioUrl": portfolio_url,
             "UploadUrl": upload_url,
-            "Greeting": greeting,
+            "PortfolioLine": portfolio_line_plain,
         }
 
-        subject = fill(SUBJECT_TPL, mapping)
-        body    = fill(BODY_TPL, mapping).strip()
+        # For HTML, we keep the same copy but replace {PortfolioLine} with the clickable word
+        mapping_html = dict(mapping_plain)
+        mapping_html["PortfolioLine"] = "Portfolio: " + portfolio_line_html
+
+        subject = fill(SUBJECT_TPL, mapping_plain)
+
+        body_plain = fill(BODY_TPL, mapping_plain).strip()
+
+        # Build HTML from the “same” copy (but with clickable Portfolio)
+        body_html_text = fill(BODY_TPL, mapping_html).strip()
+        body_html = (
+            "<html><body style=\"font-family:Arial,Helvetica,sans-serif; color:#111;\">"
+            + text_to_html(body_html_text)
+            + "</body></html>"
+        )
 
         target = FORCE_TO or email_v
-        log(f"[send] card='{title}' id={card_id} to={target} (orig_to={email_v}) first='{first}' greeting='{greeting}'")
+        log(f"[send] card='{title}' id={card_id} to={target} (orig_to={email_v}) first='{first}' greeting='{greeting}' pid={pid}")
 
         try:
-            send_email(target, subject, body, card_id=card_id, first=first, greeting=greeting)
+            send_email(
+                target, subject,
+                body_plain, body_html,
+                card_id=card_id, first=first, greeting=greeting
+            )
             processed += 1
             log(f"[ok] Sent — '{title}'")
         except Exception as e:
