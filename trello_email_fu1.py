@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FU1 — Poll Trello and send one email per card (Day-0 visual + behavior).
+FU1 — Poll Trello and send one email per card (PLAIN TEXT ONLY).
 
-STRICT RULES (match Day-0):
-- Personalized ID = Company slug (fallback email-safe).
-- READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
-- NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
-- With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
-- Add a clickable [here] link in NOT READY path to UPLOAD_URL (default https://matlycreative.com/upload/).
-- No "Email me" contact line; no hidden overrides in send_email().
+Design removed:
+- No HTML
+- No logo
+- No card
+- No images
+- No styled links
 
-Defaults (overridable via env):
-  FROM_NAME=Matthieu from Matly
-  FROM_EMAIL=matthieu@matlycreative.com
-  LINK_TEXT=See examples
-  LINK_COLOR=#858585   (same look as Day-0)
+IMPORTANT:
+- SUBJECT/BODY text is unchanged.
+- Behavior & logic matches your original FU1 (Trello parsing, readiness, links, cache, markers).
 """
 
-import os, re, time, json, html, unicodedata, mimetypes
+import os, re, time, json, html, unicodedata
 from datetime import datetime, timezone, timedelta
-from typing import Tuple
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -60,6 +56,9 @@ def _norm_base(u: str) -> str:
         u = "https://" + u
     return u.rstrip("/")
 
+def sanitize_subject(s: str) -> str:
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+
 # ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
@@ -84,7 +83,7 @@ UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
-# Link look (match Day-0 visuals)
+# Link look (kept for compatibility; not used for styling anymore)
 INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
 LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
 LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
@@ -97,11 +96,11 @@ MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1/6.1 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1/7.0 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
-# ----------------- templates -----------------
+# ----------------- templates (UNCHANGED) -----------------
 USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
 if USE_ENV_TEMPLATES:
     SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up")
@@ -305,166 +304,27 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str,
         return m.group(0)
     return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
-def fill_template_skip_extra(tpl: str, *, company: str, first: str,
-                             from_name: str, link: str) -> str:
-    def repl(m):
-        key = m.group(1).strip().lower()
-        if key == "company":   return company or ""
-        if key == "first":     return first or ""
-        if key == "from_name": return from_name or ""
-        if key == "link":      return link or ""
-        return m.group(0)
-    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
-
-EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
-
-def fill_with_two_extras(
-    tpl: str, *, company: str, first: str, from_name: str,
-    link: str, is_ready: bool, extra_ready: str, extra_wait: str
-) -> str:
-    base = fill_template_skip_extra(
-        tpl, company=company, first=first, from_name=from_name, link=link
-    )
-    if is_ready:
-        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
-        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
-    else:
-        step1 = EXTRA_TOKEN.sub("",         base, count=1)
-        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
-    final = EXTRA_TOKEN.sub("", step2)
-    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
-    final = re.sub(r"\n{3,}", "\n\n", final).strip()
-    return final
-
-def sanitize_subject(s: str) -> str:
-    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
-
-def text_to_html(text: str) -> str:
-    """
-    Turn plain text into paragraphs/br with Matly dark style.
-    Returns inner HTML (card wrapper is added later).
-    """
-    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-
-    # Bigger + bolder body text (match Day-0)
-    p_style = (
-        "margin:0 0 16px 0;"
-        "color:#f5f5f7 !important;"
-        "font-size:16px !important;"
-        "line-height:1.8;"
-        "font-weight:400;"
-    )
-
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
-    return esc
-
-def wrap_html(inner: str) -> str:
-    """
-    Wrap inner HTML in a centered Matly-style dark card,
-    with a colored header box (logo) at the top and a plain bar at the bottom.
-    (Identical visual to Day-0.)
-    """
-    inner = inner or ""
-    wrapper_style = (
-        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
-        "color:#f5f5f7 !important;"
-        "font-size:16px;"
-        "line-height:1.8;"
-        "font-weight:400;"
-        "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
-    )
-
-    bar_color_top = "#292929"
-    bar_color_bottom = "#292929"
-
-    header_logo_url = (
-        "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    )
-
-    return f"""
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FCFCFC;padding:16px 12px;">
-  <tr>
-    <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:720px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
-        <!-- Top colored box with logo -->
-        <tr>
-          <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
-            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-              <img src="{html.escape(header_logo_url)}"
-                   alt="Matly Creative"
-                   style="max-height:90px;display:inline-block;border:0;">
-            </a>
-          </td>
-        </tr>
-        <!-- Main content -->
-        <tr>
-          <td style="padding:24px 16px 24px 16px;">
-            <div style="{wrapper_style}">
-              {inner}
-            </div>
-          </td>
-        </tr>
-        <!-- Bottom bar (no logo) -->
-        <tr>
-          <td style="padding:0;background:{bar_color_bottom};height:24px;line-height:0;font-size:0;">&nbsp;</td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-""".strip()
-
-# ----------------- signature (no 'Email me' line) -----------------
-SIGNATURE_LOGO_URL    = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
-SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "100"))
-SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
-SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
-
-def signature_html(logo_cid: str | None) -> str:
-    # Logo URL used for the signature
-    logo_url = SIGNATURE_LOGO_URL or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    if not logo_url:
-        return ""
-
-    # Use a table row so email clients respect left alignment (same as Day-0)
-    return (
-        """
-<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
-  <tr>
-    <td align="left" style="padding:0;">
-      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-        <img src="%s"
-             alt="Matly Creative"
-             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
-      </a>
-    </td>
-  </tr>
-</table>
-""" % html.escape(logo_url)
-    )
-
-# ----------------- sender (uses the chosen_link exactly, Day-0 visual) -----------------
+# ----------------- sender (PLAIN TEXT ONLY) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
                link_url: str, link_text: str, link_color: str):
     from email.message import EmailMessage
     import smtplib
 
-    label = (link_text or "See examples").strip()
-    if link_url and not re.match(r"^https?://", link_url, flags=re.I):
-        link_url = "https://" + link_url
+    # Plain text
+    body_pt = (body_text or "")
 
-    full = link_url
-    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
-    esc_full = html.escape(full, quote=True) if full else ""
-    esc_bare = html.escape(bare, quote=True) if full else ""
-
-    # Plain text: also expand [here] → UPLOAD_URL
-    body_pt = body_text
+    # Expand [here] → UPLOAD_URL if your template contains it (we do NOT add it)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
+
+    # Optional: replace raw URLs with label in plain text (kept from your original behavior)
+    full = (link_url or "").strip()
+    if full and not re.match(r"^https?://", full, flags=re.I):
+        full = "https://" + full
+    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
+
+    label = (link_text or "See examples").strip()
+
     if full:
         if not INCLUDE_PLAIN_URL:
             for pat in (full, bare):
@@ -474,77 +334,15 @@ def send_email(to_email: str, subject: str, body_text: str, *,
             if full not in body_pt and bare not in body_pt:
                 body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
 
-    # HTML with explicit markers
-    MARK = "__LINK_MARKER__"
-    body_marked = body_text
-    for pat in (full, bare):
-        if pat:
-            body_marked = body_marked.replace(pat, MARK)
-
-    html_core_inner = text_to_html(body_marked)
-    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
-    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
-
-    # Insert main anchor
-    if full:
-        style_attr = (
-            f' style="color:{html.escape(link_color or LINK_COLOR)};'
-            f'text-decoration:underline;"'
-        )
-        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
-        html_core_inner = (
-            html_core_inner.replace(MARK, anchor)
-            if MARK in html_core_inner
-            else (html_core_inner + f'<p style="margin:0 0 14px 0;">{anchor}</p>')
-        )
-
-    # Convert [here] into clickable upload link
-    if "[here]" in html_core_inner:
-        upload_anchor = (
-            f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
-            f'style="color:{html.escape(link_color or LINK_COLOR)};'
-            f'text-decoration:underline;">here</a>'
-        )
-        html_core_inner = html_core_inner.replace("[here]", upload_anchor)
-
-    # Signature inside the content
-    logo_cid = "siglogo@local"
-    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE else None)
-
-    # Wrap in Matly card (top logo + bottom bar)
-    html_full = wrap_html(html_core_inner + sig_inner)
-
-    # ----- Build message -----
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html")
+
     if BCC_TO:
         msg["Bcc"] = BCC_TO
 
-    # Inline logo embed (if configured)
-    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
-        try:
-            r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
-            r.raise_for_status()
-            data = r.content
-            ctype = (
-                r.headers.get("Content-Type")
-                or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0]
-                or "image/png"
-            )
-            if not ctype.startswith("image/"):
-                ctype = "image/png"
-            maintype, subtype = ctype.split("/", 1)
-            msg.get_payload()[-1].add_related(
-                data, maintype=maintype, subtype=subtype, cid="siglogo@local"
-            )
-        except Exception as e:
-            log(f"Inline logo fetch failed, sending without embed: {e}")
-
-    # ----- Send via SMTP -----
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -584,7 +382,8 @@ def main():
     for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
         if not globals()[k]:
             missing.append(k)
-    if not LIST_ID: missing.append("TRELLO_LIST_ID_FU1")
+    if not LIST_ID:
+        missing.append("TRELLO_LIST_ID_FU1")
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
 
@@ -598,7 +397,9 @@ def main():
     for c in cards:
         if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
             break
-        card_id = c.get("id"); title = c.get("name","(no title)")
+
+        card_id = c.get("id")
+        title = c.get("name","(no title)")
         if not card_id or card_id in sent_cache:
             continue
 
@@ -607,6 +408,7 @@ def main():
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
+
         if not email_v:
             log(f"Skip: no valid Email on '{title}'.")
             continue
@@ -625,24 +427,10 @@ def main():
         subj_tpl = SUBJECT_B if use_b else SUBJECT_A
         body_tpl = BODY_B    if use_b else BODY_A
 
-        subject = fill_template(
-            subj_tpl, company=company, first=first,
-            from_name=FROM_NAME, link=chosen_link
-        )
+        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
-        # FU1 wording:
-        extra_ready = "There’s also a free sample made with your content."
-        # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
-        extra_wait  = (
-            "If you can send over 2–3 raw clips, I can cut a free sample so you can see how it "
-            "would look on one of your own listings — you can upload them [here]."
-        )
-
-        body = fill_with_two_extras(
-            body_tpl, company=company, first=first, from_name=FROM_NAME,
-            link=chosen_link, is_ready=ready,
-            extra_ready=extra_ready, extra_wait=extra_wait,
-        )
+        # IMPORTANT: No extra text injection. We keep your BODY exactly as written.
+        body = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link=chosen_link)
 
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
