@@ -434,10 +434,7 @@ def main():
         link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
         try:
-            send_email(
-                email_v, subject, body,
-                link_url=chosen_link, link_text=link_label, link_color=LINK_COLOR
-            )
+            send_email(email_v, subject, body)
             processed += 1
             log(f"Sent to {email_v} — '{title}' — ready={ready} link={chosen_link}")
         except Exception as e:
