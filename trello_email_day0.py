@@ -107,7 +107,8 @@ Quick question — are you currently doing anything with video for your property
 
 Saw a few of your recent listings and figured I’d ask.
 
-– Matthieu""")
+Best
+Matthieu from Matly""")
 
     BODY_B = _get_env("BODY_B", default=
 """Hey {First},
@@ -116,7 +117,8 @@ Quick question — are you currently doing anything with video for your property
 
 Saw a few of your recent listings and figured I’d ask.
 
-– Matthieu""")
+Best
+Matthieu from Matly""")
 else:
     SUBJECT_A = "Quick question about {Company}"
     SUBJECT_B = "Quick question about {Company}"
@@ -126,14 +128,16 @@ Quick question — are you currently doing anything with video for your property
 
 Saw a few of your recent listings and figured I’d ask.
 
-– Matthieu"""
+Best
+Matthieu from Matly"""
     BODY_B = """Hey {First},
 
 Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
 
 Saw a few of your recent listings and figured I’d ask.
 
-– Matthieu"""
+Best
+Matthieu from Matly"""
 
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
