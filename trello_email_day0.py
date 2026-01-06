@@ -58,8 +58,8 @@ PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default=PUBLIC_BASE + "/portfolio")
 UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload")
 
 # ----------------- SUBJECT + BODY (UNCHANGED) -----------------
-SUBJECT_A = "Quick question about {Company}’"
-SUBJECT_B = "Quick question about {Company}’"
+SUBJECT_A = "Quick question about {Company}"
+SUBJECT_B = "Quick question about {Company}"
 
 BODY_A = """Hi there,
 Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
@@ -107,24 +107,49 @@ def trello_post(path, **params):
     return r.json()
 
 # ----------------- send -----------------
-def send_email(to_email, subject, body):
+def send_email(
+    to_email: str,
+    subject: str,
+    body_text: str,
+    *,
+    link_url: str,
+    link_text: str,
+    link_color: str
+):
     from email.message import EmailMessage
     import smtplib
+
+    # Plain-text body only
+    body_pt = body_text or ""
+
+    # Expand [here] token safely
+    if "[here]" in body_pt:
+        body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(body)
+    msg["Subject"] = sanitize_subject(subject)
+    msg.set_content(body_pt)
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-        if SMTP_USE_TLS:
-            s.starttls()
-        s.login(SMTP_USER, SMTP_PASS)
-        s.send_message(msg)
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
+                if SMTP_DEBUG:
+                    s.set_debuglevel(1)
+                if SMTP_USE_TLS:
+                    s.starttls()
+                s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
+                s.send_message(msg)
+            return
+        except Exception as e:
+            log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
+            if attempt == 2:
+                raise
+            time.sleep(1.0 * (attempt + 1))
 
 # ----------------- main -----------------
 def main():
