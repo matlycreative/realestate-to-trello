@@ -389,21 +389,33 @@ def send_email(to_email: str, subject: str, body_text: str):
     """
     Plain text only. URLs are clickable by leaving them as raw URLs.
     [here] is replaced with UPLOAD_URL (raw URL).
+
+    FIX:
+    - Normalize body to safe SMTP-friendly plain text
+    - Remove weird trailing whitespace / mixed newlines that can break sending
     """
     from email.message import EmailMessage
     import smtplib
 
     body_pt = (body_text or "")
 
-    # Make the upload link clickable: replace token with raw URL
+    # Normalize newlines (important when BODY_B comes from env/templates)
+    body_pt = body_pt.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Replace token with raw URL
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
+
+    # Strip trailing whitespace on each line + trim the whole message
+    body_pt = "\n".join(line.rstrip() for line in body_pt.split("\n")).strip() + "\n"
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
+
+    # Explicit charset avoids edge cases on some SMTP servers
+    msg.set_content(body_pt, subtype="plain", charset="utf-8")
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
