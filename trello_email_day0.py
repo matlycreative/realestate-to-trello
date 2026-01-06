@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-Day-0 — Poll Trello and send one email per card (PLAIN TEXT ONLY).
+Day-0 — Poll Trello and send one email per card.
 
-Design removed:
+PLAIN TEXT ONLY + REPLY-OPTIMIZED COPY
 - No HTML
 - No logo
-- No card
-- No images
-- No styled links
+- No card / background / borders
+- Keeps original Trello parsing (Company/First/Email/Variant/etc.)
+- Keeps caching + Trello marker to avoid resends
+- Keeps readiness check (computed), but Day-0 email does NOT include links (by design)
 """
 
 import os, re, time, json, html, unicodedata
@@ -18,111 +18,238 @@ import requests
 
 def log(*a): print(*a, flush=True)
 
-# ----------------- utils -----------------
+# ----------------- tiny utils -----------------
 def _get_env(*names, default=""):
     for n in names:
         v = os.getenv(n)
-        if v and v.strip():
+        if v is not None and v.strip():
             return v.strip()
     return default
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    val = os.getenv(name, default)
+    return (val or "").strip().lower() in ("1","true","yes","on")
+
 def _safe_id_from_email(email: str) -> str:
-    return (email or "").lower().replace("@", "_").replace(".", "_")
+    return (email or "").strip().lower().replace("@", "_").replace(".", "_")
 
 def _slugify_company(name: str) -> str:
-    s = unicodedata.normalize("NFKD", (name or "")).encode("ascii","ignore").decode("ascii")
-    s = re.sub(r"[^\w\s-]+", "", s.lower())
-    return re.sub(r"[\s-]+","_",s).strip("_")
+    s = (name or "").strip()
+    if not s: return ""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    s = s.lower()
+    s = re.sub(r"[^\w\s-]+", "", s)
+    s = re.sub(r"[\s-]+", "_", s).strip("_")
+    return s or ""
 
 def choose_id(company: str, email: str) -> str:
-    return _slugify_company(company) or _safe_id_from_email(email)
+    sid = _slugify_company(company)
+    return sid if sid else _safe_id_from_email(email)
+
+def _norm_base(u: str) -> str:
+    u = (u or "").strip()
+    if not u: return ""
+    if not re.match(r"^https?://", u, flags=re.I):
+        u = "https://" + u
+    return u.rstrip("/")
+
+def sanitize_subject(s: str) -> str:
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 # ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
-LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0")
+LIST_ID      = _get_env("TRELLO_LIST_ID_DAY0", "TRELLO_LIST_ID")
 
-FROM_NAME  = _get_env("FROM_NAME", default="Matthieu from Matly")
+FROM_NAME  = _get_env("FROM_NAME",  default="Matthieu from Matly")
 FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
-SMTP_HOST = _get_env("SMTP_HOST", default="smtp.gmail.com")
-SMTP_PORT = int(_get_env("SMTP_PORT", default="587"))
-SMTP_USER = _get_env("SMTP_USER", default=FROM_EMAIL)
-SMTP_PASS = _get_env("SMTP_PASS")
-SMTP_USE_TLS = True
+SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
+SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
+SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
+SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
+SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
+SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
+BCC_TO       = _get_env("BCC_TO", default="").strip()
 
-BCC_TO = _get_env("BCC_TO", default="")
+PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
+PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
+UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
 
-PUBLIC_BASE   = _get_env("PUBLIC_BASE")
-PORTFOLIO_URL = _get_env("PORTFOLIO_URL", default=PUBLIC_BASE + "/portfolio")
-UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload")
+# Kept for compatibility (even though Day-0 email doesn’t include links)
+INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
 
-# ----------------- SUBJECT + BODY (UNCHANGED) -----------------
-SUBJECT_A = "Quick question about {Company}"
-SUBJECT_B = "Quick question about {Company}"
+# Send control
+SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Day0")
+SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
+MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
-BODY_A = """Hi there,
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL}")
+
+# ----------------- HTTP -----------------
+UA = f"TrelloEmailer-Day0/8.0 (+{FROM_EMAIL or 'no-email'})"
+SESS = requests.Session()
+SESS.headers.update({"User-Agent": UA})
+
+# ----------------- templates (REPLY-OPTIMIZED DEFAULTS) -----------------
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+if USE_ENV_TEMPLATES:
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick question about {Company}")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick question about {Company}")
+
+    # IMPORTANT: Day-0 copy should be short and should NOT include links.
+    BODY_A = _get_env("BODY_A", default=
+"""Hey there,
+
 Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
 
 Saw a few of your recent listings and figured I’d ask.
 
-Best,
-Matthieu from Matly
-"""
+– Matthieu""")
 
-BODY_B = """Hey {First},
+    BODY_B = _get_env("BODY_B", default=
+"""Hey {First},
+
 Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
 
 Saw a few of your recent listings and figured I’d ask.
 
-Best,
-Matthieu from Matly
-"""
+– Matthieu""")
+else:
+    SUBJECT_A = "Quick question about {Company}"
+    SUBJECT_B = "Quick question about {Company}"
+    BODY_A = """Hey there,
 
-# ----------------- helpers -----------------
+Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
+
+Saw a few of your recent listings and figured I’d ask.
+
+– Matthieu"""
+    BODY_B = """Hey {First},
+
+Quick question — are you currently doing anything with video for your property listings, or is that not a focus right now?
+
+Saw a few of your recent listings and figured I’d ask.
+
+– Matthieu"""
+
+# ----------------- parsing -----------------
+TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
+LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
+def parse_header(desc: str) -> dict:
+    out = {k: "" for k in TARGET_LABELS}
+    d = (desc or "").replace("\r\n","\n").replace("\r","\n")
+    lines = d.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        for lab in TARGET_LABELS:
+            m = LABEL_RE[lab].match(line)
+            if m:
+                val = (m.group(1) or "").strip()
+                if not val and (i+1) < len(lines):
+                    nxt = lines[i+1]
+                    if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
+                        val = nxt.strip()
+                        i += 1
+                out[lab] = val
+                break
+        i += 1
+    return out
+
 def clean_email(raw: str) -> str:
-    m = EMAIL_RE.search(raw or "")
-    return m.group(0) if m else ""
+    if not raw: return ""
+    txt = html.unescape(raw)
+    m = EMAIL_RE.search(txt)
+    return m.group(0).strip() if m else ""
 
-def fill(tpl: str, **kw):
-    for k,v in kw.items():
-        tpl = tpl.replace("{"+k+"}", v or "")
-    return tpl
+# ----------------- Trello I/O -----------------
+def _trello_call(method, url_path, **params):
+    for attempt in range(3):
+        try:
+            params.update({"key": TRELLO_KEY, "token": TRELLO_TOKEN})
+            url = f"https://api.trello.com/1/{url_path.lstrip('/')}"
+            r = (SESS.get if method == "GET" else SESS.post)(url, params=params, timeout=30)
+            if r.status_code in (429, 500, 502, 503, 504):
+                raise RuntimeError(f"Trello {r.status_code}")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(1.2 * (attempt + 1))
+    raise RuntimeError("Unreachable")
 
-# ----------------- Trello -----------------
-SESSION = requests.Session()
+def trello_get(url_path, **params):  return _trello_call("GET", url_path, **params)
+def trello_post(url_path, **params): return _trello_call("POST", url_path, **params)
 
-def trello_get(path, **params):
-    params.update({"key":TRELLO_KEY,"token":TRELLO_TOKEN})
-    r = SESSION.get("https://api.trello.com/1/"+path, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def already_marked(card_id: str, marker: str) -> bool:
+    try:
+        acts = trello_get(f"cards/{card_id}/actions", filter="commentCard", limit=50)
+    except Exception:
+        return False
+    marker_l = (marker or "").lower().strip()
+    for a in acts:
+        txt = (a.get("data", {}).get("text") or a.get("text") or "").strip()
+        if txt.lower().startswith(marker_l):
+            return True
+    return False
 
-def trello_post(path, **params):
-    params.update({"key":TRELLO_KEY,"token":TRELLO_TOKEN})
-    r = SESSION.post("https://api.trello.com/1/"+path, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def mark_sent(card_id: str, marker: str, extra: str = ""):
+    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    text = f"{marker} — {ts}"
+    if extra:
+        text += f"\n{extra}"
+    try:
+        trello_post(f"cards/{card_id}/actions/comments", text=text)
+    except Exception:
+        pass
 
-# ----------------- send -----------------
-def send_email(
-    to_email: str,
-    subject: str,
-    body_text: str,
-    *,
-    link_url: str,
-    link_text: str,
-    link_color: str
-):
+# ----------------- readiness (kept) -----------------
+def is_sample_ready(pid: str) -> bool:
+    check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
+    try:
+        r = SESS.get(check_url, timeout=12, headers={"Accept": "application/json"})
+        if r.status_code != 200:
+            return False
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        data = r.json() if "application/json" in ctype else {}
+        if not isinstance(data, dict):
+            return False
+        src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
+        return bool(src)
+    except Exception:
+        return False
+
+# ----------------- templating -----------------
+def fill_template(tpl: str, *, company: str, first: str, from_name: str,
+                  link: str = "", extra: str = "") -> str:
+    def repl(m):
+        key = m.group(1).strip().lower()
+        if key == "company":   return company or ""
+        if key == "first":     return first or ""
+        if key == "from_name": return from_name or ""
+        if key == "link":      return link or ""
+        if key == "extra":     return extra or ""
+        return m.group(0)
+    return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
+
+# ----------------- sender (PLAIN TEXT ONLY; signature kept clean) -----------------
+def send_email(to_email: str, subject: str, body_text: str, *, link_url: str, link_text: str, link_color: str):
+    """
+    Plain-text only. Keeps the same signature as your original function signature
+    so the rest of your pipeline doesn't break.
+    """
     from email.message import EmailMessage
     import smtplib
 
-    # Plain-text body only
-    body_pt = body_text or ""
+    body_pt = (body_text or "").strip()
 
-    # Expand [here] token safely
+    # Expand token if it appears (we try not to use it in Day-0, but keep safe)
     if "[here]" in body_pt:
         body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
@@ -130,7 +257,7 @@ def send_email(
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
+    msg.set_content(body_pt + "\n")  # final newline helps some clients
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
@@ -151,28 +278,100 @@ def send_email(
                 raise
             time.sleep(1.0 * (attempt + 1))
 
+# ----------------- cache -----------------
+def load_sent_cache():
+    try:
+        with open(SENT_CACHE_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_sent_cache(ids):
+    d = os.path.dirname(SENT_CACHE_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    try:
+        with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(ids), f)
+    except Exception:
+        pass
+
 # ----------------- main -----------------
 def main():
-    cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
+    missing = []
+    for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
+        if not globals().get(k):
+            missing.append(k)
+    if not LIST_ID:
+        missing.append("TRELLO_LIST_ID_DAY0")
+    if missing:
+        raise SystemExit("Missing env: " + ", ".join(missing))
 
+    sent_cache = load_sent_cache()
+    cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
+    if not isinstance(cards, list):
+        log("No cards found or Trello error.")
+        return
+
+    processed = 0
     for c in cards:
-        desc = c.get("desc","")
-        email = clean_email(desc)
-        if not email:
+        if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
+            break
+
+        card_id = c.get("id")
+        title = c.get("name", "(no title)")
+        if not card_id or card_id in sent_cache:
             continue
 
-        company = c.get("name","")
-        first = ""
+        desc = c.get("desc") or ""
+        fields  = parse_header(desc)
 
-        pid = choose_id(company, email)
-        link = PORTFOLIO_URL
+        company = (fields.get("Company") or "").strip() or title
+        first   = (fields.get("First")   or "").strip()
+        email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
 
-        subject = fill(SUBJECT_A, Company=company)
-        body = fill(BODY_A, Company=company, First=first, link=link)
+        if not email_v:
+            log(f"Skip: no valid Email on '{title}'.")
+            continue
 
-        send_email(email, subject, body)
-        trello_post(f"cards/{c['id']}/actions/comments", text="Sent: Day0")
-        time.sleep(1)
+        if already_marked(card_id, SENT_MARKER_TEXT):
+            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {title}")
+            sent_cache.add(card_id)
+            continue
+
+        # Keep readiness computation (might be useful for later stages)
+        pid   = choose_id(company, email_v)
+        ready = is_sample_ready(pid)
+
+        # Day-0: DO NOT include links. (We still compute chosen_link for logging.)
+        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
+        log(f"[decide] id={pid} ready={ready} (Day-0 sends no link) computed_link={chosen_link}")
+
+        use_b    = bool(first)
+        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+        body_tpl = BODY_B    if use_b else BODY_A
+
+        # link passed as "" on purpose for Day-0
+        subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link="")
+        body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link="").strip()
+
+        # Keep signature args for compatibility; not used in plain text rendering beyond body
+        link_label = LINK_TEXT
+
+        try:
+            send_email(email_v, subject, body, link_url="", link_text=link_label, link_color=LINK_COLOR)
+            processed += 1
+            log(f"Sent to {email_v} — '{title}' — ready={ready}")
+        except Exception as e:
+            log(f"Send failed for '{title}' to {email_v}: {e}")
+            continue
+
+        mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
+        sent_cache.add(card_id)
+        save_sent_cache(sent_cache)
+        time.sleep(0.8)
+
+    log(f"Done. Emails sent: {processed}")
 
 if __name__ == "__main__":
     main()
