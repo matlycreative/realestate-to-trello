@@ -347,7 +347,7 @@ def send_email(to_email: str, subject: str, body_text: str, *,
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
-    msg.set_content(body_pt)
+    msg.set_content(body_pt, subtype="plain", charset="utf-8")
 
     if BCC_TO:
         msg["Bcc"] = BCC_TO
