@@ -3,18 +3,18 @@
 """
 FU3 — Poll Trello and send one email per card (final nudge for free sample).
 
-STRICT RULES (match Day-0/FU1/FU2):
+CHANGES (per your request):
+- Design removed (NO HTML, NO logo, NO card).
+- URLs are clickable by keeping them as RAW URLs in plain text.
+- [here] is replaced with the UPLOAD_URL (raw URL).
+
+STRICT RULES (match Day-0/FU1/FU2/FU3 intent):
 - Personalized ID = Company slug (fallback email-safe).
 - READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
 - NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
 - With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
 - Add a clickable [here] link that points to UPLOAD_URL (default https://matlycreative.com/upload/).
 - No "Email me" contact line; no hidden overrides in send_email().
-
-Defaults (overridable via env):
-  FROM_NAME=Matthieu from Matly
-  FROM_EMAIL=matthieu@matlycreative.com
-  LINK_COLOR=#858585   (same look as Day-0/FU1/FU2)
 """
 
 import os
@@ -23,10 +23,9 @@ import time
 import json
 import html
 import unicodedata
-import mimetypes
 from datetime import datetime, timezone, timedelta
-
 from typing import Dict
+
 import requests
 
 
@@ -115,7 +114,7 @@ UPLOAD_URL = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/")
 MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
 READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
 
-# Visuals
+# Visuals (kept for compatibility; not used now that design is removed)
 LINK_COLOR = _get_env("LINK_COLOR", default="#858585")
 
 # Send control (FU3-specific)
@@ -129,7 +128,7 @@ log(
 )
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU3/1.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU3/1.1 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -198,7 +197,8 @@ Matthieu from Matly"""
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company", "First", "Email", "Hook", "Variant", "Website"]
 LABEL_RE: Dict[str, re.Pattern] = {
-    lab: re.compile(rf"(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$") for lab in TARGET_LABELS
+    lab: re.compile(rf"(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$")
+    for lab in TARGET_LABELS
 }
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
@@ -216,9 +216,7 @@ def parse_header(desc: str) -> dict:
                 val = (m.group(1) or "").strip()
                 if not val and (i + 1) < len(lines):
                     nxt = lines[i + 1]
-                    if nxt.strip() and not any(
-                        LABEL_RE[L].match(nxt) for L in TARGET_LABELS
-                    ):
+                    if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
                         val = nxt.strip()
                         i += 1
                 out[lab] = val
@@ -386,166 +384,30 @@ def sanitize_subject(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 
-def text_to_html(text: str) -> str:
-    """
-    Turn plain text into paragraphs/br with Matly dark style.
-    Returns inner HTML (card wrapper is added later).
-    """
-    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-
-    p_style = (
-        "margin:0 0 16px 0;"
-        "color:#f5f5f7 !important;"
-        "font-size:16px !important;"
-        "line-height:1.8;"
-        "font-weight:400;"
-    )
-
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
-    return esc
-
-
-def wrap_html(inner: str) -> str:
-    """
-    Wrap inner HTML in a centered Matly-style dark card,
-    with a colored header box (logo) at the top and a plain bar at the bottom.
-    """
-    inner = inner or ""
-    wrapper_style = (
-        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
-        "color:#f5f5f7 !important;"
-        "font-size:16px;"
-        "line-height:1.8;"
-        "font-weight:400;"
-        "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
-    )
-
-    bar_color_top = "#292929"
-    bar_color_bottom = "#292929"
-
-    header_logo_url = (
-        "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    )
-
-    return f"""
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FCFCFC;padding:16px 12px;">
-  <tr>
-    <td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:720px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
-        <!-- Top colored box with logo -->
-        <tr>
-          <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
-            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-              <img src="{html.escape(header_logo_url)}"
-                   alt="Matly Creative"
-                   style="max-height:90px;display:inline-block;border:0;">
-            </a>
-          </td>
-        </tr>
-        <!-- Main content -->
-        <tr>
-          <td style="padding:24px 16px 24px 16px;">
-            <div style="{wrapper_style}">
-              {inner}
-            </div>
-          </td>
-        </tr>
-        <!-- Bottom bar (no logo) -->
-        <tr>
-          <td style="padding:0;background:{bar_color_bottom};height:24px;line-height:0;font-size:0;">&nbsp;</td>
-        </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-""".strip()
-
-
-# ----------------- signature (no 'Email me' line, no CTA) -----------------
-SIGNATURE_LOGO_URL = (
-    "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-)
-
-
-def signature_html() -> str:
-    logo_url = (
-        SIGNATURE_LOGO_URL
-        or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
-    )
-    if not logo_url:
-        return ""
-    return """
-<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
-  <tr>
-    <td align="left" style="padding:0;">
-      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
-        <img src="%s"
-             alt="Matly Creative"
-             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
-      </a>
-    </td>
-  </tr>
-</table>
-""" % html.escape(
-        logo_url
-    )
-
-
-# ----------------- sender -----------------
+# ----------------- sender (NO DESIGN + CLICKABLE URLs) -----------------
 def send_email(to_email: str, subject: str, body_text: str):
     """
-    FU3 version: no portfolio CTA link.
-    Only:
-      - plain text with [here] -> UPLOAD_URL
-      - HTML with [here] as clickable anchor
-      - same dark card + signature
+    Plain text only. URLs are clickable by leaving them as raw URLs.
+    [here] is replaced with UPLOAD_URL (raw URL).
     """
     from email.message import EmailMessage
     import smtplib
 
-    # Plain text: [here] -> actual upload URL
-    body_pt = (body_text or "").replace("[here]", UPLOAD_URL)
+    body_pt = (body_text or "")
 
-    # HTML: escape, convert [here] to anchor, newlines to <br>
-    raw = (body_text or "").replace("\r\n", "\n").replace("\r", "\n")
-    # first escape all text
-    esc = html.escape(raw)
-
-    # turn [here] into a clickable upload link
-    upload_anchor = (
-        f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
-        f'style="color:{html.escape(LINK_COLOR)};text-decoration:underline;">here</a>'
-    )
-    esc = esc.replace("[here]", upload_anchor)
-
-    # paragraph formatting
-    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
-    p_style = (
-        "margin:0 0 16px 0;"
-        "color:#f5f5f7 !important;"
-        "font-size:16px !important;"
-        "line-height:1.8;"
-        "font-weight:400;"
-    )
-    esc = f'<p style="{p_style}">{esc}</p>'
-    esc = esc.replace("<p>", f'<p style="{p_style}">')
-
-    # add signature inside card
-    html_inner = esc + signature_html()
-    html_full = wrap_html(html_inner)
+    # Make the upload link clickable: replace token with raw URL
+    if "[here]" in body_pt:
+        body_pt = body_pt.replace("[here]", UPLOAD_URL)
 
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
     msg["Subject"] = sanitize_subject(subject)
     msg.set_content(body_pt)
-    msg.add_alternative(html_full, subtype="html")
+
     if BCC_TO:
         msg["Bcc"] = BCC_TO
 
-    # Send via SMTP
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
