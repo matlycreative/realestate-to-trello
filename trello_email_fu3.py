@@ -148,7 +148,7 @@ if USE_ENV_TEMPLATES:
         default="""Hi there,
 I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
-If you want one for an upcoming listing, you can upload 4-5 raw clips [here].
+If you want one for an upcoming listing, you can upload 4-5 raw clips.
 I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
 If not, no worries — just tell me and I’ll close the loop.
@@ -161,7 +161,7 @@ Matthieu from Matly""",
         default="""Hey {first},
 I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
-If you want one for an upcoming listing, you can upload 4-5 raw clips [here].
+If you want one for an upcoming listing, you can upload 4-5 raw clips.
 I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
 If not, no worries — just tell me and I’ll close the loop.
@@ -176,7 +176,7 @@ else:
     BODY_A = """Hi there,
 I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
-If you want one for an upcoming listing, you can upload 4-5 raw clips [here].
+If you want one for an upcoming listing, you can upload 4-5 raw clips.
 I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
 If not, no worries — just tell me and I’ll close the loop.
@@ -186,7 +186,7 @@ Matthieu from Matly"""
     BODY_B = """Hey {first},
 I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
-If you want one for an upcoming listing, you can upload 4-5 raw clips [here].
+If you want one for an upcoming listing, you can upload 4-5 raw clips.
 I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
 If not, no worries — just tell me and I’ll close the loop.
