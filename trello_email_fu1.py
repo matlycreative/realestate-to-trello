@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FU1 — Minimal sender with markers/cache + clickable "Portfolio" (hidden URL).
+FU1 — Poll Trello and send one email per card (Day-0 visual + behavior).
 
-Fix:
-- Your HTML link was being escaped by text_to_html(), so recipients saw the <a ...> tag as text.
-- This version uses a safe token in the HTML body, then replaces it AFTER escaping.
-- Plain-text part shows only the word "Portfolio" (no raw URL).
+STRICT RULES (match Day-0):
+- Personalized ID = Company slug (fallback email-safe).
+- READY -> link to personal page   : <PUBLIC_BASE>/p/?id=<id>
+- NOT READY -> link to portfolio   : <PORTFOLIO_URL>  (defaults to <PUBLIC_BASE>/portfolio)
+- With MATLY_POINTER_BASE: pointer must exist, be fresh, AND filename must contain 'sample'.
+- Add a clickable [here] link in NOT READY path to UPLOAD_URL (default https://matlycreative.com/upload/).
+- No "Email me" contact line; no hidden overrides in send_email().
 
+Defaults (overridable via env):
+  FROM_NAME=Matthieu from Matly
+  FROM_EMAIL=matthieu@matlycreative.com
+  LINK_TEXT=See examples
+  LINK_COLOR=#858585   (same look as Day-0)
 """
 
-import os, re, time, json, html, unicodedata
-from datetime import datetime
+import os, re, time, json, html, unicodedata, mimetypes
+from datetime import datetime, timezone, timedelta
+from typing import Tuple
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -25,30 +34,8 @@ def _get_env(*names, default=""):
     return default
 
 def _env_bool(name: str, default: str = "0") -> bool:
-    return (_get_env(name, default=default) or "").strip().lower() in ("1","true","yes","on")
-
-def sanitize_subject(s: str) -> str:
-    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
-
-def clean_one_line(s: str) -> str:
-    """Remove CR/LF/tabs and collapse whitespace."""
-    if s is None:
-        return ""
-    s = html.unescape(str(s))
-    s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    s = re.sub(r"\s{2,}", " ", s).strip()
-    return s
-
-def clean_first_name(s: str) -> str:
-    """Normalize first name and remove weird invisible chars."""
-    s = clean_one_line(s)
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKC", s)
-    s = s.replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "")
-    s = "".join(ch for ch in s if ch.isprintable())
-    s = re.sub(r"\s{2,}", " ", s).strip()
-    return s[:60]
+    val = os.getenv(name, default)
+    return (val or "").strip().lower() in ("1","true","yes","on")
 
 def _safe_id_from_email(email: str) -> str:
     return (email or "").strip().lower().replace("@", "_").replace(".", "_")
@@ -73,14 +60,6 @@ def _norm_base(u: str) -> str:
         u = "https://" + u
     return u.rstrip("/")
 
-def _ensure_http(url: str) -> str:
-    url = (url or "").strip()
-    if not url:
-        return ""
-    if not re.match(r"^https?://", url, flags=re.I):
-        url = "https://" + url
-    return url
-
 # ----------------- env -----------------
 TRELLO_KEY   = _get_env("TRELLO_KEY")
 TRELLO_TOKEN = _get_env("TRELLO_TOKEN")
@@ -91,52 +70,99 @@ FROM_EMAIL = _get_env("FROM_EMAIL", default="matthieu@matlycreative.com")
 
 SMTP_HOST    = _get_env("SMTP_HOST", "smtp_host", default="smtp.gmail.com")
 SMTP_PORT    = int(_get_env("SMTP_PORT", "smtp_port", default="587"))
-SMTP_USE_TLS = (_get_env("SMTP_USE_TLS", "smtp_use_tls", default="1") or "").lower() in ("1","true","yes","on")
+SMTP_USE_TLS = _get_env("SMTP_USE_TLS", "smtp_use_tls", default="1").lower() in ("1","true","yes","on")
 SMTP_PASS    = _get_env("SMTP_PASS", "SMTP_PASSWORD", "smtp_pass", "smtp_password")
 SMTP_USER    = _get_env("SMTP_USER", "SMTP_USERNAME", "smtp_user", "smtp_username", "FROM_EMAIL")
 SMTP_DEBUG   = _env_bool("SMTP_DEBUG", "0")
-
-# NOTE: we do not add a "Bcc:" header; we deliver BCC via envelope only
 BCC_TO       = _get_env("BCC_TO", default="").strip()
 
-PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # required
-PORTFOLIO_URL = _ensure_http(_norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio"))
-UPLOAD_URL    = _ensure_http(_get_env("UPLOAD_URL", default=(PUBLIC_BASE + "/upload") if PUBLIC_BASE else "https://matlycreative.com/upload").rstrip("/"))
+PUBLIC_BASE   = _norm_base(_get_env("PUBLIC_BASE"))  # e.g., https://matlycreative.com
+PORTFOLIO_URL = _norm_base(_get_env("PORTFOLIO_URL")) or (PUBLIC_BASE + "/portfolio")
+UPLOAD_URL    = _get_env("UPLOAD_URL", default="https://matlycreative.com/upload/").rstrip("/")
 
+# Pointer readiness (optional)
+MATLY_POINTER_BASE = _get_env("MATLY_POINTER_BASE", default="").rstrip("/")
+READY_MAX_AGE_DAYS = int(_get_env("READY_MAX_AGE_DAYS", default="30"))
+
+# Link look (match Day-0 visuals)
+INCLUDE_PLAIN_URL = _env_bool("INCLUDE_PLAIN_URL", "0")
+LINK_TEXT         = _get_env("LINK_TEXT",  default="See examples")
+LINK_COLOR        = _get_env("LINK_COLOR", default="#858585")
+
+# Send control
 SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU1")
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu1.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
-IGNORE_SENT      = _env_bool("IGNORE_SENT", "0")
 
-# Optional: send all to one inbox for testing
-FORCE_TO          = clean_one_line(_get_env("FORCE_TO", default=""))
+log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 
-# Email copy (your exact copy) — unchanged
-SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up about {Company}")
-BODY_TPL    = _get_env("BODY", default=
-"""Hey {FirstLine}
+# ----------------- HTTP -----------------
+UA = f"TrelloEmailer-FU1/6.1 (+{FROM_EMAIL or 'no-email'})"
+SESS = requests.Session()
+SESS.headers.update({"User-Agent": UA})
 
+# ----------------- templates -----------------
+USE_ENV_TEMPLATES = os.getenv("USE_ENV_TEMPLATES", "1").strip().lower() in ("1","true","yes","on")
+if USE_ENV_TEMPLATES:
+    SUBJECT_A = _get_env("SUBJECT_A", default="Quick follow-up")
+    SUBJECT_B = _get_env("SUBJECT_B", default="Quick follow-up for {first}")
+    BODY_A = _get_env("BODY_A", default=
+"""Hi there,
 Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Here are some exemples:
-https://www.google.com
+Examples again:
+{link}
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
 Open to a quick test?
 
 Best,
-{FromName}"""
-)
+Matthieu from Matly""")
+    BODY_B = _get_env("BODY_B", default=
+"""Hey {first},
+Just bumping this in case it got buried.
 
-log(f"[env] LIST_ID={LIST_ID} | PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL}")
-log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | IGNORE_SENT={IGNORE_SENT} | FORCE_TO={FORCE_TO or '(off)'}")
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-# ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1-min/1.3-portfolio-link-fix (+{FROM_EMAIL or 'no-email'})"
-SESS = requests.Session()
-SESS.headers.update({"User-Agent": UA})
+Examples again:
+{link}
+
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
+
+Best,
+Matthieu from Matly""")
+else:
+    SUBJECT_A = "Quick follow-up"
+    SUBJECT_B = "Quick follow-up for {first}"
+    BODY_A = """Hi there,
+Just bumping this in case it got buried.
+
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+
+Examples again:
+{link}
+
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
+
+Best,
+Matthieu from Matly"""
+    BODY_B = """Hey {first},
+Just bumping this in case it got buried.
+
+We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
+
+Examples again:
+{link}
+
+If {Company} has a busy pipeline right now, this could take some weight off your plate.
+Open to a quick test?
+
+Best,
+Matthieu from Matly"""
 
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
@@ -157,8 +183,7 @@ def parse_header(desc: str) -> dict:
                 if not val and (i+1) < len(lines):
                     nxt = lines[i+1]
                     if nxt.strip() and not any(LABEL_RE[L].match(nxt) for L in TARGET_LABELS):
-                        val = nxt.strip()
-                        i += 1
+                        val = nxt.strip(); i += 1
                 out[lab] = val
                 break
         i += 1
@@ -181,10 +206,8 @@ def _trello_call(method, url_path, **params):
                 raise RuntimeError(f"Trello {r.status_code}")
             r.raise_for_status()
             return r.json()
-        except Exception as e:
-            if attempt == 2:
-                raise
-            log(f"[WARN] Trello attempt {attempt+1}/3 failed: {e}")
+        except Exception:
+            if attempt == 2: raise
             time.sleep(1.2 * (attempt + 1))
     raise RuntimeError("Unreachable")
 
@@ -206,68 +229,322 @@ def already_marked(card_id: str, marker: str) -> bool:
 def mark_sent(card_id: str, marker: str, extra: str = ""):
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     text = f"{marker} — {ts}"
-    if extra:
-        text += f"\n{extra}"
+    if extra: text += f"\n{extra}"
     try:
         trello_post(f"cards/{card_id}/actions/comments", text=text)
-    except Exception as e:
-        log(f"[WARN] Could not mark card as sent: {e}")
+    except Exception:
+        pass
+
+# ----------------- readiness -----------------
+def _pointer_ready(pid: str) -> bool:
+    """Pointer must exist, be fresh, AND filename must include 'sample'."""
+    base = MATLY_POINTER_BASE
+    if not base:
+        return False
+    if not base.endswith("/pointers") and not base.endswith("/pointers/"):
+        base = base.rstrip("/") + "/pointers"
+    url = f"{base.rstrip('/')}/{pid}.json"
+    try:
+        r = SESS.get(url, timeout=10, headers={"Accept":"application/json"})
+        if r.status_code != 200:
+            return False
+        data = r.json()
+        fname = (data.get("filename") or "").lower()
+        if "sample" not in fname:
+            return False
+        updated = (data.get("updatedAt") or "").strip()
+        if not updated:
+            return False
+        if updated.endswith("Z"):
+            updated = updated[:-1]
+        dt = datetime.fromisoformat(updated).replace(tzinfo=timezone.utc)
+        fresh_after = datetime.now(timezone.utc) - timedelta(days=READY_MAX_AGE_DAYS)
+        return dt >= fresh_after
+    except Exception:
+        return False
+
+def _api_ready(pid: str) -> bool:
+    """Fallback: /api/sample must 200 with a playable src."""
+    check_url = f"{PUBLIC_BASE}/api/sample?id={pid}"
+    try:
+        r = SESS.get(check_url, timeout=12, headers={"Accept":"application/json"})
+        if r.status_code != 200:
+            return False
+        data = r.json() if r.headers.get("Content-Type","").lower().startswith("application/json") else {}
+        if not isinstance(data, dict) or str(data.get("error","")).strip():
+            return False
+        src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
+        if not src:
+            return False
+        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
+        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
+        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
+        return False
+    except Exception:
+        return False
+
+def is_sample_ready(pid: str) -> bool:
+    if MATLY_POINTER_BASE:
+        ok = _pointer_ready(pid)
+        log(f"[ready pointer] id={pid} -> {ok}")
+        return ok
+    ok = _api_ready(pid)
+    log(f"[ready api] id={pid} -> {ok}")
+    return ok
 
 # ----------------- templating -----------------
-def fill(tpl: str, mapping: dict) -> str:
+def fill_template(tpl: str, *, company: str, first: str, from_name: str,
+                  link: str = "", extra: str = "") -> str:
     def repl(m):
-        k = m.group(1)
-        return str(mapping.get(k, m.group(0)))
-    return re.sub(r"\{([A-Za-z0-9_]+)\}", repl, tpl or "")
+        key = m.group(1).strip().lower()
+        if key == "company":   return company or ""
+        if key == "first":     return first or ""
+        if key == "from_name": return from_name or ""
+        if key == "link":      return link or ""
+        if key == "extra":     return extra or ""
+        return m.group(0)
+    return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
-# ----------------- HTML helpers -----------------
+def fill_template_skip_extra(tpl: str, *, company: str, first: str,
+                             from_name: str, link: str) -> str:
+    def repl(m):
+        key = m.group(1).strip().lower()
+        if key == "company":   return company or ""
+        if key == "first":     return first or ""
+        if key == "from_name": return from_name or ""
+        if key == "link":      return link or ""
+        return m.group(0)
+    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
+
+EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
+
+def fill_with_two_extras(
+    tpl: str, *, company: str, first: str, from_name: str,
+    link: str, is_ready: bool, extra_ready: str, extra_wait: str
+) -> str:
+    base = fill_template_skip_extra(
+        tpl, company=company, first=first, from_name=from_name, link=link
+    )
+    if is_ready:
+        step1 = EXTRA_TOKEN.sub(extra_ready, base, count=1)
+        step2 = EXTRA_TOKEN.sub("",         step1, count=1)
+    else:
+        step1 = EXTRA_TOKEN.sub("",         base, count=1)
+        step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
+    final = EXTRA_TOKEN.sub("", step2)
+    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
+    final = re.sub(r"\n{3,}", "\n\n", final).strip()
+    return final
+
+def sanitize_subject(s: str) -> str:
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+
 def text_to_html(text: str) -> str:
     """
-    Very simple safe conversion: escapes HTML, keeps line breaks.
+    Turn plain text into paragraphs/br with Matly dark style.
+    Returns inner HTML (card wrapper is added later).
     """
-    esc = html.escape(text or "")
-    esc = esc.replace("\r\n", "\n").replace("\r", "\n")
-    parts = esc.split("\n\n")
-    out = []
-    for p in parts:
-        out.append(
-            "<p style=\"margin:0 0 14px 0; font-size:16px; line-height:1.6;\">"
-            + p.replace("\n", "<br>")
-            + "</p>"
-        )
-    return "\n".join(out)
+    esc = html.escape(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    esc = esc.replace("\n\n", "</p><p>").replace("\n", "<br>")
 
-# ----------------- sender -----------------
-def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html: str, *,
-               card_id: str, first: str, greeting: str):
+    # Bigger + bolder body text (match Day-0)
+    p_style = (
+        "margin:0 0 16px 0;"
+        "color:#f5f5f7 !important;"
+        "font-size:16px !important;"
+        "line-height:1.8;"
+        "font-weight:400;"
+    )
+
+    esc = f'<p style="{p_style}">{esc}</p>'
+    esc = esc.replace("<p>", f'<p style="{p_style}">')
+    return esc
+
+def wrap_html(inner: str) -> str:
+    """
+    Wrap inner HTML in a centered Matly-style dark card,
+    with a colored header box (logo) at the top and a plain bar at the bottom.
+    (Identical visual to Day-0.)
+    """
+    inner = inner or ""
+    wrapper_style = (
+        'font-family:"Roboto",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;'
+        "color:#f5f5f7 !important;"
+        "font-size:16px;"
+        "line-height:1.8;"
+        "font-weight:400;"
+        "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;"
+    )
+
+    bar_color_top = "#292929"
+    bar_color_bottom = "#292929"
+
+    header_logo_url = (
+        "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
+    )
+
+    return f"""
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FCFCFC;padding:16px 12px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:720px;border-radius:18px;overflow:hidden;background:#1e1e1e;border:2.8px solid #000000;box-shadow:1 18px 45px #000000;">
+        <!-- Top colored box with logo -->
+        <tr>
+          <td style="padding:12px 12px;background:{bar_color_top};text-align:center;">
+            <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+              <img src="{html.escape(header_logo_url)}"
+                   alt="Matly Creative"
+                   style="max-height:90px;display:inline-block;border:0;">
+            </a>
+          </td>
+        </tr>
+        <!-- Main content -->
+        <tr>
+          <td style="padding:24px 16px 24px 16px;">
+            <div style="{wrapper_style}">
+              {inner}
+            </div>
+          </td>
+        </tr>
+        <!-- Bottom bar (no logo) -->
+        <tr>
+          <td style="padding:0;background:{bar_color_bottom};height:24px;line-height:0;font-size:0;">&nbsp;</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+""".strip()
+
+# ----------------- signature (no 'Email me' line) -----------------
+SIGNATURE_LOGO_URL    = "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
+SIGNATURE_INLINE      = os.getenv("SIGNATURE_INLINE", "0").strip().lower() in ("1","true","yes","on")
+SIGNATURE_MAX_W_PX    = int(os.getenv("SIGNATURE_MAX_W_PX", "100"))
+SIGNATURE_ADD_NAME    = os.getenv("SIGNATURE_ADD_NAME", "1").strip().lower() in ("1","true","yes","on")
+SIGNATURE_CUSTOM_TEXT = os.getenv("SIGNATURE_CUSTOM_TEXT", "").strip()
+
+def signature_html(logo_cid: str | None) -> str:
+    # Logo URL used for the signature
+    logo_url = SIGNATURE_LOGO_URL or "http://matlycreative.com/wp-content/uploads/2025/11/signture_final_version.png"
+    if not logo_url:
+        return ""
+
+    # Use a table row so email clients respect left alignment (same as Day-0)
+    return (
+        """
+<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin-top:0px;">
+  <tr>
+    <td align="left" style="padding:0;">
+      <a href="https://matlycreative.com" target="_blank" style="text-decoration:none;">
+        <img src="%s"
+             alt="Matly Creative"
+             style="max-width:90px;height:auto;border:0;display:block;vertical-align:middle;">
+      </a>
+    </td>
+  </tr>
+</table>
+""" % html.escape(logo_url)
+    )
+
+# ----------------- sender (uses the chosen_link exactly, Day-0 visual) -----------------
+def send_email(to_email: str, subject: str, body_text: str, *,
+               link_url: str, link_text: str, link_color: str):
     from email.message import EmailMessage
     import smtplib
 
-    to_email = clean_one_line(to_email)
-    subject  = sanitize_subject(subject)
+    label = (link_text or "See examples").strip()
+    if link_url and not re.match(r"^https?://", link_url, flags=re.I):
+        link_url = "https://" + link_url
 
-    # Envelope recipients (to + bcc) WITHOUT Bcc header
-    to_addrs = [to_email]
-    if BCC_TO:
-        bccs = [clean_one_line(x) for x in BCC_TO.split(",") if clean_one_line(x)]
-        to_addrs.extend(bccs)
+    full = link_url
+    bare = re.sub(r"^https?://", "", full, flags=re.I) if full else ""
+    esc_full = html.escape(full, quote=True) if full else ""
+    esc_bare = html.escape(bare, quote=True) if full else ""
 
+    # Plain text: also expand [here] → UPLOAD_URL
+    body_pt = body_text
+    if "[here]" in body_pt:
+        body_pt = body_pt.replace("[here]", UPLOAD_URL)
+    if full:
+        if not INCLUDE_PLAIN_URL:
+            for pat in (full, bare):
+                if pat:
+                    body_pt = body_pt.replace(pat, label)
+        else:
+            if full not in body_pt and bare not in body_pt:
+                body_pt = (body_pt.rstrip() + "\n\n" + full).strip()
+
+    # HTML with explicit markers
+    MARK = "__LINK_MARKER__"
+    body_marked = body_text
+    for pat in (full, bare):
+        if pat:
+            body_marked = body_marked.replace(pat, MARK)
+
+    html_core_inner = text_to_html(body_marked)
+    html_core_inner = re.sub(re.escape(esc_full), MARK, html_core_inner)
+    html_core_inner = re.sub(re.escape(esc_bare), MARK, html_core_inner)
+
+    # Insert main anchor
+    if full:
+        style_attr = (
+            f' style="color:{html.escape(link_color or LINK_COLOR)};'
+            f'text-decoration:underline;"'
+        )
+        anchor = f'<a{style_attr} href="{html.escape(full, quote=True)}">{html.escape(label)}</a>'
+        html_core_inner = (
+            html_core_inner.replace(MARK, anchor)
+            if MARK in html_core_inner
+            else (html_core_inner + f'<p style="margin:0 0 14px 0;">{anchor}</p>')
+        )
+
+    # Convert [here] into clickable upload link
+    if "[here]" in html_core_inner:
+        upload_anchor = (
+            f'<a href="{html.escape(UPLOAD_URL, quote=True)}" '
+            f'style="color:{html.escape(link_color or LINK_COLOR)};'
+            f'text-decoration:underline;">here</a>'
+        )
+        html_core_inner = html_core_inner.replace("[here]", upload_anchor)
+
+    # Signature inside the content
+    logo_cid = "siglogo@local"
+    sig_inner = signature_html(logo_cid if SIGNATURE_INLINE else None)
+
+    # Wrap in Matly card (top logo + bottom bar)
+    html_full = wrap_html(html_core_inner + sig_inner)
+
+    # ----- Build message -----
     msg = EmailMessage()
     msg["From"] = f"{FROM_NAME} <{FROM_EMAIL}>"
     msg["To"] = to_email
-    msg["Subject"] = subject
+    msg["Subject"] = sanitize_subject(subject)
+    msg.set_content(body_pt)
+    msg.add_alternative(html_full, subtype="html")
+    if BCC_TO:
+        msg["Bcc"] = BCC_TO
 
-    # Trace headers
-    msg["X-Card-Id"] = str(card_id)
-    msg["X-Debug-First"] = first
-    msg["X-Debug-Greeting"] = greeting
+    # Inline logo embed (if configured)
+    if SIGNATURE_INLINE and SIGNATURE_LOGO_URL:
+        try:
+            r = requests.get(SIGNATURE_LOGO_URL, timeout=20)
+            r.raise_for_status()
+            data = r.content
+            ctype = (
+                r.headers.get("Content-Type")
+                or mimetypes.guess_type(SIGNATURE_LOGO_URL)[0]
+                or "image/png"
+            )
+            if not ctype.startswith("image/"):
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            msg.get_payload()[-1].add_related(
+                data, maintype=maintype, subtype=subtype, cid="siglogo@local"
+            )
+        except Exception as e:
+            log(f"Inline logo fetch failed, sending without embed: {e}")
 
-    # Plain text part
-    msg.set_content((body_text_plain or "").strip() + "\n", charset="utf-8")
-
-    # HTML disabled for deliverability testing (links were vanishing)
-    # msg.add_alternative(body_text_html, subtype="html", charset="utf-8")
-
+    # ----- Send via SMTP -----
     for attempt in range(3):
         try:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as s:
@@ -276,9 +553,7 @@ def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html
                 if SMTP_USE_TLS:
                     s.starttls()
                 s.login(SMTP_USER or FROM_EMAIL, SMTP_PASS)
-                refused = s.send_message(msg, from_addr=FROM_EMAIL, to_addrs=to_addrs)
-                if refused:
-                    raise RuntimeError(f"SMTP refused: {refused}")
+                s.send_message(msg)
             return
         except Exception as e:
             log(f"[WARN] SMTP attempt {attempt+1}/3 failed: {e}")
@@ -296,27 +571,22 @@ def load_sent_cache():
 
 def save_sent_cache(ids):
     d = os.path.dirname(SENT_CACHE_FILE)
-    if d:
-        os.makedirs(d, exist_ok=True)
+    if d: os.makedirs(d, exist_ok=True)
     try:
         with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(sorted(ids), f)
-    except Exception as e:
-        log(f"[WARN] Could not save cache: {e}")
+    except Exception:
+        pass
 
 # ----------------- main -----------------
 def main():
     missing = []
     for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
-        if not globals().get(k):
+        if not globals()[k]:
             missing.append(k)
-    if not LIST_ID:
-        missing.append("TRELLO_LIST_ID_FU1")
+    if not LIST_ID: missing.append("TRELLO_LIST_ID_FU1")
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
-
-    # Token used only inside HTML rendering; replaced with a real <a> tag AFTER escaping.
-    PORTFOLIO_TOKEN = "__PORTFOLIO_LINK_TOKEN__"
 
     sent_cache = load_sent_cache()
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
@@ -328,93 +598,69 @@ def main():
     for c in cards:
         if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
             break
-
-        card_id = c.get("id")
-        title   = c.get("name", "(no title)")
-        if not card_id:
+        card_id = c.get("id"); title = c.get("name","(no title)")
+        if not card_id or card_id in sent_cache:
             continue
 
-        if not IGNORE_SENT and card_id in sent_cache:
-            log(f"Skip (cache): {title}")
-            continue
-
-        if not IGNORE_SENT and already_marked(card_id, SENT_MARKER_TEXT):
-            log(f"Skip (marker): {title}")
-            sent_cache.add(card_id)
-            continue
-
-        desc   = c.get("desc") or ""
-        fields = parse_header(desc)
-
-        company = clean_one_line((fields.get("Company") or "").strip()) or clean_one_line(title)
-        first   = clean_first_name((fields.get("First") or "").strip())
+        desc = c.get("desc") or ""
+        fields  = parse_header(desc)
+        company = (fields.get("Company") or "").strip()
+        first   = (fields.get("First")   or "").strip()
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
-
         if not email_v:
             log(f"Skip: no valid Email on '{title}'.")
             continue
 
-        pid = choose_id(company, email_v)
-        personal_url  = f"{PUBLIC_BASE}/p/?id={pid}" if PUBLIC_BASE else ""
-        portfolio_url = PORTFOLIO_URL
-        upload_url    = UPLOAD_URL
+        if already_marked(card_id, SENT_MARKER_TEXT):
+            log(f"Skip: already marked '{SENT_MARKER_TEXT}' — {title}")
+            sent_cache.add(card_id)
+            continue
 
-        greeting = f"Hey {first}," if first else "Hey there,"
+        pid   = choose_id(company, email_v)
+        ready = is_sample_ready(pid)
+        chosen_link = (f"{PUBLIC_BASE}/p/?id={pid}" if ready else PORTFOLIO_URL)
+        log(f"[decide] id={pid} ready={ready} -> link={chosen_link}")
 
-        # Plain-text: hide the URL (only the word Portfolio)
-        portfolio_line_plain = "Portfolio"
+        use_b    = bool(first)
+        subj_tpl = SUBJECT_B if use_b else SUBJECT_A
+        body_tpl = BODY_B    if use_b else BODY_A
 
-        mapping_plain = {
-            "Company": company,
-            "First": first,
-            "FirstLine": (first + ",") if first else "there,",
-            "FromName": FROM_NAME,
-            "PersonalUrl": personal_url,
-            "PortfolioUrl": portfolio_url,
-            "UploadUrl": upload_url,
-            "PortfolioLine": portfolio_line_plain,
-        }
-
-        subject = fill(SUBJECT_TPL, mapping_plain).strip()
-        body_plain = fill(BODY_TPL, mapping_plain).strip()
-
-        # HTML: keep the same copy, but insert a token where the clickable link should be.
-        mapping_html = dict(mapping_plain)
-        mapping_html["PortfolioLine"] = portfolio_url
-        body_html_text = fill(BODY_TPL, mapping_html).strip()
-
-        # Convert to safe HTML (escapes everything), then replace token with real link HTML.
-        portfolio_link_html = (
-            f'<a href="{html.escape(portfolio_url, quote=True)}" '
-            f'style="text-decoration:underline; color:#111;">Portfolio</a>'
-        )
-        body_html = (
-            "<html><body style=\"font-family:Arial,Helvetica,sans-serif; color:#111;\">"
-            + text_to_html(body_html_text).replace(html.escape(PORTFOLIO_TOKEN), portfolio_link_html)
-            + "</body></html>"
+        subject = fill_template(
+            subj_tpl, company=company, first=first,
+            from_name=FROM_NAME, link=chosen_link
         )
 
-        target = FORCE_TO or email_v
-        log(f"[send] card='{title}' id={card_id} to={target} (orig_to={email_v}) first='{first}' greeting='{greeting}' pid={pid}")
+        # FU1 wording:
+        extra_ready = "There’s also a free sample made with your content."
+        # Include the [here] placeholder — it becomes a clickable link to UPLOAD_URL
+        extra_wait  = (
+            "If you can send over 2–3 raw clips, I can cut a free sample so you can see how it "
+            "would look on one of your own listings — you can upload them [here]."
+        )
+
+        body = fill_with_two_extras(
+            body_tpl, company=company, first=first, from_name=FROM_NAME,
+            link=chosen_link, is_ready=ready,
+            extra_ready=extra_ready, extra_wait=extra_wait,
+        )
+
+        link_label = "Portfolio + Sample (free)" if ready else LINK_TEXT
 
         try:
             send_email(
-                target, subject,
-                body_plain, body_html,
-                card_id=card_id, first=first, greeting=greeting
+                email_v, subject, body,
+                link_url=chosen_link, link_text=link_label, link_color=LINK_COLOR
             )
             processed += 1
-            log(f"[ok] Sent — '{title}'")
+            log(f"Sent to {email_v} — '{title}' — ready={ready} link={chosen_link}")
         except Exception as e:
-            log(f"[FAIL] Send failed for '{title}' to {target}: {e}")
+            log(f"Send failed for '{title}' to {email_v}: {e}")
             continue
 
-        if not IGNORE_SENT:
-            mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {sanitize_subject(subject)}")
-            sent_cache.add(card_id)
-            save_sent_cache(sent_cache)
-
-        time.sleep(0.6)
+        mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
+        sent_cache.add(card_id)
+        save_sent_cache(sent_cache)
+        time.sleep(0.8)
 
     log(f"Done. Emails sent: {processed}")
 
