@@ -18,7 +18,7 @@ concurrency:
 jobs:
   send-day0:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 80
     env:
       PYTHONUNBUFFERED: "1"
 
