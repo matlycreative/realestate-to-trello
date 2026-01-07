@@ -17,10 +17,9 @@ Defaults (overridable via env):
   LINK_COLOR=#858585   (same look as Day-0/FU1)
 """
 
-import os, re, time, json, html, unicodedata, mimetypes
+import os, re, time, json, html, unicodedata
 import random
 from datetime import datetime, timezone, timedelta
-from typing import Tuple
 import requests
 
 def log(*a): print(*a, flush=True)
@@ -42,7 +41,8 @@ def _safe_id_from_email(email: str) -> str:
 
 def _slugify_company(name: str) -> str:
     s = (name or "").strip()
-    if not s: return ""
+    if not s:
+        return ""
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     s = s.lower()
     s = re.sub(r"[^\w\s-]+", "", s)
@@ -55,7 +55,8 @@ def choose_id(company: str, email: str) -> str:
 
 def _norm_base(u: str) -> str:
     u = (u or "").strip()
-    if not u: return ""
+    if not u:
+        return ""
     if not re.match(r"^https?://", u, flags=re.I):
         u = "https://" + u
     return u.rstrip("/")
@@ -166,7 +167,9 @@ Founder, Matly Creative"""
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
-EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\\.[A-Z]{2,}", re.I)
+
+# ✅ FIX: was \\., which looks for a literal backslash. Needs \. to match the dot in domains.
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
 
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
@@ -189,7 +192,8 @@ def parse_header(desc: str) -> dict:
     return out
 
 def clean_email(raw: str) -> str:
-    if not raw: return ""
+    if not raw:
+        return ""
     txt = html.unescape(raw)
     m = EMAIL_RE.search(txt)
     return m.group(0).strip() if m else ""
@@ -206,7 +210,8 @@ def _trello_call(method, url_path, **params):
             r.raise_for_status()
             return r.json()
         except Exception:
-            if attempt == 2: raise
+            if attempt == 2:
+                raise
             time.sleep(1.2 * (attempt + 1))
     raise RuntimeError("Unreachable")
 
@@ -228,7 +233,8 @@ def already_marked(card_id: str, marker: str) -> bool:
 def mark_sent(card_id: str, marker: str, extra: str = ""):
     ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     text = f"{marker} — {ts}"
-    if extra: text += f"\n{extra}"
+    if extra:
+        text += f"\n{extra}"
     try:
         trello_post(f"cards/{card_id}/actions/comments", text=text)
     except Exception:
@@ -273,9 +279,14 @@ def _api_ready(pid: str) -> bool:
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if not src:
             return False
-        if re.search(r'iframe\\.videodelivery\\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
-        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
-        if re.match(r'^https?://.+\\.(mp4|m3u8)(\\?.*)?$', src, re.I): return True
+
+        # ✅ FIX: un-escape the regexes properly
+        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I):
+            return True
+        if re.match(r'^[A-Za-z0-9_-]{12,40}$', src):
+            return True
+        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I):
+            return True
         return False
     except Exception:
         return False
@@ -300,7 +311,9 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str,
         if key == "link":      return link or ""
         if key == "extra":     return extra or ""
         return m.group(0)
-    return re.sub(r"{\\s*(company|first|from_name|link|extra)\\s*}", repl, tpl, flags=re.I)
+
+    # ✅ FIX: remove extra backslashes so {Company} etc actually replace
+    return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
 
 def fill_template_skip_extra(tpl: str, *, company: str, first: str,
                              from_name: str, link: str) -> str:
@@ -311,9 +324,9 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str,
         if key == "from_name": return from_name or ""
         if key == "link":      return link or ""
         return m.group(0)
-    return re.sub(r"{\\s*(company|first|from_name|link)\\s*}", repl, tpl, flags=re.I)
+    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
 
-EXTRA_TOKEN = re.compile(r"\\{\\s*extra\\s*\\}", flags=re.I)
+EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
 
 def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
@@ -328,13 +341,17 @@ def fill_with_two_extras(
     else:
         step1 = EXTRA_TOKEN.sub("",         base, count=1)
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
+
     final = EXTRA_TOKEN.sub("", step2)
-    final = re.sub(r"\\s*:\\s+(?=(https?://|www\\.|<))", " ", final)
-    final = re.sub(r"\\n{3,}", "\\n\\n", final).strip()
+
+    # ✅ FIX: proper whitespace/newline regexes
+    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
+    final = re.sub(r"\n{3,}", "\n\n", final).strip()
     return final
 
 def sanitize_subject(s: str) -> str:
-    return re.sub(r"[\\r\\n]+", " ", (s or "")).strip()[:250]
+    # ✅ FIX: proper CR/LF stripping
+    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
 
 # ----------------- sender (NO DESIGN + ONLY TEMPLATE LINKS) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
@@ -381,7 +398,8 @@ def load_sent_cache():
 
 def save_sent_cache(ids):
     d = os.path.dirname(SENT_CACHE_FILE)
-    if d: os.makedirs(d, exist_ok=True)
+    if d:
+        os.makedirs(d, exist_ok=True)
     try:
         with open(SENT_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(sorted(ids), f)
@@ -394,7 +412,8 @@ def main():
     for k in ("TRELLO_KEY","TRELLO_TOKEN","FROM_EMAIL","SMTP_PASS","PUBLIC_BASE"):
         if not globals()[k]:
             missing.append(k)
-    if not LIST_ID: missing.append("TRELLO_LIST_ID_FU2")
+    if not LIST_ID:
+        missing.append("TRELLO_LIST_ID_FU2")
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
 
@@ -408,7 +427,9 @@ def main():
     for c in cards:
         if MAX_SEND_PER_RUN and processed >= MAX_SEND_PER_RUN:
             break
-        card_id = c.get("id"); title = c.get("name","(no title)")
+
+        card_id = c.get("id")
+        title = c.get("name","(no title)")
 
         if not card_id:
             continue
@@ -422,6 +443,8 @@ def main():
         fields  = parse_header(desc)
         company = (fields.get("Company") or "").strip()
         first   = (fields.get("First")   or "").strip()
+
+        # ✅ This now works reliably because EMAIL_RE is fixed
         email_v = clean_email(fields.get("Email") or "") or clean_email(desc)
         if not email_v:
             log(f"Skip: no valid Email on '{title}'.")
