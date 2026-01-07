@@ -146,7 +146,7 @@ def main():
 
     cache = load_cache()
 
-    cards = trello_get(f"lists/{SOURCE_LIST}/cards", fields="id,name,desc", limit=1000)
+    cards = trello_get(f"lists/{SOURCE_LIST}/cards", fields="id,name,desc", limit=2000)
     if not isinstance(cards, list):
         log("No cards returned.")
         return
