@@ -1,0 +1,61 @@
+name: Trello Email Scrubber (MX filter)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_checks_per_run:
+        description: "Max cards to check this run (0 = no limit)"
+        required: false
+        default: "0"
+  schedule:
+    # Every day at 06:15 UTC (adjust as needed)
+    - cron: "15 6 * * *"
+
+jobs:
+  scrub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # nslookup lives in dnsutils on Ubuntu runners
+      - name: Install dnsutils (nslookup)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dnsutils
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # Optional: cache the MX results between runs so it gets faster over time
+      - name: Cache MX lookups
+        uses: actions/cache@v4
+        with:
+          path: .data/mx_cache.json
+          key: mx-cache-${{ runner.os }}
+          restore-keys: |
+            mx-cache-${{ runner.os }}
+
+      - name: Run scrubber
+        env:
+          # Required (store these as GitHub Actions Secrets)
+          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
+          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
+          TRELLO_LIST_ID_SOURCE: ${{ secrets.TRELLO_LIST_ID_SOURCE }}
+          TRELLO_LIST_ID_BAD: ${{ secrets.TRELLO_LIST_ID_BAD }}
+
+          # Optional
+          MX_CACHE_FILE: ".data/mx_cache.json"
+          MAX_CHECKS_PER_RUN: ${{ github.event.inputs.max_checks_per_run || '0' }}
+        run: |
+          # If your file name/path differs, change it here:
+          python trello_scrubber.py
