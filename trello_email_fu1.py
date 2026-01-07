@@ -379,7 +379,7 @@ def main():
 
         # HTML: keep the same copy, but insert a token where the clickable link should be.
         mapping_html = dict(mapping_plain)
-        mapping_html["PortfolioLine"] = PORTFOLIO_TOKEN
+        mapping_html["PortfolioLine"] = portfolio_url
         body_html_text = fill(BODY_TPL, mapping_html).strip()
 
         # Convert to safe HTML (escapes everything), then replace token with real link HTML.
