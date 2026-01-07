@@ -103,9 +103,9 @@ if USE_ENV_TEMPLATES:
     BODY_A = _get_env("BODY_A", default=
 """Hey there,
 
-Quick question — are you currently using video to market your properties, or is that not a focus right now?
+I run a post-production studio for real estate teams (editing only) - turning walkthrough clips and raw footage into clean, high-end listing videos with consistent turnaround.
 
-Saw a few of your recent listings and figured I’d ask.
+Is someone currently handling video editing for your listings?
 
 Best,
 Matthieu Schnegg
@@ -114,9 +114,9 @@ Founder, Matly Creative""")
     BODY_B = _get_env("BODY_B", default=
 """Hey {First},
 
-Quick question — are you currently using video to market your properties, or is that not a focus right now?
+I run a post-production studio for real estate teams (editing only) - turning walkthrough clips and raw footage into clean, high-end listing videos with consistent turnaround.
 
-Saw a few of your recent listings and figured I’d ask.
+Is someone currently handling video editing for your listings?
 
 Best,
 Matthieu Schnegg
@@ -126,18 +126,18 @@ else:
     SUBJECT_B = "Quick question about {Company}"
     BODY_A = """Hey there,
 
-Quick question — are you currently using video to market your properties, or is that not a focus right now?
+I run a post-production studio for real estate teams (editing only) - turning walkthrough clips and raw footage into clean, high-end listing videos with consistent turnaround.
 
-Saw a few of your recent listings and figured I’d ask.
+Is someone currently handling video editing for your listings?
 
 Best,
 Matthieu Schnegg
 Founder, Matly Creative"""
     BODY_B = """Hey {First},
 
-Quick question — are you currently using video to market your properties, or is that not a focus right now?
+I run a post-production studio for real estate teams (editing only) - turning walkthrough clips and raw footage into clean, high-end listing videos with consistent turnaround.
 
-Saw a few of your recent listings and figured I’d ask.
+Is someone currently handling video editing for your listings?
 
 Best,
 Matthieu Schnegg
