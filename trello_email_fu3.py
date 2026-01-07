@@ -164,7 +164,8 @@ I’ll cut a clean, cinematic preview so you can see exactly how your listings c
 If not, no worries — just tell me and I’ll close the loop.
 
 Best,
-Matthieu from Matly""",
+Matthieu Schnegg
+Founder, Matly Creative""",
     )
     BODY_B = _get_env(
         "BODY_B",
@@ -175,9 +176,9 @@ If you want one for an upcoming listing, you can upload 4-5 raw clips.
 I’ll cut a clean, cinematic preview so you can see exactly how your listings could look with a sharper style.
 
 If not, no worries — just tell me and I’ll close the loop.
-
 Best,
-Matthieu from Matly
+Matthieu Schnegg
+Founder, Matly Creative
 """,
     )
 else:
@@ -192,7 +193,8 @@ I’ll cut a clean, cinematic preview so you can see exactly how your listings c
 If not, no worries — just tell me and I’ll close the loop.
 
 Best,
-Matthieu from Matly"""
+Matthieu Schnegg
+Founder, Matly Creative"""
     BODY_B = """Hey {first},
 I only do a few free samples per week, and I’ve got time to fit one more in for {Company}.
 
@@ -202,7 +204,8 @@ I’ll cut a clean, cinematic preview so you can see exactly how your listings c
 If not, no worries — just tell me and I’ll close the loop.
 
 Best,
-Matthieu from Matly"""
+Matthieu Schnegg
+Founder, Matly Creative"""
 
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company", "First", "Email", "Hook", "Variant", "Website"]
