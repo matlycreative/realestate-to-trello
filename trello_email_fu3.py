@@ -23,6 +23,7 @@ import time
 import json
 import html
 import unicodedata
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Dict
 
@@ -122,10 +123,19 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU
 SENT_CACHE_FILE = _get_env("SENT_CACHE_FILE", default=".data/sent_fu3.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
+# NEW: randomized delay controls (seconds)
+SEND_DELAY_MIN = int(_get_env("SEND_DELAY_MIN", default="45"))
+SEND_DELAY_MAX = int(_get_env("SEND_DELAY_MAX", default="120"))
+if SEND_DELAY_MIN < 0:
+    SEND_DELAY_MIN = 0
+if SEND_DELAY_MAX < SEND_DELAY_MIN:
+    SEND_DELAY_MAX = SEND_DELAY_MIN
+
 log(
     f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | "
     f"UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}"
 )
+log(f"[env] SEND_DELAY_MIN={SEND_DELAY_MIN}s | SEND_DELAY_MAX={SEND_DELAY_MAX}s")
 
 # ----------------- HTTP -----------------
 UA = f"TrelloEmailer-FU3/1.1 (+{FROM_EMAIL or 'no-email'})"
@@ -535,7 +545,12 @@ def main():
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
-        time.sleep(0.8)
+
+        # NEW: randomized human-ish delay between sends
+        if SEND_DELAY_MAX > 0:
+            delay_s = random.randint(SEND_DELAY_MIN, SEND_DELAY_MAX)
+            log(f"[delay] sleeping {delay_s}s before next send...")
+            time.sleep(delay_s)
 
     log(f"Done. FU3 emails sent: {processed}")
 
