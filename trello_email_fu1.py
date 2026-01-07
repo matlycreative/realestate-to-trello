@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FU1 — Minimal sender with markers/cache + clickable "Portfolio" (hidden URL).
+FU1 — Minimal sender with markers/cache (NO HTML WRAP).
 
-Fix:
-- Your HTML link was being escaped by text_to_html(), so recipients saw the <a ...> tag as text.
-- This version uses a safe token in the HTML body, then replaces it AFTER escaping.
-- Plain-text part shows only the word "Portfolio" (no raw URL).
+Change:
+- Removed HTML alternative part (no multipart/alternative).
+- Email is now plain-text only (msg.set_content only).
+
+Everything else unchanged (markers/cache, envelope BCC, delays, etc.).
 """
 
 import os, re, time, json, html, unicodedata
@@ -139,7 +140,7 @@ log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | 
 log(f"[env] SEND_DELAY_MIN={SEND_DELAY_MIN}s | SEND_DELAY_MAX={SEND_DELAY_MAX}s")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1-min/1.3-portfolio-link-fix (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1-min/1.3-no-html-wrap (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -225,26 +226,12 @@ def fill(tpl: str, mapping: dict) -> str:
         return str(mapping.get(k, m.group(0)))
     return re.sub(r"\{([A-Za-z0-9_]+)\}", repl, tpl or "")
 
-# ----------------- HTML helpers -----------------
-def text_to_html(text: str) -> str:
-    """
-    Very simple safe conversion: escapes HTML, keeps line breaks.
-    """
-    esc = html.escape(text or "")
-    esc = esc.replace("\r\n", "\n").replace("\r", "\n")
-    parts = esc.split("\n\n")
-    out = []
-    for p in parts:
-        out.append(
-            "<p style=\"margin:0 0 14px 0; font-size:16px; line-height:1.6;\">"
-            + p.replace("\n", "<br>")
-            + "</p>"
-        )
-    return "\n".join(out)
-
-# ----------------- sender -----------------
+# ----------------- sender (PLAIN TEXT ONLY; NO HTML WRAP) -----------------
 def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html: str, *,
                card_id: str, first: str, greeting: str):
+    """
+    Signature kept the same for compatibility, but HTML is ignored.
+    """
     from email.message import EmailMessage
     import smtplib
 
@@ -267,11 +254,8 @@ def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html
     msg["X-Debug-First"] = first
     msg["X-Debug-Greeting"] = greeting
 
-    # Plain text part
+    # Plain text ONLY
     msg.set_content((body_text_plain or "").strip() + "\n", charset="utf-8")
-
-    # HTML part
-    msg.add_alternative(body_text_html, subtype="html", charset="utf-8")
 
     for attempt in range(3):
         try:
@@ -320,9 +304,6 @@ def main():
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
 
-    # Token used only inside HTML rendering; replaced with a real <a> tag AFTER escaping.
-    PORTFOLIO_TOKEN = "__PORTFOLIO_LINK_TOKEN__"
-
     sent_cache = load_sent_cache()
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
@@ -366,9 +347,6 @@ def main():
 
         greeting = f"Hey {first}," if first else "Hey there,"
 
-        # Plain-text: hide the URL (only the word Portfolio)
-        portfolio_line_plain = "Portfolio"
-
         mapping_plain = {
             "Company": company,
             "First": first,
@@ -377,35 +355,19 @@ def main():
             "PersonalUrl": personal_url,
             "PortfolioUrl": portfolio_url,
             "UploadUrl": upload_url,
-            "PortfolioLine": portfolio_line_plain,
         }
 
         subject = fill(SUBJECT_TPL, mapping_plain).strip()
         body_plain = fill(BODY_TPL, mapping_plain).strip()
 
-        # HTML: keep the same copy, but insert a token where the clickable link should be.
-        mapping_html = dict(mapping_plain)
-        mapping_html["PortfolioLine"] = portfolio_url
-        body_html_text = fill(BODY_TPL, mapping_html).strip()
-
-        # Convert to safe HTML (escapes everything), then replace token with real link HTML.
-        portfolio_link_html = (
-            f'<a href="{html.escape(portfolio_url, quote=True)}" '
-            f'style="text-decoration:underline; color:#111;">Portfolio</a>'
-        )
-        body_html = (
-            "<html><body style=\"font-family:Arial,Helvetica,sans-serif; color:#111;\">"
-            + text_to_html(body_html_text).replace(html.escape(PORTFOLIO_TOKEN), portfolio_link_html)
-            + "</body></html>"
-        )
-
         target = FORCE_TO or email_v
         log(f"[send] card='{title}' id={card_id} to={target} (orig_to={email_v}) first='{first}' greeting='{greeting}' pid={pid}")
 
         try:
+            # keep signature: pass empty html string (ignored)
             send_email(
                 target, subject,
-                body_plain, body_html,
+                body_plain, "",
                 card_id=card_id, first=first, greeting=greeting
             )
             processed += 1
@@ -419,7 +381,7 @@ def main():
             sent_cache.add(card_id)
             save_sent_cache(sent_cache)
 
-        # NEW: randomized human-ish delay between sends
+        # randomized delay
         if SEND_DELAY_MAX > 0:
             delay_s = random.randint(SEND_DELAY_MIN, SEND_DELAY_MAX)
             log(f"[delay] sleeping {delay_s}s before next send...")
