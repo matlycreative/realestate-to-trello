@@ -18,6 +18,7 @@ Defaults (overridable via env):
 """
 
 import os, re, time, json, html, unicodedata, mimetypes
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Tuple
 import requests
@@ -96,8 +97,15 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: FU
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_fu2.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
+# NEW: randomized delay controls (seconds)
+SEND_DELAY_MIN = int(_get_env("SEND_DELAY_MIN", default="45"))
+SEND_DELAY_MAX = int(_get_env("SEND_DELAY_MAX", default="120"))
+if SEND_DELAY_MIN < 0: SEND_DELAY_MIN = 0
+if SEND_DELAY_MAX < SEND_DELAY_MIN: SEND_DELAY_MAX = SEND_DELAY_MIN
+
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL} | POINTER_BASE={MATLY_POINTER_BASE or '(disabled)'}")
 log(f"[env] SMTP_HOST={SMTP_HOST} SMTP_PORT={SMTP_PORT} SMTP_USE_TLS={SMTP_USE_TLS} SMTP_USER={SMTP_USER}")
+log(f"[env] SEND_DELAY_MIN={SEND_DELAY_MIN}s | SEND_DELAY_MAX={SEND_DELAY_MAX}s")
 
 # ----------------- HTTP -----------------
 UA = f"TrelloEmailer-FU2/6.1 (+{FROM_EMAIL or 'no-email'})"
@@ -113,56 +121,52 @@ if USE_ENV_TEMPLATES:
 """Hi there,
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 4-5 raw clips
-
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
 Should I slot you into this week’s samples?
 
 Best,
-Matthieu from Matly""")
+Matthieu Schnegg
+Founder, Matly Creative""")
     BODY_B = _get_env("BODY_B", default=
 """Hey {first},
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 4-5 raw clips
-
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
 Should I slot you into this week’s samples?
 
 Best,
-Matthieu from Matly""")
+Matthieu Schnegg
+Founder, Matly Creative""")
 else:
     SUBJECT_A = "Want a free sample for {Company}?"
     SUBJECT_B = "Want a free sample for {Company}?"
     BODY_A = """Hi there,
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 4-5 raw clips
-
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
 Should I slot you into this week’s samples?
 
 Best,
-Matthieu from Matly"""
+Matthieu Schnegg
+Founder, Matly Creative"""
     BODY_B = """Hey {first},
 If you want to see exactly how this style would look on {Company}’s listings, I can cut a free sample using your footage.
 
-You can drop 4-5 raw clips
-
 No commitment — just a clean, cinematic preview so you can see the difference for yourself.
 
 Should I slot you into this week’s samples?
 
 Best,
-Matthieu from Matly"""
+Matthieu Schnegg
+Founder, Matly Creative"""
 
 # ----------------- parsing -----------------
 TARGET_LABELS = ["Company","First","Email","Hook","Variant","Website"]
 LABEL_RE = {lab: re.compile(rf'(?mi)^\s*{re.escape(lab)}\s*[:\-]\s*(.*)$') for lab in TARGET_LABELS}
-EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\\.[A-Z]{2,}", re.I)
 
 def parse_header(desc: str) -> dict:
     out = {k: "" for k in TARGET_LABELS}
@@ -269,9 +273,9 @@ def _api_ready(pid: str) -> bool:
         src = (data.get("src") or data.get("streamUrl") or data.get("signedUrl") or data.get("url") or "").strip()
         if not src:
             return False
-        if re.search(r'iframe\.videodelivery\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
+        if re.search(r'iframe\\.videodelivery\\.net/[A-Za-z0-9_-]{8,}', src, re.I): return True
         if re.match(r'^[A-Za-z0-9_-]{12,40}$', src): return True
-        if re.match(r'^https?://.+\.(mp4|m3u8)(\?.*)?$', src, re.I): return True
+        if re.match(r'^https?://.+\\.(mp4|m3u8)(\\?.*)?$', src, re.I): return True
         return False
     except Exception:
         return False
@@ -296,7 +300,7 @@ def fill_template(tpl: str, *, company: str, first: str, from_name: str,
         if key == "link":      return link or ""
         if key == "extra":     return extra or ""
         return m.group(0)
-    return re.sub(r"{\s*(company|first|from_name|link|extra)\s*}", repl, tpl, flags=re.I)
+    return re.sub(r"{\\s*(company|first|from_name|link|extra)\\s*}", repl, tpl, flags=re.I)
 
 def fill_template_skip_extra(tpl: str, *, company: str, first: str,
                              from_name: str, link: str) -> str:
@@ -307,9 +311,9 @@ def fill_template_skip_extra(tpl: str, *, company: str, first: str,
         if key == "from_name": return from_name or ""
         if key == "link":      return link or ""
         return m.group(0)
-    return re.sub(r"{\s*(company|first|from_name|link)\s*}", repl, tpl, flags=re.I)
+    return re.sub(r"{\\s*(company|first|from_name|link)\\s*}", repl, tpl, flags=re.I)
 
-EXTRA_TOKEN = re.compile(r"\{\s*extra\s*\}", flags=re.I)
+EXTRA_TOKEN = re.compile(r"\\{\\s*extra\\s*\\}", flags=re.I)
 
 def fill_with_two_extras(
     tpl: str, *, company: str, first: str, from_name: str,
@@ -325,12 +329,12 @@ def fill_with_two_extras(
         step1 = EXTRA_TOKEN.sub("",         base, count=1)
         step2 = EXTRA_TOKEN.sub(extra_wait, step1, count=1)
     final = EXTRA_TOKEN.sub("", step2)
-    final = re.sub(r"\s*:\s+(?=(https?://|www\.|<))", " ", final)
-    final = re.sub(r"\n{3,}", "\n\n", final).strip()
+    final = re.sub(r"\\s*:\\s+(?=(https?://|www\\.|<))", " ", final)
+    final = re.sub(r"\\n{3,}", "\\n\\n", final).strip()
     return final
 
 def sanitize_subject(s: str) -> str:
-    return re.sub(r"[\r\n]+", " ", (s or "")).strip()[:250]
+    return re.sub(r"[\\r\\n]+", " ", (s or "")).strip()[:250]
 
 # ----------------- sender (NO DESIGN + ONLY TEMPLATE LINKS) -----------------
 def send_email(to_email: str, subject: str, body_text: str, *,
@@ -466,7 +470,12 @@ def main():
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
-        time.sleep(0.8)
+
+        # NEW: randomized human-ish delay between sends
+        if SEND_DELAY_MAX > 0:
+            delay_s = random.randint(SEND_DELAY_MIN, SEND_DELAY_MAX)
+            log(f"[delay] sleeping {delay_s}s before next send...")
+            time.sleep(delay_s)
 
     log(f"Done. Emails sent: {processed}")
 
