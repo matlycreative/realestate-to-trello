@@ -126,14 +126,12 @@ Just bumping this in case it got buried.
 
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
-Here are some exemples:
-https://www.google.com
-
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
 Open to a quick test?
 
 Best,
-{FromName}"""
+Matthieu Schnegg
+Founder, Matly Creative"""
 )
 
 log(f"[env] LIST_ID={LIST_ID} | PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL}")
