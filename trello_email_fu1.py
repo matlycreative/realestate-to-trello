@@ -7,6 +7,7 @@ Fix:
 - Your HTML link was being escaped by text_to_html(), so recipients saw the <a ...> tag as text.
 - This version uses a safe token in the HTML body, then replaces it AFTER escaping.
 - Plain-text part shows only the word "Portfolio" (no raw URL).
+
 """
 
 import os, re, time, json, html, unicodedata
@@ -264,8 +265,8 @@ def send_email(to_email: str, subject: str, body_text_plain: str, body_text_html
     # Plain text part
     msg.set_content((body_text_plain or "").strip() + "\n", charset="utf-8")
 
-    # HTML part
-    msg.add_alternative(body_text_html, subtype="html", charset="utf-8")
+    # HTML disabled for deliverability testing (links were vanishing)
+    # msg.add_alternative(body_text_html, subtype="html", charset="utf-8")
 
     for attempt in range(3):
         try:
