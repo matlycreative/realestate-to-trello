@@ -9,7 +9,7 @@ on:
         default: "0"
   schedule:
     # Every day at 06:15 UTC (adjust as needed)
-    - cron: "15 6 * * *"
+    - cron: "15 20 * * *"
 
 jobs:
   scrub:
