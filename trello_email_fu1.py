@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FU1 — Minimal sender (Day-0 base) with URLs + markers + CLICKABLE "Portfolio".
+FU1 — Minimal sender with markers/cache + clickable "Portfolio" (hidden URL).
 
-What you asked:
-- In the email body, under "Here are some exemples:", show the word "Portfolio"
-  and make it clickable to your portfolio URL (hidden URL).
-- Keep everything else: markers/cache, First name, same text, UTF-8 safety.
-
-Implementation:
-- Sends multipart/alternative:
-  - text/plain: includes the literal URL (deliverability + fallback)
-  - text/html : shows clickable "Portfolio" pointing to PORTFOLIO_URL
+Fix:
+- Your HTML link was being escaped by text_to_html(), so recipients saw the <a ...> tag as text.
+- This version uses a safe token in the HTML body, then replaces it AFTER escaping.
+- Plain-text part shows only the word "Portfolio" (no raw URL).
 """
 
 import os, re, time, json, html, unicodedata
@@ -115,7 +110,7 @@ IGNORE_SENT      = _env_bool("IGNORE_SENT", "0")
 # Optional: send all to one inbox for testing
 FORCE_TO          = clean_one_line(_get_env("FORCE_TO", default=""))
 
-# Email copy (your exact copy)
+# Email copy (your exact copy) — unchanged
 SUBJECT_TPL = _get_env("SUBJECT", default="Quick follow-up about {Company}")
 BODY_TPL    = _get_env("BODY", default=
 """Hey {FirstLine}
@@ -138,7 +133,7 @@ log(f"[env] LIST_ID={LIST_ID} | PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTF
 log(f"[env] SENT_MARKER_TEXT='{SENT_MARKER_TEXT}' | CACHE='{SENT_CACHE_FILE}' | IGNORE_SENT={IGNORE_SENT} | FORCE_TO={FORCE_TO or '(off)'}")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-FU1-min/1.2-portfolio-link (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-FU1-min/1.3-portfolio-link-fix (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -234,8 +229,11 @@ def text_to_html(text: str) -> str:
     parts = esc.split("\n\n")
     out = []
     for p in parts:
-        out.append("<p style=\"margin:0 0 14px 0; font-size:16px; line-height:1.6;\">"
-                   + p.replace("\n", "<br>") + "</p>")
+        out.append(
+            "<p style=\"margin:0 0 14px 0; font-size:16px; line-height:1.6;\">"
+            + p.replace("\n", "<br>")
+            + "</p>"
+        )
     return "\n".join(out)
 
 # ----------------- sender -----------------
@@ -316,6 +314,9 @@ def main():
     if missing:
         raise SystemExit("Missing env: " + ", ".join(missing))
 
+    # Token used only inside HTML rendering; replaced with a real <a> tag AFTER escaping.
+    PORTFOLIO_TOKEN = "__PORTFOLIO_LINK_TOKEN__"
+
     sent_cache = load_sent_cache()
     cards = trello_get(f"lists/{LIST_ID}/cards", fields="id,name,desc", limit=200)
     if not isinstance(cards, list):
@@ -359,11 +360,8 @@ def main():
 
         greeting = f"Hey {first}," if first else "Hey there,"
 
-        # Plain-text portfolio line MUST contain the literal URL to stay clickable
-        portfolio_line_plain = f"Portfolio: {portfolio_url}"
-
-        # HTML portfolio line: word "Portfolio" is clickable (hidden URL)
-        portfolio_line_html = f'<a href="{html.escape(portfolio_url, quote=True)}" style="text-decoration:underline; color:#111;">Portfolio</a>'
+        # Plain-text: hide the URL (only the word Portfolio)
+        portfolio_line_plain = "Portfolio"
 
         mapping_plain = {
             "Company": company,
@@ -376,19 +374,22 @@ def main():
             "PortfolioLine": portfolio_line_plain,
         }
 
-        # For HTML, we keep the same copy but replace {PortfolioLine} with the clickable word
-        mapping_html = dict(mapping_plain)
-        mapping_html["PortfolioLine"] = "Portfolio: " + portfolio_line_html
-
-        subject = fill(SUBJECT_TPL, mapping_plain)
-
+        subject = fill(SUBJECT_TPL, mapping_plain).strip()
         body_plain = fill(BODY_TPL, mapping_plain).strip()
 
-        # Build HTML from the “same” copy (but with clickable Portfolio)
+        # HTML: keep the same copy, but insert a token where the clickable link should be.
+        mapping_html = dict(mapping_plain)
+        mapping_html["PortfolioLine"] = PORTFOLIO_TOKEN
         body_html_text = fill(BODY_TPL, mapping_html).strip()
+
+        # Convert to safe HTML (escapes everything), then replace token with real link HTML.
+        portfolio_link_html = (
+            f'<a href="{html.escape(portfolio_url, quote=True)}" '
+            f'style="text-decoration:underline; color:#111;">Portfolio</a>'
+        )
         body_html = (
             "<html><body style=\"font-family:Arial,Helvetica,sans-serif; color:#111;\">"
-            + text_to_html(body_html_text)
+            + text_to_html(body_html_text).replace(html.escape(PORTFOLIO_TOKEN), portfolio_link_html)
             + "</body></html>"
         )
 
