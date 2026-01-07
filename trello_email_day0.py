@@ -13,6 +13,7 @@ PLAIN TEXT ONLY + REPLY-OPTIMIZED COPY
 """
 
 import os, re, time, json, html, unicodedata
+import random
 from datetime import datetime
 import requests
 
@@ -86,10 +87,17 @@ SENT_MARKER_TEXT = _get_env("SENT_MARKER_TEXT", "SENT_MARKER", default="Sent: Da
 SENT_CACHE_FILE  = _get_env("SENT_CACHE_FILE", default=".data/sent_day0.json")
 MAX_SEND_PER_RUN = int(_get_env("MAX_SEND_PER_RUN", default="0"))
 
+# NEW: randomized delay controls (seconds)
+SEND_DELAY_MIN = int(_get_env("SEND_DELAY_MIN", default="45"))
+SEND_DELAY_MAX = int(_get_env("SEND_DELAY_MAX", default="120"))
+if SEND_DELAY_MIN < 0: SEND_DELAY_MIN = 0
+if SEND_DELAY_MAX < SEND_DELAY_MIN: SEND_DELAY_MAX = SEND_DELAY_MIN
+
 log(f"[env] PUBLIC_BASE={PUBLIC_BASE} | PORTFOLIO_URL={PORTFOLIO_URL} | UPLOAD_URL={UPLOAD_URL}")
+log(f"[env] SEND_DELAY_MIN={SEND_DELAY_MIN}s | SEND_DELAY_MAX={SEND_DELAY_MAX}s")
 
 # ----------------- HTTP -----------------
-UA = f"TrelloEmailer-Day0/8.0 (+{FROM_EMAIL or 'no-email'})"
+UA = f"TrelloEmailer-Day0/8.1 (+{FROM_EMAIL or 'no-email'})"
 SESS = requests.Session()
 SESS.headers.update({"User-Agent": UA})
 
@@ -363,7 +371,6 @@ def main():
         subject = fill_template(subj_tpl, company=company, first=first, from_name=FROM_NAME, link="")
         body    = fill_template(body_tpl, company=company, first=first, from_name=FROM_NAME, link="").strip()
 
-        # Keep signature args for compatibility; not used in plain text rendering beyond body
         link_label = LINK_TEXT
 
         try:
@@ -377,7 +384,12 @@ def main():
         mark_sent(card_id, SENT_MARKER_TEXT, extra=f"Subject: {subject}")
         sent_cache.add(card_id)
         save_sent_cache(sent_cache)
-        time.sleep(0.8)
+
+        # NEW: randomized human-ish delay between sends
+        if SEND_DELAY_MAX > 0:
+            delay_s = random.randint(SEND_DELAY_MIN, SEND_DELAY_MAX)
+            log(f"[delay] sleeping {delay_s}s before next send...")
+            time.sleep(delay_s)
 
     log(f"Done. Emails sent: {processed}")
 
