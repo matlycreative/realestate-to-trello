@@ -120,7 +120,7 @@ Just bumping this in case it got buried.
 We edit listing videos for agencies that don’t want the hassle of in-house editing — faster turnarounds, consistent style, zero headaches.
 
 Here are some exemples:
-{PortfolioLine}
+https://www.google.com
 
 If {Company} has a busy pipeline right now, this could take some weight off your plate.
 Open to a quick test?
