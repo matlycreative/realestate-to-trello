@@ -18,7 +18,7 @@ concurrency:
 jobs:
   send-fu3:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 200
 
     env:
       PYTHONUNBUFFERED: "1"
