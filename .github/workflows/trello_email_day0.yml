@@ -6,7 +6,7 @@ on:
     # 08:45 GMT+2 → 06:45 UTC
     - cron: "45 5 * * 1-5"
     # 16:45 GMT+2 → 14:45 UTC
-    - cron: "45 12 * * 1-5"
+    - cron: "15 15 * * 1-5"
 
 permissions:
   contents: read
