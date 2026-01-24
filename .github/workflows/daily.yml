@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
   schedule:
     # 08:45 GMT+2 → 06:45 UTC
-    - cron: "45 0 * * 1-5"
+    - cron: "45 0 * * *"
     # 16:45 GMT+2 → 14:45 UTC
-    - cron: "45 6 * * 1-5"
-    - cron: "45 12 * * 1-5"
+    - cron: "45 6 * * *"
+    - cron: "45 12 * * *"
     # 16:45 GMT+2 → 14:45 UTC
-    - cron: "45 18 * * 1-5"
+    - cron: "45 18 * * *"
 
 
 
