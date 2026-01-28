@@ -3,10 +3,10 @@ name: Realestate to Trello
 on:
   workflow_dispatch:
   schedule:
-  - cron: "45 0 * * *"
-  - cron: "45 6 * * *"
-  - cron: "45 12 * * *"
-  - cron: "45 18 * * *"
+    - cron: "45 0 * * *"
+    - cron: "45 6 * * *"
+    - cron: "45 12 * * *"
+    - cron: "45 18 * * *"
 
 
 
